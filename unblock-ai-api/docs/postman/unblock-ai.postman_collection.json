@@ -1,0 +1,1001 @@
+{
+  "info": {
+    "_postman_id": "b6f0a1c2-3e6a-4b1a-9b7a-9f6d1c2a5e01",
+    "name": "UNBLOCK-AI API",
+    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Drafts, Workflows, Selection, Error cases.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api"
+    },
+    {
+      "key": "draftId",
+      "value": ""
+    },
+    {
+      "key": "workflowId",
+      "value": ""
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    },
+    {
+      "key": "templateVersion",
+      "value": ""
+    },
+    {
+      "key": "selectionDecision",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Liveness probe. Returns { status, uptime, version }."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"status is ok\", function () { pm.expect(pm.response.json()).to.have.property(\"status\", \"ok\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Drafts",
+      "description": "Create a draft, then extract a workflow from it. draftId is captured from 'Create draft' and used by the rest of this folder.",
+      "item": [
+        {
+          "name": "Create draft",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/drafts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drafts"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"IT Faculty Overseas Leave\",\n  \"text\": \"Any undergraduate student of the Faculty of Information Technology who intends\\r\\nto travel overseas during the academic term must obtain prior approval before\\r\\nleaving the country.\\r\\n\\r\\nThe student submits a request stating their full name, index number, the\\r\\ndestination country, the departure date, the return date, and the reason for\\r\\nthe trip.\\r\\n\\r\\nThe request first goes to the student's Academic Advisor for approval. Once the\\r\\nAcademic Advisor approves, it goes to the Head of the Department of Information\\r\\nTechnology. At any point an approver may either approve the request, reject it\\r\\nwith a reason, or ask the student for more information, in which case the\\r\\nstudent is asked for the missing detail and the request returns to that same\\r\\napprover.\\r\\n\\r\\nIf the total duration of the trip exceeds 30 days, the request must additionally\\r\\nbe endorsed by the Dean of the Faculty after the Head of Department has\\r\\napproved.\\r\\n\\r\\nWhen all required approvals are complete, the student is issued a signed\\r\\noverseas leave authorization letter and notified that it is ready for\\r\\ncollection.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Idempotent by SHA-256 of text. Text taken from src/data/samples/demo-drafts/it_overseas_leave.txt."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"response has id\", function () { pm.expect(pm.response.json()).to.have.property(\"id\"); });",
+                  "pm.collectionVariables.set(\"draftId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List drafts",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/drafts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drafts"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response is an array\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get draft by id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/drafts/{{draftId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drafts",
+                "{{draftId}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has status field\", function () { pm.expect(pm.response.json()).to.have.property(\"status\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Extract workflow from draft",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/drafts/{{draftId}}/extract",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drafts",
+                "{{draftId}}",
+                "extract"
+              ]
+            },
+            "description": "No body. Slow (10-60s) — raise the Postman request timeout before running. Saves review_status: pending_admin_review."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"response has workflow_id\", function () { pm.expect(pm.response.json()).to.have.property(\"workflow_id\"); });",
+                  "var json = pm.response.json();",
+                  "pm.collectionVariables.set(\"workflowId\", json.workflow_id);",
+                  "pm.collectionVariables.set(\"templateVersion\", json.version);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Workflows",
+      "item": [
+        {
+          "name": "Extract workflow (preview, no save)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/extract",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "extract"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Departmental Event & Workshop Organization\\n\\nWhen a department submits a request to organize an event or workshop, the submission is split into three sub-requests that are handled independently: hall booking, guest speaker security clearance, and refreshments budget approval.\\n\\nHall booking is reviewed by Campus Administration (the hall warden). They confirm the venue name and the confirmed venue capacity, or reject the booking.\\n\\nGuest speaker security clearance is reviewed by the Security Office, independently and concurrently with the hall booking — neither waits on the other.\\n\\nRefreshments budget approval is automatically placed on hold when the event request is submitted, because the catering cost estimate depends on the confirmed venue capacity. As soon as the hall booking is approved, the refreshments approval is released and sent to the Finance Office, using the confirmed venue capacity to size the catering budget.\\n\\nThe event is considered fully organized only once all three sub-requests — hall booking, security clearance, and refreshments approval — are approved. A single consolidated status page shows the state of all three. When everything is approved, the requester is notified by email that the event is confirmed.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Slow (10-60s). Raise the request timeout in Postman settings before running."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has workflow\", function () { pm.expect(pm.response.json()).to.have.property(\"workflow\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Save workflow (new version)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/workflows",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workflow\": {\n    \"schema_version\": \"1.0\",\n    \"workflow_id\": \"departmental_event_workshop\",\n    \"title\": \"Departmental Event & Workshop Organization\",\n    \"description\": \"Approval process for departments organizing an event or workshop, covering hall booking, speaker security clearance, and refreshments budget.\",\n    \"retrieval_summary\": {\n      \"one_liner\": \"Get approval to run a departmental event or workshop, including the hall booking and refreshments.\",\n      \"aliases\": [\n        \"event approval\",\n        \"workshop approval\",\n        \"departmental event organization\",\n        \"hall booking for an event\"\n      ],\n      \"keywords\": [\n        \"book a hall\",\n        \"run a workshop\",\n        \"organise an event\",\n        \"seminar\",\n        \"guest speaker\",\n        \"refreshments\",\n        \"catering\",\n        \"auditorium\",\n        \"venue\"\n      ],\n      \"requester_types\": [\n        \"academic staff\",\n        \"department coordinators\",\n        \"student societies\"\n      ],\n      \"triggers\": [\n        \"running a workshop for the department\",\n        \"booking a hall for a seminar\",\n        \"inviting an external speaker\",\n        \"arranging refreshments for a departmental event\"\n      ],\n      \"not_for\": [\n        \"personal or private venue bookings\",\n        \"regular timetabled lectures\",\n        \"events organised outside the department\",\n        \"overnight or residential events\"\n      ]\n    },\n    \"scope\": {\n      \"institution_type\": \"university\",\n      \"applies_to\": {\n        \"actor_type\": \"staff\",\n        \"constraints\": []\n      }\n    },\n    \"requester\": {\n      \"actor_type\": \"staff\",\n      \"identifier_field\": \"department_id\"\n    },\n    \"inputs\": [\n      {\n        \"id\": \"event_name\",\n        \"label\": \"Event Name\",\n        \"description\": \"Name of the event or workshop.\",\n        \"type\": \"string\",\n        \"collected_from\": {\n          \"resolution\": \"requester\",\n          \"role\": null,\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"required\": true,\n        \"validation\": {\n          \"min_length\": null,\n          \"max_length\": null,\n          \"min\": null,\n          \"max\": null,\n          \"not_before\": null,\n          \"not_after\": null,\n          \"not_before_field\": null,\n          \"not_after_field\": null,\n          \"pattern\": null\n        },\n        \"collection_hint\": null\n      },\n      {\n        \"id\": \"expected_attendance\",\n        \"label\": \"Expected Attendance\",\n        \"description\": \"Estimated number of attendees.\",\n        \"type\": \"number\",\n        \"collected_from\": {\n          \"resolution\": \"requester\",\n          \"role\": null,\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"required\": true,\n        \"validation\": {\n          \"min_length\": null,\n          \"max_length\": null,\n          \"min\": 1,\n          \"max\": null,\n          \"not_before\": null,\n          \"not_after\": null,\n          \"not_before_field\": null,\n          \"not_after_field\": null,\n          \"pattern\": null\n        },\n        \"collection_hint\": null\n      }\n    ],\n    \"computed\": [],\n    \"steps\": [\n      {\n        \"id\": \"hall_booking\",\n        \"name\": \"Hall Booking Approval\",\n        \"type\": \"approval\",\n        \"description\": \"Approval of the venue booking for the event.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"venue_admin\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": \"Campus Administration / Hall Warden\"\n        },\n        \"depends_on\": [],\n        \"initial_state\": \"auto\",\n        \"blocked_reason\": null,\n        \"condition\": null,\n        \"instructions_to_approver\": \"Confirm venue availability, name, and capacity for the requested event.\",\n        \"response_fields\": [\n          {\n            \"id\": \"confirmed_capacity\",\n            \"label\": \"Confirmed Venue Capacity\",\n            \"type\": \"number\",\n            \"required_on_outcome\": [\n              \"approved\"\n            ]\n          },\n          {\n            \"id\": \"venue_name\",\n            \"label\": \"Assigned Venue\",\n            \"type\": \"string\",\n            \"required_on_outcome\": [\n              \"approved\"\n            ]\n          }\n        ],\n        \"context_from_steps\": [],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      },\n      {\n        \"id\": \"speaker_clearance\",\n        \"name\": \"Guest Speaker Security Clearance\",\n        \"type\": \"approval\",\n        \"description\": \"Security clearance for the guest speaker, run independently of hall booking.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"security_office\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"depends_on\": [],\n        \"initial_state\": \"auto\",\n        \"blocked_reason\": null,\n        \"condition\": null,\n        \"instructions_to_approver\": \"Verify and clear the guest speaker for campus access.\",\n        \"response_fields\": [],\n        \"context_from_steps\": [],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      },\n      {\n        \"id\": \"refreshments_approval\",\n        \"name\": \"Refreshments Budget Approval\",\n        \"type\": \"approval\",\n        \"description\": \"Budget approval for catering, gated on the confirmed venue capacity.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"finance_office\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"depends_on\": [\n          {\n            \"step_id\": \"hall_booking\",\n            \"required_outcome\": \"approved\"\n          }\n        ],\n        \"initial_state\": \"blocked\",\n        \"blocked_reason\": \"Catering cost estimate depends on the confirmed venue capacity.\",\n        \"condition\": null,\n        \"instructions_to_approver\": \"Approve the refreshments budget based on the confirmed venue capacity.\",\n        \"response_fields\": [],\n        \"context_from_steps\": [\n          {\n            \"step_id\": \"hall_booking\",\n            \"field\": \"confirmed_capacity\",\n            \"as\": \"venue_capacity\"\n          }\n        ],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      }\n    ],\n    \"completion\": {\n      \"rule\": \"all_required_steps_complete\",\n      \"required_steps\": [\n        \"hall_booking\",\n        \"speaker_clearance\",\n        \"refreshments_approval\"\n      ],\n      \"actions\": [\n        {\n          \"type\": \"notify\",\n          \"format\": null,\n          \"store_as\": null,\n          \"target\": {\n            \"resolution\": \"requester\",\n            \"role\": null,\n            \"relative_to\": null,\n            \"directory_query\": null,\n            \"fallback_role\": null,\n            \"display_name\": null\n          },\n          \"template\": \"event_confirmed\",\n          \"channel\": \"email\",\n          \"message\": null\n        }\n      ]\n    },\n    \"metadata\": {\n      \"created_from\": \"plain_text\",\n      \"source_text_hash\": \"sha256:placeholder\",\n      \"extraction_model\": \"gpt-4o-2024-08-06\",\n      \"extraction_timestamp\": \"2026-07-30T10:00:00Z\",\n      \"confidence\": \"medium\",\n      \"ambiguities\": [\n        \"Source text does not state what happens if the hall booking or speaker clearance is rejected; modeled as terminating the workflow, consistent with the leave workflow's rejection handling.\"\n      ],\n      \"unmapped_roles\": [],\n      \"review_status\": \"pending_admin_review\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Body taken from src/data/samples/expected/departmental_event_workshop.json. Every field is required, including nullable ones."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"response has id and version\", function () { var b = pm.response.json(); pm.expect(b).to.have.property(\"id\"); pm.expect(b).to.have.property(\"version\"); });",
+                  "pm.collectionVariables.set(\"workflowId\", pm.response.json().id);",
+                  "pm.collectionVariables.set(\"templateVersion\", pm.response.json().version);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List workflows",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/workflows?institution_type=university",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows"
+              ],
+              "query": [
+                {
+                  "key": "institution_type",
+                  "value": "university",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response is an array\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get workflow by id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}?version=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}"
+              ],
+              "query": [
+                {
+                  "key": "version",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has workflow_id\", function () { pm.expect(pm.response.json()).to.have.property(\"workflow_id\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update workflow (PUT, new version)",
+          "request": {
+            "method": "PUT",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workflow\": {\n    \"schema_version\": \"1.0\",\n    \"workflow_id\": \"{{workflowId}}\",\n    \"title\": \"Departmental Event & Workshop Organization\",\n    \"description\": \"Approval process for departments organizing an event or workshop, covering hall booking, speaker security clearance, and refreshments budget.\",\n    \"retrieval_summary\": {\n      \"one_liner\": \"Get approval to run a departmental event or workshop, including the hall booking and refreshments.\",\n      \"aliases\": [\n        \"event approval\",\n        \"workshop approval\",\n        \"departmental event organization\",\n        \"hall booking for an event\"\n      ],\n      \"keywords\": [\n        \"book a hall\",\n        \"run a workshop\",\n        \"organise an event\",\n        \"seminar\",\n        \"guest speaker\",\n        \"refreshments\",\n        \"catering\",\n        \"auditorium\",\n        \"venue\"\n      ],\n      \"requester_types\": [\n        \"academic staff\",\n        \"department coordinators\",\n        \"student societies\"\n      ],\n      \"triggers\": [\n        \"running a workshop for the department\",\n        \"booking a hall for a seminar\",\n        \"inviting an external speaker\",\n        \"arranging refreshments for a departmental event\"\n      ],\n      \"not_for\": [\n        \"personal or private venue bookings\",\n        \"regular timetabled lectures\",\n        \"events organised outside the department\",\n        \"overnight or residential events\"\n      ]\n    },\n    \"scope\": {\n      \"institution_type\": \"university\",\n      \"applies_to\": {\n        \"actor_type\": \"staff\",\n        \"constraints\": []\n      }\n    },\n    \"requester\": {\n      \"actor_type\": \"staff\",\n      \"identifier_field\": \"department_id\"\n    },\n    \"inputs\": [\n      {\n        \"id\": \"event_name\",\n        \"label\": \"Event Name\",\n        \"description\": \"Name of the event or workshop.\",\n        \"type\": \"string\",\n        \"collected_from\": {\n          \"resolution\": \"requester\",\n          \"role\": null,\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"required\": true,\n        \"validation\": {\n          \"min_length\": null,\n          \"max_length\": null,\n          \"min\": null,\n          \"max\": null,\n          \"not_before\": null,\n          \"not_after\": null,\n          \"not_before_field\": null,\n          \"not_after_field\": null,\n          \"pattern\": null\n        },\n        \"collection_hint\": null\n      },\n      {\n        \"id\": \"expected_attendance\",\n        \"label\": \"Expected Attendance\",\n        \"description\": \"Estimated number of attendees.\",\n        \"type\": \"number\",\n        \"collected_from\": {\n          \"resolution\": \"requester\",\n          \"role\": null,\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"required\": true,\n        \"validation\": {\n          \"min_length\": null,\n          \"max_length\": null,\n          \"min\": 1,\n          \"max\": null,\n          \"not_before\": null,\n          \"not_after\": null,\n          \"not_before_field\": null,\n          \"not_after_field\": null,\n          \"pattern\": null\n        },\n        \"collection_hint\": null\n      }\n    ],\n    \"computed\": [],\n    \"steps\": [\n      {\n        \"id\": \"hall_booking\",\n        \"name\": \"Hall Booking Approval\",\n        \"type\": \"approval\",\n        \"description\": \"Approval of the venue booking for the event.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"venue_admin\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": \"Campus Administration / Hall Warden\"\n        },\n        \"depends_on\": [],\n        \"initial_state\": \"auto\",\n        \"blocked_reason\": null,\n        \"condition\": null,\n        \"instructions_to_approver\": \"Confirm venue availability, name, and capacity for the requested event.\",\n        \"response_fields\": [\n          {\n            \"id\": \"confirmed_capacity\",\n            \"label\": \"Confirmed Venue Capacity\",\n            \"type\": \"number\",\n            \"required_on_outcome\": [\n              \"approved\"\n            ]\n          },\n          {\n            \"id\": \"venue_name\",\n            \"label\": \"Assigned Venue\",\n            \"type\": \"string\",\n            \"required_on_outcome\": [\n              \"approved\"\n            ]\n          }\n        ],\n        \"context_from_steps\": [],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      },\n      {\n        \"id\": \"speaker_clearance\",\n        \"name\": \"Guest Speaker Security Clearance\",\n        \"type\": \"approval\",\n        \"description\": \"Security clearance for the guest speaker, run independently of hall booking.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"security_office\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"depends_on\": [],\n        \"initial_state\": \"auto\",\n        \"blocked_reason\": null,\n        \"condition\": null,\n        \"instructions_to_approver\": \"Verify and clear the guest speaker for campus access.\",\n        \"response_fields\": [],\n        \"context_from_steps\": [],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      },\n      {\n        \"id\": \"refreshments_approval\",\n        \"name\": \"Refreshments Budget Approval\",\n        \"type\": \"approval\",\n        \"description\": \"Budget approval for catering, gated on the confirmed venue capacity.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"finance_office\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"depends_on\": [\n          {\n            \"step_id\": \"hall_booking\",\n            \"required_outcome\": \"approved\"\n          }\n        ],\n        \"initial_state\": \"blocked\",\n        \"blocked_reason\": \"Catering cost estimate depends on the confirmed venue capacity.\",\n        \"condition\": null,\n        \"instructions_to_approver\": \"Approve the refreshments budget based on the confirmed venue capacity.\",\n        \"response_fields\": [],\n        \"context_from_steps\": [\n          {\n            \"step_id\": \"hall_booking\",\n            \"field\": \"confirmed_capacity\",\n            \"as\": \"venue_capacity\"\n          }\n        ],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      }\n    ],\n    \"completion\": {\n      \"rule\": \"all_required_steps_complete\",\n      \"required_steps\": [\n        \"hall_booking\",\n        \"speaker_clearance\",\n        \"refreshments_approval\"\n      ],\n      \"actions\": [\n        {\n          \"type\": \"notify\",\n          \"format\": null,\n          \"store_as\": null,\n          \"target\": {\n            \"resolution\": \"requester\",\n            \"role\": null,\n            \"relative_to\": null,\n            \"directory_query\": null,\n            \"fallback_role\": null,\n            \"display_name\": null\n          },\n          \"template\": \"event_confirmed\",\n          \"channel\": \"email\",\n          \"message\": null\n        }\n      ]\n    },\n    \"metadata\": {\n      \"created_from\": \"plain_text\",\n      \"source_text_hash\": \"sha256:placeholder\",\n      \"extraction_model\": \"gpt-4o-2024-08-06\",\n      \"extraction_timestamp\": \"2026-07-30T10:00:00Z\",\n      \"confidence\": \"medium\",\n      \"ambiguities\": [\n        \"Source text does not state what happens if the hall booking or speaker clearance is rejected; modeled as terminating the workflow, consistent with the leave workflow's rejection handling.\"\n      ],\n      \"unmapped_roles\": [],\n      \"review_status\": \"pending_admin_review\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Not a partial update — the full document is replaced and saved as a new version."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has version\", function () { pm.expect(pm.response.json()).to.have.property(\"version\"); });",
+                  "pm.collectionVariables.set(\"templateVersion\", pm.response.json().version);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validate workflow (no save)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/any-id/validate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "any-id",
+                "validate"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workflow\": {\n    \"schema_version\": \"1.0\",\n    \"workflow_id\": \"departmental_event_workshop\",\n    \"title\": \"Departmental Event & Workshop Organization\",\n    \"description\": \"Approval process for departments organizing an event or workshop, covering hall booking, speaker security clearance, and refreshments budget.\",\n    \"retrieval_summary\": {\n      \"one_liner\": \"Get approval to run a departmental event or workshop, including the hall booking and refreshments.\",\n      \"aliases\": [\n        \"event approval\",\n        \"workshop approval\",\n        \"departmental event organization\",\n        \"hall booking for an event\"\n      ],\n      \"keywords\": [\n        \"book a hall\",\n        \"run a workshop\",\n        \"organise an event\",\n        \"seminar\",\n        \"guest speaker\",\n        \"refreshments\",\n        \"catering\",\n        \"auditorium\",\n        \"venue\"\n      ],\n      \"requester_types\": [\n        \"academic staff\",\n        \"department coordinators\",\n        \"student societies\"\n      ],\n      \"triggers\": [\n        \"running a workshop for the department\",\n        \"booking a hall for a seminar\",\n        \"inviting an external speaker\",\n        \"arranging refreshments for a departmental event\"\n      ],\n      \"not_for\": [\n        \"personal or private venue bookings\",\n        \"regular timetabled lectures\",\n        \"events organised outside the department\",\n        \"overnight or residential events\"\n      ]\n    },\n    \"scope\": {\n      \"institution_type\": \"university\",\n      \"applies_to\": {\n        \"actor_type\": \"staff\",\n        \"constraints\": []\n      }\n    },\n    \"requester\": {\n      \"actor_type\": \"staff\",\n      \"identifier_field\": \"department_id\"\n    },\n    \"inputs\": [\n      {\n        \"id\": \"event_name\",\n        \"label\": \"Event Name\",\n        \"description\": \"Name of the event or workshop.\",\n        \"type\": \"string\",\n        \"collected_from\": {\n          \"resolution\": \"requester\",\n          \"role\": null,\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"required\": true,\n        \"validation\": {\n          \"min_length\": null,\n          \"max_length\": null,\n          \"min\": null,\n          \"max\": null,\n          \"not_before\": null,\n          \"not_after\": null,\n          \"not_before_field\": null,\n          \"not_after_field\": null,\n          \"pattern\": null\n        },\n        \"collection_hint\": null\n      },\n      {\n        \"id\": \"expected_attendance\",\n        \"label\": \"Expected Attendance\",\n        \"description\": \"Estimated number of attendees.\",\n        \"type\": \"number\",\n        \"collected_from\": {\n          \"resolution\": \"requester\",\n          \"role\": null,\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"required\": true,\n        \"validation\": {\n          \"min_length\": null,\n          \"max_length\": null,\n          \"min\": 1,\n          \"max\": null,\n          \"not_before\": null,\n          \"not_after\": null,\n          \"not_before_field\": null,\n          \"not_after_field\": null,\n          \"pattern\": null\n        },\n        \"collection_hint\": null\n      }\n    ],\n    \"computed\": [],\n    \"steps\": [\n      {\n        \"id\": \"hall_booking\",\n        \"name\": \"Hall Booking Approval\",\n        \"type\": \"approval\",\n        \"description\": \"Approval of the venue booking for the event.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"venue_admin\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": \"Campus Administration / Hall Warden\"\n        },\n        \"depends_on\": [],\n        \"initial_state\": \"auto\",\n        \"blocked_reason\": null,\n        \"condition\": null,\n        \"instructions_to_approver\": \"Confirm venue availability, name, and capacity for the requested event.\",\n        \"response_fields\": [\n          {\n            \"id\": \"confirmed_capacity\",\n            \"label\": \"Confirmed Venue Capacity\",\n            \"type\": \"number\",\n            \"required_on_outcome\": [\n              \"approved\"\n            ]\n          },\n          {\n            \"id\": \"venue_name\",\n            \"label\": \"Assigned Venue\",\n            \"type\": \"string\",\n            \"required_on_outcome\": [\n              \"approved\"\n            ]\n          }\n        ],\n        \"context_from_steps\": [],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      },\n      {\n        \"id\": \"speaker_clearance\",\n        \"name\": \"Guest Speaker Security Clearance\",\n        \"type\": \"approval\",\n        \"description\": \"Security clearance for the guest speaker, run independently of hall booking.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"security_office\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"depends_on\": [],\n        \"initial_state\": \"auto\",\n        \"blocked_reason\": null,\n        \"condition\": null,\n        \"instructions_to_approver\": \"Verify and clear the guest speaker for campus access.\",\n        \"response_fields\": [],\n        \"context_from_steps\": [],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      },\n      {\n        \"id\": \"refreshments_approval\",\n        \"name\": \"Refreshments Budget Approval\",\n        \"type\": \"approval\",\n        \"description\": \"Budget approval for catering, gated on the confirmed venue capacity.\",\n        \"assignee\": {\n          \"resolution\": \"static\",\n          \"role\": \"finance_office\",\n          \"relative_to\": null,\n          \"directory_query\": null,\n          \"fallback_role\": null,\n          \"display_name\": null\n        },\n        \"depends_on\": [\n          {\n            \"step_id\": \"hall_booking\",\n            \"required_outcome\": \"approved\"\n          }\n        ],\n        \"initial_state\": \"blocked\",\n        \"blocked_reason\": \"Catering cost estimate depends on the confirmed venue capacity.\",\n        \"condition\": null,\n        \"instructions_to_approver\": \"Approve the refreshments budget based on the confirmed venue capacity.\",\n        \"response_fields\": [],\n        \"context_from_steps\": [\n          {\n            \"step_id\": \"hall_booking\",\n            \"field\": \"confirmed_capacity\",\n            \"as\": \"venue_capacity\"\n          }\n        ],\n        \"outcomes\": {\n          \"approved\": {\n            \"action\": \"continue\",\n            \"notify\": [],\n            \"include_reason\": null,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"rejected\": {\n            \"action\": \"terminate_workflow\",\n            \"notify\": [\n              {\n                \"resolution\": \"requester\",\n                \"role\": null,\n                \"relative_to\": null,\n                \"directory_query\": null,\n                \"fallback_role\": null,\n                \"display_name\": null\n              }\n            ],\n            \"include_reason\": true,\n            \"return_to_step\": null,\n            \"prompt_source\": null\n          },\n          \"request_more_info\": null\n        },\n        \"notifications\": {\n          \"on_assign\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_request\"\n          },\n          \"on_outcome\": {\n            \"channel\": \"email\",\n            \"template\": \"approval_result\"\n          }\n        },\n        \"sla\": {\n          \"reminder_after_hours\": 48,\n          \"escalate_after_hours\": 120\n        }\n      }\n    ],\n    \"completion\": {\n      \"rule\": \"all_required_steps_complete\",\n      \"required_steps\": [\n        \"hall_booking\",\n        \"speaker_clearance\",\n        \"refreshments_approval\"\n      ],\n      \"actions\": [\n        {\n          \"type\": \"notify\",\n          \"format\": null,\n          \"store_as\": null,\n          \"target\": {\n            \"resolution\": \"requester\",\n            \"role\": null,\n            \"relative_to\": null,\n            \"directory_query\": null,\n            \"fallback_role\": null,\n            \"display_name\": null\n          },\n          \"template\": \"event_confirmed\",\n          \"channel\": \"email\",\n          \"message\": null\n        }\n      ]\n    },\n    \"metadata\": {\n      \"created_from\": \"plain_text\",\n      \"source_text_hash\": \"sha256:placeholder\",\n      \"extraction_model\": \"gpt-4o-2024-08-06\",\n      \"extraction_timestamp\": \"2026-07-30T10:00:00Z\",\n      \"confidence\": \"medium\",\n      \"ambiguities\": [\n        \"Source text does not state what happens if the hall booking or speaker clearance is rejected; modeled as terminating the workflow, consistent with the leave workflow's rejection handling.\"\n      ],\n      \"unmapped_roles\": [],\n      \"review_status\": \"pending_admin_review\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The :id path segment is ignored by the handler. Always responds 200."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has valid property\", function () { pm.expect(pm.response.json()).to.have.property(\"valid\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get workflow record (admin)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/record?version=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}",
+                "record"
+              ],
+              "query": [
+                {
+                  "key": "version",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has review_status\", function () { pm.expect(pm.response.json()).to.have.property(\"review_status\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Review workflow (publish/reject)",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}",
+                "review"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"review_status\": \"confirmed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "review_status: pending_admin_review | confirmed | rejected. Must be 'confirmed' before selection endpoints can find it."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"review_status is confirmed\", function () { pm.expect(pm.response.json()).to.have.property(\"review_status\", \"confirmed\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Selection",
+      "description": "Start a session, then conditionally answer or manually choose depending on the decision from round 1, then fetch the matched workflow. Requires at least one workflow with review_status: confirmed.",
+      "item": [
+        {
+          "name": "Start session (round 1)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/selection/sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "selection",
+                "sessions"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"I want to book a hall for a workshop next month\",\n  \"institution_type\": \"university\",\n  \"requester_context\": {\n    \"actor_type\": \"staff\",\n    \"department\": \"Information Technology\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The only retrieval call in the whole conversation. Requires at least one workflow with review_status: confirmed."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"response has session_id\", function () { pm.expect(json).to.have.property(\"session_id\"); });",
+                  "pm.collectionVariables.set(\"sessionId\", json.session_id);",
+                  "pm.collectionVariables.set(\"selectionDecision\", json.decision);",
+                  "if (json.decision !== \"ambiguous\") { postman.setNextRequest(\"Choose workflow manually\"); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Answer clarifying question (round 2+)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}/answer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "selection",
+                "sessions",
+                "{{sessionId}}",
+                "answer"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answer\": \"It's a departmental workshop for our students\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Only runs when the previous decision was 'ambiguous' (see the pre-request script on 'Start session')."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get(\"selectionDecision\") !== \"ambiguous\") {",
+                  "    postman.setNextRequest(\"Choose workflow manually\");",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"response has decision\", function () { pm.expect(json).to.have.property(\"decision\"); });",
+                  "pm.collectionVariables.set(\"selectionDecision\", json.decision);",
+                  "if (json.decision !== \"manual_choice\") { postman.setNextRequest(\"Get matched workflow document\"); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Choose workflow manually",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}/choose",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "selection",
+                "sessions",
+                "{{sessionId}}",
+                "choose"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workflow_id\": \"{{workflowId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Only meaningful if the decision was 'manual_choice'. workflow_id must be one of the session's candidates."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get(\"selectionDecision\") === \"matched\") {",
+                  "    postman.setNextRequest(\"Get matched workflow document\");",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has decision\", function () { pm.expect(pm.response.json()).to.have.property(\"decision\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get matched workflow document",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}/workflow",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "selection",
+                "sessions",
+                "{{sessionId}}",
+                "workflow"
+              ]
+            },
+            "description": "409 if the session hasn't matched yet."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has workflow_id\", function () { pm.expect(pm.response.json()).to.have.property(\"workflow_id\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "description": "One request per error class, asserting the { error, code, details } shape from error-handler.middleware.ts.",
+      "item": [
+        {
+          "name": "Create draft — missing text (400)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/drafts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drafts"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Missing text\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", function () { pm.response.to.have.status(400); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is VALIDATION_ERROR\", function () { pm.expect(json.code).to.eql(\"VALIDATION_ERROR\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get workflow — unknown id (404)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/does_not_exist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "does_not_exist"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", function () { pm.response.to.have.status(404); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is NOT_FOUND\", function () { pm.expect(json.code).to.eql(\"NOT_FOUND\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Save workflow — invalid document (400)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/workflows",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workflow\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "ValidationService.assertValid throws ValidationError (400), not 422 — there is no separate schema-validation status code in this implementation."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", function () { pm.response.to.have.status(400); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is VALIDATION_ERROR\", function () { pm.expect(json.code).to.eql(\"VALIDATION_ERROR\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Review workflow — bad review_status (400)",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}",
+                "review"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"review_status\": \"not_a_real_status\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", function () { pm.response.to.have.status(400); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is VALIDATION_ERROR\", function () { pm.expect(json.code).to.eql(\"VALIDATION_ERROR\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get matched workflow — unmatched session (409)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}/workflow",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "selection",
+                "sessions",
+                "{{sessionId}}",
+                "workflow"
+              ]
+            },
+            "description": "Run this against a freshly started session (before it has matched) to see the 409. Against the shared {{sessionId}} after the Selection folder has run, it may already be matched — start a new session first if needed."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409 or 200\", function () { pm.expect([409, 200]).to.include(pm.response.code); });",
+                  "if (pm.response.code === 409) {",
+                  "    var json = pm.response.json();",
+                  "    pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "    pm.test(\"code is CONFLICT\", function () { pm.expect(json.code).to.eql(\"CONFLICT\"); });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown route (404)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/nope",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nope"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", function () { pm.response.to.have.status(404); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is NOT_FOUND\", function () { pm.expect(json.code).to.eql(\"NOT_FOUND\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

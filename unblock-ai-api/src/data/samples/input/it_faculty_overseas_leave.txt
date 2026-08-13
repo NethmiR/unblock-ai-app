@@ -1,0 +1,13 @@
+IT Faculty Overseas Leave Approval
+
+Undergraduate students in the Information Technology faculty who plan to travel overseas during the academic term must apply for leave approval before departure.
+
+The student provides the following information: full name, student index number, destination country, destination city, departure date, return date, and a detailed reason for travel.
+
+The request is first reviewed by the student's Academic Advisor. The advisor may approve the request, reject it, or request more information from the student. If more information is requested, the chat reopens for the student to provide it, and the request returns to the same advisor for review. If the advisor rejects the request, the process ends and the student is notified with the reason.
+
+Once the Academic Advisor approves, the request moves to the Head of Department for sign-off, with the same approve / reject / request-more-information options.
+
+If the total trip duration (from departure date to return date, inclusive) exceeds 30 days, the request additionally requires approval from the Dean of the IT Faculty after the Head of Department approves. Trips of 30 days or fewer do not require Dean approval.
+
+Once all required approvals are complete, the system issues a reference number in the format LEAVE-{YEAR}-{5-digit sequence}, notifies the student by email, and instructs them to collect their physical authorized travel letter from the faculty office using the reference number.

@@ -1,0 +1,201 @@
+{
+  "schema_version": "1.0",
+  "workflow_id": "departmental_event_workshop",
+  "title": "Departmental Event & Workshop Organization",
+  "description": "Approval process for departments organizing an event or workshop, covering hall booking, speaker security clearance, and refreshments budget.",
+
+  "retrieval_summary": {
+    "one_liner": "Get approval to run a departmental event or workshop, including the hall booking and refreshments.",
+    "aliases": [
+      "event approval",
+      "workshop approval",
+      "departmental event organization",
+      "hall booking for an event"
+    ],
+    "keywords": [
+      "book a hall",
+      "run a workshop",
+      "organise an event",
+      "seminar",
+      "guest speaker",
+      "refreshments",
+      "catering",
+      "auditorium",
+      "venue"
+    ],
+    "requester_types": [
+      "academic staff",
+      "department coordinators",
+      "student societies"
+    ],
+    "triggers": [
+      "running a workshop for the department",
+      "booking a hall for a seminar",
+      "inviting an external speaker",
+      "arranging refreshments for a departmental event"
+    ],
+    "not_for": [
+      "personal or private venue bookings",
+      "regular timetabled lectures",
+      "events organised outside the department",
+      "overnight or residential events"
+    ]
+  },
+
+  "scope": {
+    "institution_type": "university",
+    "applies_to": {
+      "actor_type": "staff",
+      "constraints": []
+    }
+  },
+
+  "requester": { "actor_type": "staff", "identifier_field": "department_id" },
+
+  "inputs": [
+    {
+      "id": "event_name",
+      "label": "Event Name",
+      "description": "Name of the event or workshop.",
+      "type": "string",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null
+    },
+    {
+      "id": "expected_attendance",
+      "label": "Expected Attendance",
+      "description": "Estimated number of attendees.",
+      "type": "number",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": 1, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null
+    }
+  ],
+
+  "computed": [],
+
+  "steps": [
+    {
+      "id": "hall_booking",
+      "name": "Hall Booking Approval",
+      "type": "approval",
+      "description": "Approval of the venue booking for the event.",
+      "assignee": {
+        "resolution": "static",
+        "role": "venue_admin",
+        "relative_to": null,
+        "directory_query": null,
+        "fallback_role": null,
+        "display_name": "Campus Administration / Hall Warden"
+      },
+      "depends_on": [],
+      "initial_state": "auto",
+      "blocked_reason": null,
+      "condition": null,
+      "instructions_to_approver": "Confirm venue availability, name, and capacity for the requested event.",
+      "response_fields": [
+        { "id": "confirmed_capacity", "label": "Confirmed Venue Capacity", "type": "number", "required_on_outcome": ["approved"] },
+        { "id": "venue_name", "label": "Assigned Venue", "type": "string", "required_on_outcome": ["approved"] }
+      ],
+      "context_from_steps": [],
+      "outcomes": {
+        "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
+        "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
+        "request_more_info": null
+      },
+      "notifications": {
+        "on_assign": { "channel": "email", "template": "approval_request" },
+        "on_outcome": { "channel": "email", "template": "approval_result" }
+      },
+      "sla": { "reminder_after_hours": 48, "escalate_after_hours": 120 }
+    },
+    {
+      "id": "speaker_clearance",
+      "name": "Guest Speaker Security Clearance",
+      "type": "approval",
+      "description": "Security clearance for the guest speaker, run independently of hall booking.",
+      "assignee": {
+        "resolution": "static",
+        "role": "security_office",
+        "relative_to": null,
+        "directory_query": null,
+        "fallback_role": null,
+        "display_name": null
+      },
+      "depends_on": [],
+      "initial_state": "auto",
+      "blocked_reason": null,
+      "condition": null,
+      "instructions_to_approver": "Verify and clear the guest speaker for campus access.",
+      "response_fields": [],
+      "context_from_steps": [],
+      "outcomes": {
+        "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
+        "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
+        "request_more_info": null
+      },
+      "notifications": {
+        "on_assign": { "channel": "email", "template": "approval_request" },
+        "on_outcome": { "channel": "email", "template": "approval_result" }
+      },
+      "sla": { "reminder_after_hours": 48, "escalate_after_hours": 120 }
+    },
+    {
+      "id": "refreshments_approval",
+      "name": "Refreshments Budget Approval",
+      "type": "approval",
+      "description": "Budget approval for catering, gated on the confirmed venue capacity.",
+      "assignee": {
+        "resolution": "static",
+        "role": "finance_office",
+        "relative_to": null,
+        "directory_query": null,
+        "fallback_role": null,
+        "display_name": null
+      },
+      "depends_on": [{ "step_id": "hall_booking", "required_outcome": "approved" }],
+      "initial_state": "blocked",
+      "blocked_reason": "Catering cost estimate depends on the confirmed venue capacity.",
+      "condition": null,
+      "instructions_to_approver": "Approve the refreshments budget based on the confirmed venue capacity.",
+      "response_fields": [],
+      "context_from_steps": [
+        { "step_id": "hall_booking", "field": "confirmed_capacity", "as": "venue_capacity" }
+      ],
+      "outcomes": {
+        "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
+        "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
+        "request_more_info": null
+      },
+      "notifications": {
+        "on_assign": { "channel": "email", "template": "approval_request" },
+        "on_outcome": { "channel": "email", "template": "approval_result" }
+      },
+      "sla": { "reminder_after_hours": 48, "escalate_after_hours": 120 }
+    }
+  ],
+
+  "completion": {
+    "rule": "all_required_steps_complete",
+    "required_steps": ["hall_booking", "speaker_clearance", "refreshments_approval"],
+    "actions": [
+      { "type": "notify", "format": null, "store_as": null, "target": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }, "template": "event_confirmed", "channel": "email", "message": null }
+    ]
+  },
+
+  "metadata": {
+    "created_from": "plain_text",
+    "source_text_hash": "sha256:placeholder",
+    "extraction_model": "gpt-4o-2024-08-06",
+    "extraction_timestamp": "2026-07-30T10:00:00Z",
+    "confidence": "medium",
+    "ambiguities": [
+      "Source text does not state what happens if the hall booking or speaker clearance is rejected; modeled as terminating the workflow, consistent with the leave workflow's rejection handling."
+    ],
+    "unmapped_roles": [],
+    "review_status": "pending_admin_review"
+  }
+}

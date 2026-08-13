@@ -1,0 +1,261 @@
+{
+  "schema_version": "1.0",
+  "workflow_id": "it_faculty_overseas_leave",
+  "title": "IT Faculty Overseas Leave Approval",
+  "description": "Application and approval process for IT Faculty undergraduates travelling overseas during the academic term.",
+
+  "retrieval_summary": {
+    "one_liner": "Apply for permission to travel overseas during the academic term as an IT Faculty undergraduate.",
+    "aliases": [
+      "overseas leave",
+      "IT faculty overseas leave",
+      "overseas leave approval",
+      "foreign travel approval"
+    ],
+    "keywords": [
+      "going abroad",
+      "travel overseas",
+      "leave the country",
+      "foreign trip",
+      "study tour",
+      "conference abroad",
+      "leave of absence",
+      "travel permission"
+    ],
+    "requester_types": [
+      "undergraduate students",
+      "IT faculty students",
+      "Information Technology undergraduates"
+    ],
+    "triggers": [
+      "travelling abroad during the semester",
+      "attending a conference in another country",
+      "an overseas exchange or study tour",
+      "leaving the country for more than a few days during term"
+    ],
+    "not_for": [
+      "local leave or absence within the country",
+      "staff or academic-staff overseas travel",
+      "students from faculties other than Information Technology",
+      "postgraduate students"
+    ]
+  },
+
+  "scope": {
+    "institution_type": "university",
+    "applies_to": {
+      "actor_type": "student",
+      "constraints": [
+        { "attribute": "faculty", "operator": "equals", "value": "Information Technology" },
+        { "attribute": "level", "operator": "equals", "value": "undergraduate" }
+      ]
+    }
+  },
+
+  "requester": { "actor_type": "student", "identifier_field": "student_index_number" },
+
+  "inputs": [
+    {
+      "id": "full_name",
+      "label": "Full Name",
+      "description": "Student's full legal name as registered.",
+      "type": "string",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": 2, "max_length": 120, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": "Ask conversationally; confirm spelling if unusual."
+    },
+    {
+      "id": "student_index_number",
+      "label": "Student Index Number",
+      "description": "The student's official index number.",
+      "type": "string",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null
+    },
+    {
+      "id": "destination_country",
+      "label": "Destination Country",
+      "description": "Country the student is travelling to.",
+      "type": "string",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null
+    },
+    {
+      "id": "destination_city",
+      "label": "Destination City",
+      "description": "City the student is travelling to.",
+      "type": "string",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null
+    },
+    {
+      "id": "departure_date",
+      "label": "Departure Date",
+      "description": "Date the student departs.",
+      "type": "date",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": "today", "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null
+    },
+    {
+      "id": "return_date",
+      "label": "Return Date",
+      "description": "Date the student returns.",
+      "type": "date",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": "inputs.departure_date", "not_after_field": null, "pattern": null },
+      "collection_hint": null
+    },
+    {
+      "id": "travel_reason",
+      "label": "Detailed Reason for Travel",
+      "description": "Explanation of the purpose of travel.",
+      "type": "text",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null
+    }
+  ],
+
+  "computed": [
+    {
+      "id": "trip_duration_days",
+      "description": "Total days between departure and return, inclusive.",
+      "operation": "date_diff_days",
+      "arguments": { "from": "inputs.departure_date", "to": "inputs.return_date", "inclusive": true, "values": [], "source": null, "key": null, "value": null }
+    }
+  ],
+
+  "steps": [
+    {
+      "id": "advisor_review",
+      "name": "Academic Advisor Review",
+      "type": "approval",
+      "description": "Initial review by the student's academic advisor.",
+      "assignee": {
+        "resolution": "dynamic",
+        "role": "academic_advisor",
+        "relative_to": "requester",
+        "directory_query": "Assigned academic advisor for the student index number.",
+        "fallback_role": "head_of_department",
+        "display_name": null
+      },
+      "depends_on": [],
+      "initial_state": "auto",
+      "blocked_reason": null,
+      "condition": null,
+      "instructions_to_approver": "Review dates and reason; ensure no conflict with critical exams or academic requirements.",
+      "response_fields": [],
+      "context_from_steps": [],
+      "outcomes": {
+        "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
+        "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
+        "request_more_info": { "action": "reopen_input", "notify": [], "include_reason": null, "return_to_step": "self", "prompt_source": "approver_message" }
+      },
+      "notifications": {
+        "on_assign": { "channel": "email", "template": "approval_request" },
+        "on_outcome": { "channel": "email", "template": "approval_result" }
+      },
+      "sla": { "reminder_after_hours": 48, "escalate_after_hours": 120 }
+    },
+    {
+      "id": "hod_review",
+      "name": "Head of Department Sign-off",
+      "type": "approval",
+      "description": "Departmental sign-off on the leave request.",
+      "assignee": {
+        "resolution": "dynamic",
+        "role": "head_of_department",
+        "relative_to": "requester",
+        "directory_query": null,
+        "fallback_role": null,
+        "display_name": null
+      },
+      "depends_on": [{ "step_id": "advisor_review", "required_outcome": "approved" }],
+      "initial_state": "auto",
+      "blocked_reason": null,
+      "condition": null,
+      "instructions_to_approver": "Review dates and reason for departmental conflicts.",
+      "response_fields": [],
+      "context_from_steps": [],
+      "outcomes": {
+        "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
+        "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
+        "request_more_info": { "action": "reopen_input", "notify": [], "include_reason": null, "return_to_step": "self", "prompt_source": "approver_message" }
+      },
+      "notifications": {
+        "on_assign": { "channel": "email", "template": "approval_request" },
+        "on_outcome": { "channel": "email", "template": "approval_result" }
+      },
+      "sla": { "reminder_after_hours": 48, "escalate_after_hours": 120 }
+    },
+    {
+      "id": "dean_review",
+      "name": "Dean of IT Faculty Approval",
+      "type": "approval",
+      "description": "Additional approval required for trips longer than 30 days.",
+      "assignee": {
+        "resolution": "dynamic",
+        "role": "dean",
+        "relative_to": "requester",
+        "directory_query": null,
+        "fallback_role": null,
+        "display_name": null
+      },
+      "depends_on": [{ "step_id": "hod_review", "required_outcome": "approved" }],
+      "initial_state": "auto",
+      "blocked_reason": null,
+      "condition": {
+        "operator": "greater_than",
+        "left": "computed.trip_duration_days",
+        "right": 30,
+        "clauses": [],
+        "description": "Dean approval required only for trips longer than 30 days."
+      },
+      "instructions_to_approver": "Review long-duration overseas leave request for faculty-level approval.",
+      "response_fields": [],
+      "context_from_steps": [],
+      "outcomes": {
+        "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
+        "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
+        "request_more_info": { "action": "reopen_input", "notify": [], "include_reason": null, "return_to_step": "self", "prompt_source": "approver_message" }
+      },
+      "notifications": {
+        "on_assign": { "channel": "email", "template": "approval_request" },
+        "on_outcome": { "channel": "email", "template": "approval_result" }
+      },
+      "sla": { "reminder_after_hours": 48, "escalate_after_hours": 120 }
+    }
+  ],
+
+  "completion": {
+    "rule": "all_required_steps_complete",
+    "required_steps": ["advisor_review", "hod_review", "dean_review"],
+    "actions": [
+      { "type": "issue_reference_number", "format": "LEAVE-{YYYY}-{SEQ:5}", "store_as": "reference_number", "target": null, "template": null, "channel": null, "message": null },
+      { "type": "notify", "format": null, "store_as": null, "target": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }, "template": "completion_notice", "channel": "email", "message": null },
+      { "type": "instruction_to_requester", "format": null, "store_as": null, "target": null, "template": null, "channel": null, "message": "Collect your physical authorized travel letter from the faculty office using your reference number." }
+    ]
+  },
+
+  "metadata": {
+    "created_from": "plain_text",
+    "source_text_hash": "sha256:placeholder",
+    "extraction_model": "gpt-4o-2024-08-06",
+    "extraction_timestamp": "2026-07-30T10:00:00Z",
+    "confidence": "high",
+    "ambiguities": [],
+    "unmapped_roles": [],
+    "review_status": "pending_admin_review"
+  }
+}

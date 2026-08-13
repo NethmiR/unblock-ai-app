@@ -1,0 +1,11 @@
+Departmental Event & Workshop Organization
+
+When a department submits a request to organize an event or workshop, the submission is split into three sub-requests that are handled independently: hall booking, guest speaker security clearance, and refreshments budget approval.
+
+Hall booking is reviewed by Campus Administration (the hall warden). They confirm the venue name and the confirmed venue capacity, or reject the booking.
+
+Guest speaker security clearance is reviewed by the Security Office, independently and concurrently with the hall booking — neither waits on the other.
+
+Refreshments budget approval is automatically placed on hold when the event request is submitted, because the catering cost estimate depends on the confirmed venue capacity. As soon as the hall booking is approved, the refreshments approval is released and sent to the Finance Office, using the confirmed venue capacity to size the catering budget.
+
+The event is considered fully organized only once all three sub-requests — hall booking, security clearance, and refreshments approval — are approved. A single consolidated status page shows the state of all three. When everything is approved, the requester is notified by email that the event is confirmed.

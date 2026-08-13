@@ -1,0 +1,36 @@
+[
+  {
+    "query": "I want to apply for overseas leave",
+    "expect": "ambiguous",
+    "expect_in_candidates": ["it_faculty_overseas_leave"],
+    "note": "Bare request with no faculty - must ask, not guess."
+  },
+  {
+    "query": "I'm in the IT faculty and going abroad for 2 weeks",
+    "expect": "matched",
+    "expect_workflow": "it_faculty_overseas_leave",
+    "note": "Faculty stated up front - no question needed."
+  },
+  {
+    "query": "need to book a hall for a workshop next month",
+    "expect": "matched",
+    "expect_workflow": "departmental_event_workshop",
+    "note": "Informal phrasing; tests the keywords field."
+  },
+  {
+    "query": "how do I reset my email password",
+    "expect": "no_match",
+    "note": "NEGATIVE CASE. A selector that answers this is broken."
+  },
+  {
+    "query": "I need to buy a new oscilloscope for the electronics lab",
+    "expect": "matched",
+    "expect_workflow": "lab_equipment_purchase_request",
+    "note": "Domain vocabulary the title does not contain."
+  },
+  {
+    "query": "what's the weather like tomorrow",
+    "expect": "no_match",
+    "note": "NEGATIVE CASE. Completely off-domain."
+  }
+]

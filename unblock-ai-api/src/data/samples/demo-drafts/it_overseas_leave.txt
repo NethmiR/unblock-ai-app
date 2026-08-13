@@ -1,0 +1,22 @@
+Any undergraduate student of the Faculty of Information Technology who intends
+to travel overseas during the academic term must obtain prior approval before
+leaving the country.
+
+The student submits a request stating their full name, index number, the
+destination country, the departure date, the return date, and the reason for
+the trip.
+
+The request first goes to the student's Academic Advisor for approval. Once the
+Academic Advisor approves, it goes to the Head of the Department of Information
+Technology. At any point an approver may either approve the request, reject it
+with a reason, or ask the student for more information, in which case the
+student is asked for the missing detail and the request returns to that same
+approver.
+
+If the total duration of the trip exceeds 30 days, the request must additionally
+be endorsed by the Dean of the Faculty after the Head of Department has
+approved.
+
+When all required approvals are complete, the student is issued a signed
+overseas leave authorization letter and notified that it is ready for
+collection.

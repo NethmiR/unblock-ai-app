@@ -1,0 +1,42 @@
+{
+  "name": "unblock-ai-api",
+  "version": "1.0.0",
+  "description": "Express + TypeScript backend that extracts, stores, retrieves, and helps select institutional approval workflow templates.",
+  "main": "dist/src/server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "prestart": "npm run build",
+    "build": "tsc && tsx scripts/copy-assets.script.ts",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "test": "node --import tsx --test \"tests/unit/**/*.test.ts\" \"tests/integration/**/*.test.ts\"",
+    "test:live": "node --import tsx --test \"tests/live/**/*.test.ts\"",
+    "init-db": "tsx scripts/init-db.script.ts",
+    "backfill:summaries": "tsx scripts/backfill-summaries.script.ts",
+    "evaluate:selection": "tsx scripts/evaluate-selection.script.ts",
+    "smoke-test:azure": "tsx scripts/smoke-test-azure.script.ts",
+    "smoke-test:embeddings": "tsx scripts/smoke-test-embeddings.script.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongodb": "^7.5.0",
+    "openai": "^7.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.1",
+    "mongodb-memory-server": "^10.4.3",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  }
+}

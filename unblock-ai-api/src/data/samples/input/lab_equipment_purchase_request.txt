@@ -1,0 +1,11 @@
+Lab Equipment Purchase Request
+
+Researchers in any department may request the purchase of laboratory equipment costing over $500.
+
+The researcher provides: the equipment name, a description of its intended use, the estimated cost, and the supplier name.
+
+The request is first reviewed by the researcher's direct Supervisor, who may approve, reject, or ask the researcher for more details. If more details are requested, the researcher is prompted again and the same Supervisor reviews the updated request. A rejection ends the process and the researcher is notified with the reason given.
+
+If the Supervisor approves and the estimated cost exceeds $5000, the request also requires approval from the Procurement Office before proceeding. Requests of $5000 or less skip this step entirely.
+
+Once approved, the Procurement Office (or the Supervisor alone, for smaller purchases) places the order and records a purchase order number in the format PO-{YEAR}-{5-digit sequence}. The researcher is notified by email once the order has been placed, and told that delivery typically takes 2-3 weeks.
