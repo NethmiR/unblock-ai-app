@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b6f0a1c2-3e6a-4b1a-9b7a-9f6d1c2a5e01",
     "name": "UNBLOCK-AI API",
-    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Drafts, Workflows, Selection, Error cases.",
+    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Drafts, Workflows, Selection, Tasks, Error cases.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -28,6 +28,14 @@
     },
     {
       "key": "selectionDecision",
+      "value": ""
+    },
+    {
+      "key": "taskId",
+      "value": ""
+    },
+    {
+      "key": "requirementKey",
       "value": ""
     }
   ],
@@ -757,6 +765,283 @@
       ]
     },
     {
+      "name": "Tasks",
+      "description": "Create a task from a matched selection session, collect requirement values one at a time via GET .../next, finalize, list, and cancel. Chains sessionId (from Selection) -> taskId.",
+      "item": [
+        {
+          "name": "Create task from session",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/tasks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{sessionId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "session_id must belong to a session with decision: matched (409 CONFLICT otherwise)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"response has id and reference\", function () { pm.expect(json).to.have.property(\"id\"); pm.expect(json).to.have.property(\"reference\"); });",
+                  "pm.test(\"status is collecting\", function () { pm.expect(json).to.have.property(\"status\", \"collecting\"); });",
+                  "pm.collectionVariables.set(\"taskId\", json.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get task by id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has requirements array\", function () { pm.expect(pm.response.json()).to.have.property(\"requirements\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get next requirement",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/next",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "next"
+              ]
+            },
+            "description": "Returns the next pending required requirement, then pending optional ones, then { requirement: null, complete: true }. Run this + 'Submit next requirement value' in a loop (Collection Runner) until complete is true."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"response has complete flag\", function () { pm.expect(json).to.have.property(\"complete\"); });",
+                  "if (json.requirement) { pm.collectionVariables.set(\"requirementKey\", json.requirement.key); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit next requirement value",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/values",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "values"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"{{requirementKey}}\",\n  \"value\": \"example value\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "value is polymorphic (string/number/boolean/{name,email}) depending on the requirement's type — edit the body to match whatever 'Get next requirement' returned before sending. A person requirement (source: actor) expects { \"name\": ..., \"email\": ... }."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 400\", function () { pm.expect([200, 400]).to.include(pm.response.code); });",
+                  "if (pm.response.code === 200) { pm.test(\"response has requirements array\", function () { pm.expect(pm.response.json()).to.have.property(\"requirements\"); }); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Finalize task",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/finalize",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "finalize"
+              ]
+            },
+            "description": "400 VALIDATION_ERROR if any required requirement is still unfilled — run 'Get next requirement' / 'Submit next requirement value' in a loop first."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 400\", function () { pm.expect([200, 400]).to.include(pm.response.code); });",
+                  "if (pm.response.code === 200) { pm.test(\"status is ready\", function () { pm.expect(pm.response.json()).to.have.property(\"status\", \"ready\"); }); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List tasks",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tasks?session_id={{sessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{sessionId}}"
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response is an array\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel task",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "status"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"cancelled\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Terminal — only run this against a scratch task you are done with, since it 409s on later re-use of {{taskId}} elsewhere in this folder."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"status is cancelled\", function () { pm.expect(pm.response.json()).to.have.property(\"status\", \"cancelled\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Error cases",
       "description": "One request per error class, asserting the { error, code, details } shape from error-handler.middleware.ts.",
       "item": [
@@ -960,6 +1245,84 @@
                   "    pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
                   "    pm.test(\"code is CONFLICT\", function () { pm.expect(json.code).to.eql(\"CONFLICT\"); });",
                   "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create task — missing session_id (400)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/tasks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", function () { pm.response.to.have.status(400); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is VALIDATION_ERROR\", function () { pm.expect(json.code).to.eql(\"VALIDATION_ERROR\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Finalize task — already finalized (409)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/finalize",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "finalize"
+              ]
+            },
+            "description": "Run this after the Tasks folder has already finalized {{taskId}} once. If {{taskId}} is still collecting, this will 400 instead — that is also a valid client-visible failure, just not the one this request targets."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409 or 400\", function () { pm.expect([409, 400]).to.include(pm.response.code); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "if (pm.response.code === 409) { pm.test(\"code is CONFLICT\", function () { pm.expect(json.code).to.eql(\"CONFLICT\"); }); }"
                 ]
               }
             }

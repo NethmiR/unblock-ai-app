@@ -2,15 +2,16 @@
 
 Two files:
 
-- `unblock-ai.postman_collection.json` — 23 requests across 5 folders, run in order:
-  **Health → Drafts → Workflows → Selection → Error cases**.
+- `unblock-ai.postman_collection.json` — requests across 6 folders, run in order:
+  **Health → Drafts → Workflows → Selection → Tasks → Error cases**.
 - `unblock-ai.postman_environment.json` — just `baseUrl`. `draftId`, `workflowId`,
-  `sessionId`, `templateVersion`, and `selectionDecision` live only as **collection**
-  variables (declared on the collection itself, visible under the collection's
-  *Variables* tab) so that `pm.collectionVariables.set(...)` in each request's test
-  script is never shadowed by an empty same-named environment variable — Postman
-  resolves environment variables first, so if these also existed in the environment
-  with an empty value, the ids the tests capture would never be seen by later requests.
+  `sessionId`, `templateVersion`, `selectionDecision`, `taskId`, and `requirementKey`
+  live only as **collection** variables (declared on the collection itself, visible
+  under the collection's *Variables* tab) so that `pm.collectionVariables.set(...)` in
+  each request's test script is never shadowed by an empty same-named environment
+  variable — Postman resolves environment variables first, so if these also existed in
+  the environment with an empty value, the ids the tests capture would never be seen by
+  later requests.
 
 ## Import
 
@@ -38,10 +39,10 @@ request timeout: **Settings → General → Request timeout in ms** — set it t
 ## Running the whole collection
 
 Use the **Collection Runner** (or `newman run unblock-ai.postman_collection.json -e
-unblock-ai.postman_environment.json`) and select all 5 folders in their listed order.
+unblock-ai.postman_environment.json`) and select all 6 folders in their listed order.
 No manual variable entry is required — every id (`draftId`, `workflowId`, `sessionId`,
-`templateVersion`) is written into a collection variable by a `pm.test` script in an
-earlier request and read by a later one.
+`templateVersion`, `taskId`) is written into a collection variable by a `pm.test` script
+in an earlier request and read by a later one.
 
 Two requests carry conditional logic in a pre-request script and call
 `postman.setNextRequest(...)` to skip a step that does not apply to the current session:
@@ -53,6 +54,17 @@ Two requests carry conditional logic in a pre-request script and call
 
 Each pass of the **Selection** folder therefore takes a different path through those two
 requests depending on what the Selector Agent decided — this is expected, not a failure.
+
+## Tasks folder
+
+Chains `sessionId` (from the **Selection** folder) into `POST /tasks`, then walks the
+requirement list. `Get next requirement` and `Submit next requirement value` are meant
+to be run in a loop until `next` reports `complete: true` — this is the one manual step
+in the collection: `Submit next requirement value`'s body is a placeholder
+(`"example value"`) that you must edit per requirement, since a `person` requirement
+(`source: "actor"`) expects `{ "name": ..., "email": ... }` rather than a scalar.
+`Finalize task` will 400 until every required requirement is filled. `Cancel task` is
+terminal — only run it against a task you are done with.
 
 ## Error cases folder
 

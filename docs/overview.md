@@ -15,7 +15,7 @@ This document exists so future implementation work can quickly understand what a
 
 ## 1. Main functions we handle
 
-There are **five** functional areas. Two write paths (admin), one read path (end user), plus supporting infrastructure.
+There are **six** functional areas. Two write paths (admin), two end-user paths (selection, task planning), plus supporting infrastructure.
 
 ### A. Draft management (admin write path, step 1)
 `src/services/draft.service.ts` · `src/models/draft.model.ts`
@@ -80,7 +80,43 @@ A multi-round conversation mapping a plain-language request onto one template:
 
 **Key design decision** (`selection.service.ts`): retrieval runs **only once**, in round 1. The candidate set is deliberately frozen so it can't drift under an in-progress clarifying conversation. Round cap is `SELECTION_MAX_ROUNDS` (default 2).
 
-### F. Frontend — two distinct UIs
+### F. Task planning (end-user requirement collection)
+`src/services/task.service.ts` · `src/services/planner.service.ts` · `src/models/task.model.ts`
+
+Turns a matched workflow (from E) into a task that walks the requester through supplying
+every value the workflow needs, then hands off a runnable plan:
+
+1. **Create** (`POST /tasks`) — pulls the matched, version-pinned workflow off a
+   selection session and compiles it (`PlannerService.compile`, pure/no I/O) into a
+   flat **requirement list** plus one step-state entry per workflow step. Requirements
+   come from two sources: `workflow.inputs` needing the requester (`source: "input"`),
+   and `dynamic`-resolution step assignees (`source: "actor"`, `type: "person"`) —
+   walked in topological order and de-duplicated so two steps needing the same
+   role/relative-to share one requirement.
+2. **Collect** (`GET /tasks/:id/next`, `POST /tasks/:id/values`) — one requirement at a
+   time. Each value is type-coerced and validated (`value-validator.util.ts`),
+   including cross-field checks (a return date can't be before a `not_before_field`
+   departure date).
+3. **Finalize** (`POST /tasks/:id/finalize`) — once every required requirement is
+   filled, collected `actor:*` people are attached to their steps' `assignee`, and step
+   states are seeded: no-dependency steps → `ready`, everything else → `blocked`.
+   `status` moves `collecting` → `ready`.
+4. **Cancel** (`PATCH /tasks/:id/status`) — the only other status transition; any
+   non-terminal task can move to `cancelled`.
+
+**Not execution.** Finalizing computes initial step states only — nothing progresses a
+step, resolves a `dynamic` approver against a real directory, sends a notification, or
+issues an approval token. `steps[].approval_token` and `steps[].reason` exist on the
+document and are always `null` in this slice, reserved for that later work.
+`in_progress` / `completed` / `rejected` are declared `TaskStatus` values with no
+endpoint that sets them yet.
+
+**Approver email is requester-supplied and untrusted** — for an `actor:*` requirement,
+the requester types in their own approver's name and email; there is no directory
+lookup here, so this is a trust boundary worth remembering before building anything
+that emails that address automatically.
+
+### G. Frontend — two distinct UIs
 
 **Admin** (`src/app/admin/`) — the authoring surface:
 - Template list with institution-type filtering
@@ -153,17 +189,18 @@ A multi-round conversation mapping a plain-language request onto one template:
 **The two worked fixtures serve three roles at once** — few-shot prompt examples, validation test fixtures, *and* live extraction-accuracy gold data. Any schema or prompt change must keep all three consistent.
 
 **Not built yet** (explicitly out of scope):
-- **No execution engine** — nothing runs a saved workflow, resolves actors against a real directory, evaluates conditions, or sends notifications. The schema is designed for it; none of it exists.
+- **No execution engine** — task planning (F) compiles requirements and seeds initial step states, but nothing progresses a step past that, resolves a `dynamic` actor against a real directory, evaluates a `condition`, or sends a notification. The schema and task model are designed for it; the runtime isn't built.
+- **No approval flow** — no approval tokens, no approver page, no email dispatch. `steps[].approval_token` / `reason` exist as always-`null` fields on the task document.
 - **No authentication** on any HTTP route (`req.user` is always undefined; `submitted_by` is always `null`).
-- **No directory/identity service** integration.
+- **No directory/identity service** integration — task planning's `actor:*` requirements are filled with requester-supplied name/email, not a directory lookup.
 - **No `DELETE` endpoint** anywhere.
 - Portal job list is **placeholder fixtures**, not real data.
 
-**Known rough edge:** malformed ObjectIds on `/drafts/:id*` and `/selection/sessions/:id*` fail inside the Mongo driver and surface as **500 `DATABASE_ERROR`**, not 400/404. The frontend already works around this at `admin/templates/[id]/page.tsx`.
+**Known rough edge:** malformed ObjectIds on `/drafts/:id*`, `/selection/sessions/:id*`, and `/tasks/:id*` fail inside the Mongo driver and surface as **500 `DATABASE_ERROR`**, not 400/404. The frontend already works around this at `admin/templates/[id]/page.tsx`.
 
 **Documentation locations** (per-subproject, unusually good and current — check these before implementing anything new):
 - `unblock-ai-api/docs/architecture/project-overview.md` — the best single entry point for the backend
-- `unblock-ai-api/docs/api/api-documentation.md` — all 18 endpoints with request/response bodies
+- `unblock-ai-api/docs/api/api-documentation.md` — all 25 endpoints with request/response bodies
 - `unblock-ai-api/docs/architecture/rag-implementation-guide.md` — retrieval design
 - `unblock-ai-api/docs/postman/` — runnable collection that chains ids automatically
 - `unblock-ai-web/docs/fe-api-migration-plan.md` — FE/API contract history (mostly resolved; see below)
@@ -182,5 +219,6 @@ Full detail in `unblock-ai-api/docs/api/api-documentation.md`. Base URL: `http:/
 | Workflows | `POST /workflows/extract` (preview) · `POST /workflows` · `GET /workflows` · `GET /workflows/:id` · `PUT /workflows/:id` · `POST /workflows/:id/validate` · `GET /workflows/:id/record` · `PATCH /workflows/:id/review` |
 | Drafts | `POST /drafts` · `GET /drafts` · `GET /drafts/:id` · `POST /drafts/:id/extract` |
 | Selection | `POST /selection/sessions` · `POST /selection/sessions/:id/answer` · `POST /selection/sessions/:id/choose` · `GET /selection/sessions/:id/workflow` |
+| Tasks | `POST /tasks` · `GET /tasks` · `GET /tasks/:id` · `GET /tasks/:id/next` · `POST /tasks/:id/values` · `POST /tasks/:id/finalize` · `PATCH /tasks/:id/status` |
 
 No `DELETE` route exists anywhere in the API.

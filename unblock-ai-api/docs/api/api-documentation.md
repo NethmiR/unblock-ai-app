@@ -5,7 +5,7 @@ manual testing in Postman.
 
 - **Server entry point:** `src/server.ts`
 - **App builder:** `src/app.ts`
-- **Route modules:** `src/routes/health.route.ts`, `src/routes/workflow.route.ts`, `src/routes/draft.route.ts`, `src/routes/selection.route.ts`
+- **Route modules:** `src/routes/health.route.ts`, `src/routes/workflow.route.ts`, `src/routes/draft.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`
 
 ---
 
@@ -29,6 +29,7 @@ The port comes from the `PORT` environment variable and defaults to `3000`.
 | `draftId`       | (filled in from a response) |
 | `workflowId`    | (filled in from a response) |
 | `sessionId`     | (filled in from a response) |
+| `taskId`        | (filled in from a response) |
 
 The runnable Postman collection and environment ship at [../postman/](../postman/).
 
@@ -85,8 +86,15 @@ only affects browsers; Postman ignores it.
 | 15 | `POST`  | `/api/selection/sessions/:id/answer`   | Answer a clarifying question (round 2+) |
 | 16 | `POST`  | `/api/selection/sessions/:id/choose`   | Pick a workflow manually |
 | 17 | `GET`   | `/api/selection/sessions/:id/workflow` | Get the matched workflow document |
+| 18 | `POST`  | `/api/tasks`                           | Create a task from a matched selection session |
+| 19 | `GET`   | `/api/tasks`                           | List tasks (filter by `session_id` / `status`) |
+| 20 | `GET`   | `/api/tasks/:id`                       | Get one task |
+| 21 | `GET`   | `/api/tasks/:id/next`                  | Get the next unfilled requirement |
+| 22 | `POST`  | `/api/tasks/:id/values`                | Submit a value for a requirement |
+| 23 | `POST`  | `/api/tasks/:id/finalize`              | Finalize a task once all required values are filled |
+| 24 | `PATCH` | `/api/tasks/:id/status`                | Cancel a task |
 
-18 total route bindings (17 original + health). There is **no** `DELETE` route
+25 total route bindings (24 original + health). There is **no** `DELETE` route
 anywhere in the codebase; `DELETE` appears in the CORS allow-list only.
 
 ---
@@ -811,7 +819,308 @@ The full document for the matched workflow — this drives the plan preview.
 
 ---
 
-## 7. Error responses
+## 7. Task endpoints (requirement collection)
+
+A task walks a requester through supplying the values a matched workflow needs, then
+finalizes into a runnable plan. It is created from a **matched** selection session
+(§6), and moves through a small status machine:
+
+| `status` | Meaning |
+| --------- | ------- |
+| `collecting` | Values are still being gathered. Only status in which `values` can change. |
+| `ready` | Finalized — every required value is filled and steps have their initial states. |
+| `in_progress` | Reserved for execution (not driven by any endpoint in this slice). |
+| `completed` | Reserved for execution. |
+| `rejected` | Reserved for execution. |
+| `cancelled` | Terminal. Set via §7.6. |
+
+There is **no email dispatch, no approval tokens, no approver page** in this slice —
+`steps[].approval_token` and `steps[].reason` exist on the task document and are
+always `null`. There is **no LLM question phrasing** — `GET /tasks/:id/next` returns a
+requirement's `label` and `collection_hint` as plain strings; the caller renders the
+prompt.
+
+A `TaskDto` (the shape returned by every endpoint below except §7.4) looks like:
+
+```json
+{
+  "id": "6710fa11b2c3d4e5f6078912",
+  "reference": "TASK-2026-00042",
+  "session_id": "6710f9c0a1b2c3d4e5f60789",
+  "workflow_id": "it_faculty_overseas_leave",
+  "version": 1,
+  "status": "collecting",
+  "requirements": [
+    {
+      "key": "destination_country",
+      "source": "input",
+      "ref": "destination_country",
+      "label": "Destination Country",
+      "description": "Country the student is travelling to.",
+      "type": "string",
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null,
+      "status": "pending"
+    },
+    {
+      "key": "actor:advisor_review",
+      "source": "actor",
+      "ref": "advisor_review",
+      "label": "Academic Advisor",
+      "description": null,
+      "type": "person",
+      "required": true,
+      "validation": null,
+      "collection_hint": "Name and email address of your Academic Advisor.",
+      "status": "pending"
+    }
+  ],
+  "values": {},
+  "steps": [
+    {
+      "step_id": "advisor_review",
+      "name": "Academic Advisor Approval",
+      "type": "approval",
+      "depends_on": [],
+      "state": "blocked",
+      "assignee": null,
+      "outcome": null,
+      "reason": null,
+      "responded_at": null,
+      "approval_token": null
+    }
+  ],
+  "audit": [
+    { "type": "task_created", "detail": null, "created_at": "2026-08-10T09:30:00.000Z" }
+  ],
+  "created_at": "2026-08-10T09:30:00.000Z",
+  "updated_at": "2026-08-10T09:30:00.000Z"
+}
+```
+
+Each `requirement.key` is either an input id (`source: "input"`) or `"actor:" +
+step_id` (`source: "actor"`, `type: "person"`). Input requirements come first, in
+declaration order; actor requirements follow, in topological step order, one per
+distinct `role`/`relative_to` pair (two steps needing the same approver share one
+requirement). `values` is keyed by `requirement.key`; a `person` value is
+`{ "name": string, "email": string }`.
+
+> **Approver email is requester-supplied and untrusted.** For an `actor:*`
+> requirement, the requester types in their own approver's name and email — there is
+> no directory lookup in this slice. See the code comment in
+> `requirement-builder.util.ts` at the point of capture.
+
+### 7.1 `POST /api/tasks`
+
+Creates a task from a matched selection session. Resolves the pinned workflow
+version, compiles requirements and step states (`PlannerService.compile`), assigns a
+sequential human-readable `reference`, and inserts with `status: "collecting"`.
+
+**Request body**
+
+| Field        | Type   | Required | Notes |
+| ------------ | ------ | -------- | ----- |
+| `session_id` | string | yes      | Non-empty; must be a session that has `matched` (§6.1–§6.3) |
+
+```json
+{ "session_id": "6710f9c0a1b2c3d4e5f60789" }
+```
+
+**201 Created** — a `TaskDto` (see above), `status: "collecting"`, `values: {}`,
+`audit` containing one `task_created` entry.
+
+Save `id` into `{{taskId}}`.
+
+**Errors**
+
+| Status | Cause |
+| ------ | ----- |
+| `400`  | `{ "error": "Body must include a non-empty 'session_id' field", "code": "VALIDATION_ERROR", "details": null }` |
+| `404`  | Unknown session id |
+| `409`  | `{ "error": "This session has not matched a workflow yet", "code": "CONFLICT", "details": null }` — same rule as §6.4 |
+
+---
+
+### 7.2 `GET /api/tasks/:id`
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `id`      | path | yes      | Task id (24-character hex Mongo ObjectId) |
+
+**200 OK** — a `TaskDto`.
+
+**404 Not Found** — `{ "error": "Task '<id>' not found", "code": "NOT_FOUND", "details": null }`
+
+> Same rough edge as elsewhere in the API: a malformed (non-24-hex) `:id` fails
+> inside the Mongo driver and surfaces as **500**, not 404 — see §8.1.
+
+---
+
+### 7.3 `GET /api/tasks` (list)
+
+**Query parameters**
+
+| Name         | Type   | Required | Notes |
+| ------------ | ------ | -------- | ----- |
+| `session_id` | string | no       | Exact match |
+| `status`     | string | no       | One of the `TaskStatus` values above; unrecognized values are silently ignored (no filter applied) |
+
+`GET {{baseUrl}}/tasks?session_id=6710f9c0a1b2c3d4e5f60789`
+
+**200 OK** — an array of `TaskDto`, newest `created_at` first. Empty array when
+nothing matches, not a 404.
+
+---
+
+### 7.4 `GET /api/tasks/:id/next`
+
+Returns the next requirement the caller should collect: the first `pending` +
+`required` requirement, in list order; if none, the first `pending` optional
+requirement; if none at all, `complete: true`.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `id`      | path | yes      | Task id |
+
+**200 OK** — a requirement still pending:
+
+```json
+{
+  "requirement": {
+    "key": "destination_country",
+    "source": "input",
+    "ref": "destination_country",
+    "label": "Destination Country",
+    "description": "Country the student is travelling to.",
+    "type": "string",
+    "required": true,
+    "validation": { "...": "null-filled" },
+    "collection_hint": null,
+    "status": "pending"
+  },
+  "complete": false
+}
+```
+
+**200 OK** — nothing left to collect:
+
+```json
+{ "requirement": null, "complete": true }
+```
+
+**404 Not Found** — same shape as §7.2.
+
+---
+
+### 7.5 `POST /api/tasks/:id/values`
+
+Submits one value against one requirement. Rejects unless the task is still
+`collecting`. Validates and coerces the value against the requirement's `type` and
+`validation` rules — including cross-field checks (`not_before_field` /
+`not_after_field`) evaluated against every value collected so far — then flips that
+requirement's `status` to `filled` and appends a `value_captured` audit entry.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `id`      | path | yes      | Task id |
+
+**Request body**
+
+| Field   | Type                        | Required | Notes |
+| ------- | --------------------------- | -------- | ----- |
+| `key`   | string                      | yes      | Must match a `requirements[].key` on the task |
+| `value` | string \| number \| boolean \| object \| null | no | Polymorphic — shape depends on the requirement's `type`. Defaults to `null` when omitted. |
+
+```json
+{ "key": "destination_country", "value": "United Kingdom" }
+```
+
+A `person` requirement (actor collection):
+
+```json
+{ "key": "actor:advisor_review", "value": { "name": "Dr. Perera", "email": "perera@university.edu" } }
+```
+
+`value` is **not** validated in the controller — it is polymorphic by design, and
+`value-validator.util.ts` owns that judgement. The controller only asserts the `key`
+field is present and non-empty.
+
+**200 OK** — the updated `TaskDto`, with that requirement's `status: "filled"` and
+`values[key]` set to the coerced value.
+
+**Errors**
+
+| Status | Cause |
+| ------ | ----- |
+| `400`  | `{ "error": "Body must include a non-empty 'key' field", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | `{ "error": "Task '<id>' has no requirement with key '<key>'", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | Value fails type coercion or validation, e.g. `{ "error": "return date must not be before departure_date", "code": "VALIDATION_ERROR", "details": null }` |
+| `404`  | Unknown task id |
+| `409`  | `{ "error": "Task '<id>' is not collecting values (status: <status>)", "code": "CONFLICT", "details": null }` |
+
+---
+
+### 7.6 `POST /api/tasks/:id/finalize`
+
+Closes out collection. Rejects unless every `required` requirement is `filled`;
+otherwise names the missing keys. On success, attaches each collected `actor:*`
+person value onto the matching step(s)' `assignee` (steps sharing a de-duplicated
+actor requirement all receive the same person), initializes step states — steps
+with an empty `depends_on` become `ready`, all others `blocked` — sets
+`status: "ready"`, and appends a `task_finalized` audit entry.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `id`      | path | yes      | Task id |
+
+**Request body:** none.
+
+**200 OK** — the finalized `TaskDto`: `status: "ready"`, `steps[]` carry resolved
+`assignee` and `state`.
+
+**Errors**
+
+| Status | Cause |
+| ------ | ----- |
+| `400`  | `{ "error": "Task '<id>' is missing required values: <key1>, <key2>", "code": "VALIDATION_ERROR", "details": null }` |
+| `404`  | Unknown task id |
+| `409`  | `{ "error": "Task '<id>' is not collecting values (status: <status>)", "code": "CONFLICT", "details": null }` — already finalized or cancelled |
+
+---
+
+### 7.7 `PATCH /api/tasks/:id/status`
+
+Cancels a task. The only transition this route allows.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `id`      | path | yes      | Task id |
+
+**Request body**
+
+| Field    | Type   | Required | Notes |
+| -------- | ------ | -------- | ----- |
+| `status` | string | yes      | Must be exactly `"cancelled"` — no other value is accepted here |
+
+```json
+{ "status": "cancelled" }
+```
+
+**200 OK** — the updated `TaskDto`, `status: "cancelled"`, with a `task_cancelled`
+audit entry appended.
+
+**Errors**
+
+| Status | Cause |
+| ------ | ----- |
+| `400`  | `{ "error": "status must be one of: cancelled", "code": "VALIDATION_ERROR", "details": null }` |
+| `404`  | Unknown task id |
+| `409`  | `{ "error": "Task '<id>' is already in a terminal status (<status>)", "code": "CONFLICT", "details": null }` — task is `completed`, `rejected`, or already `cancelled` |
+
+---
+
+## 8. Error responses
 
 All errors are JSON. `src/middlewares/error-handler.middleware.ts` reads the
 status and body straight off any `BaseError` subclass (see
@@ -826,6 +1135,9 @@ hierarchy) instead of maintaining a separate status lookup table:
 | `422`  | `{ "error", "code": "EXTRACTION_ERROR", "details": <errors\|null> }` | `ExtractionError` only — the model could not produce a valid workflow |
 | `500`  | `{ "error": "Internal server error", "code": "INTERNAL_ERROR", "details": null }` | Anything untyped — details are logged, never returned |
 | `502`  | `{ "error", "code": "SELECTION_ERROR" \| "EMBEDDING_ERROR", "details": <cause\|null> }` | `SelectionError`, `EmbeddingError` — upstream Azure failure |
+
+`ConflictError` also covers the task status-machine rejections in §7 (§7.1, §7.5,
+§7.6, §7.7) alongside the §6.4 unmatched-session case.
 
 `details` is `null` unless the error carried one explicitly. Every handled error
 uses the same three keys — there is no separate `errors` key on any response. A
@@ -843,10 +1155,11 @@ The split is deliberate: **400** means the document you sent is wrong, **422** m
 extraction could not build one from your prose. Both are client-visible failures, but
 only the second implies the LLM was involved.
 
-### 7.1 Malformed ObjectId parameters return 500
+### 8.1 Malformed ObjectId parameters return 500
 
-Routes whose `:id` is a **MongoDB ObjectId** — every `/drafts/:id*` route and every
-`/selection/sessions/:id*` route — behave differently depending on *how* the id is wrong:
+Routes whose `:id` is a **MongoDB ObjectId** — every `/drafts/:id*` route, every
+`/selection/sessions/:id*` route, and every `/tasks/:id*` route — behave differently
+depending on *how* the id is wrong:
 
 | `:id` you send | Status | Body |
 | -------------- | ------ | ---- |
@@ -863,7 +1176,7 @@ string (`departmental_event_workshop`), not an ObjectId, so any unknown value is
 
 ---
 
-## 8. Suggested Postman test order
+## 9. Suggested Postman test order
 
 Run these folders in sequence — later calls depend on ids produced by earlier ones.
 The runnable collection at [../postman/](../postman/) automates this order with
@@ -889,6 +1202,12 @@ Collection Runner pass needs no manual variable entry.
 | Selection | `POST /selection/sessions/{{sessionId}}/answer` | only if `decision` was `ambiguous` |
 | Selection | `POST /selection/sessions/{{sessionId}}/choose` | only if `decision` was `manual_choice` |
 | Selection | `GET /selection/sessions/{{sessionId}}/workflow` | the full plan document |
+| Tasks | `POST /tasks` with `{{sessionId}}` | `id` → `{{taskId}}`, confirm `status: "collecting"` |
+| Tasks | `GET /tasks/{{taskId}}/next` | confirm a requirement comes back |
+| Tasks | `POST /tasks/{{taskId}}/values` for each requirement returned by `next` | repeat until `GET /tasks/{{taskId}}/next` returns `complete: true` |
+| Tasks | `POST /tasks/{{taskId}}/finalize` | confirm `status: "ready"` and step states |
+| Tasks | `GET /tasks?session_id={{sessionId}}` | the task appears in the list |
+| Tasks | `PATCH /tasks/{{taskId}}/status` with `{"status":"cancelled"}` | only on a scratch task — this is terminal |
 | Error cases | one request per error class (400, 404, 422, 409) | asserts `{ error, code, details }` |
 
 Repeat the Drafts/Workflows folders with a second template
@@ -919,7 +1238,7 @@ pm.collectionVariables.set("sessionId", pm.response.json().session_id);
 
 ---
 
-## 9. Things worth knowing before you test
+## 10. Things worth knowing before you test
 
 - **LLM routes are slow.** `POST /workflows/extract` and `POST /drafts/:id/extract`
   make up to `EXTRACTION_MAX_ATTEMPTS` Azure calls. Set the Postman timeout well
@@ -938,3 +1257,12 @@ pm.collectionVariables.set("sessionId", pm.response.json().session_id);
 - **Retrieval backend is switchable.** `VECTOR_BACKEND=atlas` uses Atlas vector
   search; anything else uses the in-memory store. This changes `score` values
   but not the response shape.
+- **A task can only be created from a matched session.** Run the Selection folder
+  through to a `matched` decision (§6) before `POST /tasks`.
+- **Task values can only change while `status: "collecting"`.** `POST
+  /tasks/:id/values` and `POST /tasks/:id/finalize` both 409 once the task is
+  `ready` or `cancelled`.
+- **No execution engine.** Finalizing a task (§7.6) only computes initial step
+  states (`ready` / `blocked`) — nothing progresses a step, sends a notification,
+  or issues an approval token after that. `in_progress`, `completed`, and
+  `rejected` are reserved statuses with no endpoint that sets them yet.
