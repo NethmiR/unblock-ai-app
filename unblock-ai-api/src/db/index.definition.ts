@@ -40,6 +40,21 @@ const INDEX_SPECS: IndexSpec[] = [
     keys: { created_at: -1 },
     options: { name: "session_created_desc" },
   },
+  {
+    collection: COLLECTIONS.TASKS,
+    keys: { session_id: 1 },
+    options: { name: "task_session" },
+  },
+  {
+    collection: COLLECTIONS.TASKS,
+    keys: { status: 1, created_at: -1 },
+    options: { name: "task_status_created" },
+  },
+  {
+    collection: COLLECTIONS.TASKS,
+    keys: { reference: 1 },
+    options: { unique: true, name: "task_reference_unique" },
+  },
 ];
 
 export async function ensureIndexes(): Promise<void> {

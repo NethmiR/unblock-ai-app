@@ -3,4 +3,5 @@ export const COLLECTIONS = {
   TEMPLATES: "templates",
   SELECTION_SESSIONS: "selection_sessions",
   TASKS: "tasks",
+  COUNTERS: "counters",
 } as const;
