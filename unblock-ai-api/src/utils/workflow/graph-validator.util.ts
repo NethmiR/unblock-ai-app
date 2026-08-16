@@ -71,6 +71,40 @@ function checkNoCycles(_workflow: WorkflowDefinition, steps: StepMap, errors: st
   }
 }
 
+/**
+ * Cycle-safe topological order of a workflow's steps (dependencies before dependents),
+ * falling back to declaration order among steps with no ordering relationship. Reuses the
+ * same DFS coloring as {@link checkNoCycles} so a cyclic graph terminates rather than
+ * recursing forever; callers are expected to have already run {@link validateGraph}.
+ */
+export function topologicalStepOrder(workflow: WorkflowDefinition): WorkflowStep[] {
+  const steps = stepIndex(workflow);
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map<string, number>([...steps.keys()].map((id) => [id, WHITE]));
+  const ordered: WorkflowStep[] = [];
+
+  function visit(id: string): void {
+    if (color.get(id) !== WHITE) return;
+    color.set(id, GRAY);
+    const step = steps.get(id);
+    for (const dep of step?.depends_on ?? []) {
+      if (steps.has(dep.step_id)) {
+        visit(dep.step_id);
+      }
+    }
+    color.set(id, BLACK);
+    if (step) ordered.push(step);
+  }
+
+  for (const id of steps.keys()) {
+    visit(id);
+  }
+
+  return ordered;
+}
+
 function checkEntryStepExists(_workflow: WorkflowDefinition, steps: StepMap, errors: string[]): void {
   const hasEntry = [...steps.values()].some((step) => (step.depends_on ?? []).length === 0);
   if (!hasEntry) {
