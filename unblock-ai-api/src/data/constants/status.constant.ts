@@ -23,3 +23,27 @@ export const SESSION_OUTCOME = {
   ABANDONED: "abandoned",
   NO_MATCH: "no_match",
 } as const;
+
+export const TASK_STATUS = {
+  COLLECTING: "collecting",
+  READY: "ready",
+  IN_PROGRESS: "in_progress",
+  COMPLETED: "completed",
+  REJECTED: "rejected",
+  CANCELLED: "cancelled",
+} as const;
+
+export const REQUIREMENT_STATUS = {
+  PENDING: "pending",
+  FILLED: "filled",
+  SKIPPED: "skipped",
+} as const;
+
+export const STEP_STATE = {
+  BLOCKED: "blocked",
+  READY: "ready",
+  PENDING_APPROVAL: "pending_approval",
+  APPROVED: "approved",
+  REJECTED: "rejected",
+  SKIPPED: "skipped",
+} as const;
