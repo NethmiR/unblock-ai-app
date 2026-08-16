@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { WorkflowController } from "../../src/controllers/workflow.controller.js";
 import { DraftController } from "../../src/controllers/draft.controller.js";
 import { SelectionController } from "../../src/controllers/selection.controller.js";
+import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { WorkflowService } from "../../src/services/workflow.service.js";
 import { ValidationService } from "../../src/services/validation.service.js";
@@ -12,6 +13,7 @@ import { loadExpectedFixture } from "../helpers/fixture.helper.js";
 import type { EmbeddingService } from "../../src/services/embedding.service.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { SelectionService } from "../../src/services/selection.service.js";
+import type { TaskService } from "../../src/services/task.service.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 const fixture = loadExpectedFixture("it_faculty_overseas_leave.json");
@@ -46,6 +48,7 @@ async function buildServer(): Promise<TestServer & { close: () => Promise<void> 
       workflowService,
     }),
     selectionController: new SelectionController({ selectionService: {} as SelectionService }),
+    taskController: new TaskController({ taskService: {} as TaskService }),
   };
 
   return startTestServer(controllers);

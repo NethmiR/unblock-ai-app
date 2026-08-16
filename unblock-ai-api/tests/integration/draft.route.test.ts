@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { WorkflowController } from "../../src/controllers/workflow.controller.js";
 import { DraftController } from "../../src/controllers/draft.controller.js";
 import { SelectionController } from "../../src/controllers/selection.controller.js";
+import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { DraftService } from "../../src/services/draft.service.js";
 import { startTestServer, type TestServer } from "../helpers/test-server.helper.js";
@@ -10,6 +11,7 @@ import { FakeDraftModel } from "../helpers/fake-model.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { SelectionService } from "../../src/services/selection.service.js";
+import type { TaskService } from "../../src/services/task.service.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 async function buildServer(): Promise<TestServer> {
@@ -31,6 +33,7 @@ async function buildServer(): Promise<TestServer> {
       workflowService: {} as WorkflowService,
     }),
     selectionController: new SelectionController({ selectionService: {} as SelectionService }),
+    taskController: new TaskController({ taskService: {} as TaskService }),
   };
 
   return startTestServer(controllers);
