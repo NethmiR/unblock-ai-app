@@ -7,6 +7,13 @@ import type {
   SessionRound,
 } from "../../src/lib/types/selection/session.type.js";
 import type { ReviewStatus } from "../../src/lib/types/workflow/workflow.type.js";
+import type {
+  TaskAuditEntry,
+  TaskDocument,
+  TaskStatus,
+  TaskStepState,
+} from "../../src/lib/types/task/task.type.js";
+import type { RequirementValue } from "../../src/lib/types/task/requirement.type.js";
 
 export class FakeDraftModel {
   readonly drafts = new Map<string, DraftDocument>();
@@ -171,5 +178,75 @@ export class FakeSelectionSessionModel {
     session.selected_workflow_id = selectedWorkflowId;
     session.updated_at = new Date();
     return Promise.resolve(session);
+  }
+}
+
+export class FakeTaskModel {
+  readonly tasks = new Map<string, TaskDocument>();
+  private seq = 0;
+
+  insert(doc: Omit<TaskDocument, "_id">): Promise<TaskDocument> {
+    const _id = new ObjectId();
+    const inserted: TaskDocument = { ...doc, _id };
+    this.tasks.set(_id.toString(), inserted);
+    return Promise.resolve(inserted);
+  }
+
+  findById(id: string | ObjectId): Promise<TaskDocument | null> {
+    return Promise.resolve(this.tasks.get(String(id)) ?? null);
+  }
+
+  findAll(filters: { session_id?: string; status?: TaskStatus }): Promise<TaskDocument[]> {
+    const matches = [...this.tasks.values()].filter((t) => {
+      if (filters.session_id && t.session_id !== filters.session_id) return false;
+      if (filters.status && t.status !== filters.status) return false;
+      return true;
+    });
+    matches.sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+    return Promise.resolve(matches);
+  }
+
+  setValue(
+    id: string | ObjectId,
+    key: string,
+    value: RequirementValue,
+    requirementIndex: number,
+  ): Promise<TaskDocument | null> {
+    const task = this.tasks.get(String(id));
+    if (!task) return Promise.resolve(null);
+    task.values[key] = value;
+    const requirement = task.requirements[requirementIndex];
+    if (requirement) requirement.status = "filled";
+    task.updated_at = new Date();
+    return Promise.resolve(task);
+  }
+
+  replaceSteps(id: string | ObjectId, steps: TaskStepState[]): Promise<TaskDocument | null> {
+    const task = this.tasks.get(String(id));
+    if (!task) return Promise.resolve(null);
+    task.steps = steps;
+    task.updated_at = new Date();
+    return Promise.resolve(task);
+  }
+
+  setStatus(id: string | ObjectId, status: TaskStatus): Promise<TaskDocument | null> {
+    const task = this.tasks.get(String(id));
+    if (!task) return Promise.resolve(null);
+    task.status = status;
+    task.updated_at = new Date();
+    return Promise.resolve(task);
+  }
+
+  appendAudit(id: string | ObjectId, entry: TaskAuditEntry): Promise<TaskDocument | null> {
+    const task = this.tasks.get(String(id));
+    if (!task) return Promise.resolve(null);
+    task.audit.push(entry);
+    task.updated_at = new Date();
+    return Promise.resolve(task);
+  }
+
+  nextSequence(): Promise<number> {
+    this.seq += 1;
+    return Promise.resolve(this.seq);
   }
 }
