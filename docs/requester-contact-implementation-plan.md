@@ -269,6 +269,29 @@ it is the one fix that breaks the three-role fixture discipline.
 it needs no edit — but it is a useful manual check that the rule generalises beyond the two
 worked examples.
 
+### 4.1 Result — run against Azure on 2026-08-18
+
+`npm run typecheck && npm test` stayed clean/236 before and after (prompt-only change).
+`tests/live/extraction-accuracy.live.test.ts` and `tests/live/consistency.live.test.ts` both
+passed against Azure.
+
+A dedicated 5-run-per-fixture check (all three prose fixtures, including the ungoldened
+`lab_equipment_purchase_request.txt`) was run twice:
+
+| Attempt | Prompt wording | it_faculty | departmental_event | lab_equipment |
+|---|---|---|---|---|
+| 1 | Original §1.1 prose (`id`, `type`, `required: true`, `collected_from` folded into one sentence) | 2/5 | 4/5 | 3/5 |
+| 2 | Reworded into a bulleted list, with `required: true` its own line calling out "not false" explicitly | 5/5 | 5/5 | 5/5 |
+
+`id`, `type: "email"`, and array position were 5/5 compliant on **attempt 1 already** — the only
+field that drifted was `required`, intermittently emitted as `false`. That's consistent with the
+original wording burying `required: true` mid-sentence among four other clauses; the model
+treated it as less binding than the id/type. This matches the plan's predicted 3–4-of-5 band
+exactly: one reword closed it, no second attempt was needed.
+
+`src/data/prompts/extraction.prompt.ts` §"Requester contact input — always required" now states
+the five properties as a bulleted list instead of prose. Verdict: **Pass** — landed.
+
 ---
 
 ## Phase 5 — Docs

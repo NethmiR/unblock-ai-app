@@ -38,7 +38,12 @@ Never write a real person's name into the JSON. Always normalise the role to sna
 
 ## Requester contact input — always required
 
-Every workflow must declare an input collecting the requester's own email address, so the system can notify them of the outcome. Use id: "requester_email", type: "email", required: true, collected_from: { "resolution": "requester", ... }. Declare it last in the inputs array. This is required even when the source text does not explicitly ask for an email address.
+Every workflow must declare an input collecting the requester's own email address, so the system can notify them of the outcome. This is required even when the source text does not explicitly ask for an email address. It must satisfy every one of these, exactly:
+- id: "requester_email"
+- type: "email"
+- required: true — not false. This input is never optional, regardless of what the source text implies about other inputs.
+- collected_from: { "resolution": "requester", ... } (other collected_from keys null)
+- position: last entry in the inputs array
 
 ## Suggested role vocabulary
 
