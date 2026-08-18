@@ -8,6 +8,7 @@ import { allowedOutcomes, resolveOutcomeAction } from "../utils/approval/outcome
 import { NotFoundError } from "../errors/not-found.error.js";
 import { ConflictError } from "../errors/conflict.error.js";
 import { ValidationError } from "../errors/validation.error.js";
+import { STEP_STATE } from "../data/constants/status.constant.js";
 import type { AppConfig } from "../lib/types/config/config.type.js";
 import type { TaskDocument, TaskStepState, StepOutcomeResult } from "../lib/types/task/task.type.js";
 import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
@@ -97,6 +98,19 @@ export class ApprovalService {
 
     if (step.token_used_at !== null) {
       throw new ConflictError(`Approval token has already been used for step '${step.step_id}'`);
+    }
+
+    if (step.token_expires_at !== null && step.token_expires_at.getTime() < Date.now()) {
+      throw new ConflictError(
+        `Approval link for step '${step.step_id}' expired on ${step.token_expires_at.toISOString()}. ` +
+          `Ask the requester to have it reissued.`,
+      );
+    }
+
+    if (step.state !== STEP_STATE.PENDING_APPROVAL) {
+      throw new ConflictError(
+        `Step '${step.step_id}' is no longer awaiting approval (current state: '${step.state}')`,
+      );
     }
 
     const workflowStep = workflow.steps.find((s) => s.id === step.step_id);

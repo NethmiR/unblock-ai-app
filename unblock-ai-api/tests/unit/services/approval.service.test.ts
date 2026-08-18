@@ -207,6 +207,63 @@ test("approving advisor_review dispatches hod_review and sends a notification", 
   assert.equal(mailer.sent.length, 1);
 });
 
+test("submitDecision on an expired token throws ConflictError", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const step = task.steps.find((s) => s.step_id === "advisor_review")!;
+  const token = step.approval_token!;
+
+  const expired = task.steps.map((s) =>
+    s.step_id === "advisor_review" ? { ...s, token_expires_at: new Date(Date.now() - 1000) } : s,
+  );
+  await taskModel.updateStepAndStatus(task._id, expired, TASK_STATUS.IN_PROGRESS);
+
+  await assert.rejects(() => service.submitDecision(token, "approved", null), ConflictError);
+});
+
+test("a token that expires in the future is still accepted", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const result = await service.submitDecision(token, "approved", null);
+
+  assert.equal(result.outcome, "approved");
+});
+
+test("getApproverView still renders for an expired token", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const expired = task.steps.map((s) =>
+    s.step_id === "advisor_review" ? { ...s, token_expires_at: new Date(Date.now() - 1000) } : s,
+  );
+  await taskModel.updateStepAndStatus(task._id, expired, TASK_STATUS.IN_PROGRESS);
+
+  const view = await service.getApproverView(token);
+
+  assert.equal(view.step.step_id, "advisor_review");
+  assert.equal(view.already_decided, false);
+});
+
+test("submitDecision on a step that is no longer pending_approval throws ConflictError", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const skipped = task.steps.map((s) =>
+    s.step_id === "advisor_review" ? { ...s, state: STEP_STATE.SKIPPED } : s,
+  );
+  await taskModel.updateStepAndStatus(task._id, skipped, TASK_STATUS.IN_PROGRESS);
+
+  await assert.rejects(() => service.submitDecision(token, "approved", null), ConflictError);
+});
+
 test("requesting more info reopens the step, clears its token, and moves the task back to collecting", async () => {
   const taskModel = new FakeTaskModel();
   const task = await seedDispatchedTask(taskModel);
