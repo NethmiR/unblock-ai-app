@@ -9,3 +9,5 @@ export { RetrievalService } from "./retrieval.service.js";
 export { SelectorService } from "./selector.service.js";
 export { SelectionService } from "./selection.service.js";
 export { InMemoryVectorStore, AtlasVectorStore, createVectorStore } from "./vector-store/index.vector-store.js";
+export { ConsoleMailer, SmtpMailer, createMailer } from "./mailer/index.mailer.js";
+export { NotificationService } from "./notification.service.js";
