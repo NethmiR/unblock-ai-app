@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { ApprovalTokenPayload } from "../../lib/types/approval/token.type.js";
+import type { TaskStepState } from "../../lib/types/task/task.type.js";
 
 function base64url(input: Buffer | string): string {
   const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : input;
@@ -61,4 +62,25 @@ export function verifyToken(token: string, secret: string): ApprovalTokenPayload
   }
 
   return parseToken(token);
+}
+
+export function issueTokensForDispatched(
+  taskId: string,
+  steps: TaskStepState[],
+  dispatched: string[],
+  secret: string,
+  ttlDays: number,
+): TaskStepState[] {
+  if (dispatched.length === 0) return steps;
+  const expiresAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+
+  return steps.map((step) => {
+    if (!dispatched.includes(step.step_id)) return step;
+    return {
+      ...step,
+      approval_token: issueToken(taskId, step.step_id, secret),
+      token_expires_at: expiresAt,
+      token_used_at: null,
+    };
+  });
 }

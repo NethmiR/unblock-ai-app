@@ -44,6 +44,16 @@ export class TaskController {
     res.json(serializeTask(task));
   };
 
+  startTask = async (req: Request, res: Response): Promise<void> => {
+    const task = await this.taskService.start(req.params.id as string);
+    res.json(serializeTask(task));
+  };
+
+  getTaskStatus = async (req: Request, res: Response): Promise<void> => {
+    const status = await this.taskService.getStatus(req.params.id as string);
+    res.json(status);
+  };
+
   updateStatus = async (req: Request, res: Response): Promise<void> => {
     requireOneOf(req.body, "status", ["cancelled"] as const);
     const task = await this.taskService.cancel(req.params.id as string);

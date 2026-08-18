@@ -14,6 +14,7 @@ import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { DraftService } from "../../src/services/draft.service.js";
 import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
+import type { ApprovalController } from "../../src/controllers/approval.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 import type { TaskDocument, NextRequirementDto } from "../../src/lib/types/task/task.type.js";
 
@@ -87,6 +88,7 @@ async function buildServer(taskService: TaskService): Promise<TestServer> {
     }),
     selectionController: new SelectionController({ selectionService: {} as SelectionService }),
     taskController: new TaskController({ taskService }),
+    approvalController: {} as ApprovalController,
   };
 
   return startTestServer(controllers);

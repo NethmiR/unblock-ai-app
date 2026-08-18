@@ -13,7 +13,7 @@ import type {
   TaskStatus,
   TaskStepState,
 } from "../../src/lib/types/task/task.type.js";
-import type { RequirementValue } from "../../src/lib/types/task/requirement.type.js";
+import type { RequirementValue, TaskRequirement } from "../../src/lib/types/task/requirement.type.js";
 
 export class FakeDraftModel {
   readonly drafts = new Map<string, DraftDocument>();
@@ -241,6 +241,30 @@ export class FakeTaskModel {
     const task = this.tasks.get(String(id));
     if (!task) return Promise.resolve(null);
     task.audit.push(entry);
+    task.updated_at = new Date();
+    return Promise.resolve(task);
+  }
+
+  findByStepToken(token: string): Promise<TaskDocument | null> {
+    for (const task of this.tasks.values()) {
+      if (task.steps.some((s) => s.approval_token === token)) return Promise.resolve(task);
+    }
+    return Promise.resolve(null);
+  }
+
+  updateStepAndStatus(id: string | ObjectId, steps: TaskStepState[], status: TaskStatus): Promise<TaskDocument | null> {
+    const task = this.tasks.get(String(id));
+    if (!task) return Promise.resolve(null);
+    task.steps = steps;
+    task.status = status;
+    task.updated_at = new Date();
+    return Promise.resolve(task);
+  }
+
+  appendRequirement(id: string | ObjectId, requirement: TaskRequirement): Promise<TaskDocument | null> {
+    const task = this.tasks.get(String(id));
+    if (!task) return Promise.resolve(null);
+    task.requirements.push(requirement);
     task.updated_at = new Date();
     return Promise.resolve(task);
   }

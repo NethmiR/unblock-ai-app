@@ -55,6 +55,11 @@ const INDEX_SPECS: IndexSpec[] = [
     keys: { reference: 1 },
     options: { unique: true, name: "task_reference_unique" },
   },
+  {
+    collection: COLLECTIONS.TASKS,
+    keys: { "steps.approval_token": 1 },
+    options: { name: "task_step_token", sparse: true },
+  },
 ];
 
 export async function ensureIndexes(): Promise<void> {

@@ -3,12 +3,16 @@ import assert from "node:assert/strict";
 import type { ObjectId } from "mongodb";
 import { TaskService } from "../../../src/services/task.service.js";
 import { PlannerService } from "../../../src/services/planner.service.js";
+import { ExecutionService } from "../../../src/services/execution.service.js";
+import { NotificationService } from "../../../src/services/notification.service.js";
 import { ConflictError } from "../../../src/errors/conflict.error.js";
 import { ValidationError } from "../../../src/errors/validation.error.js";
 import { FakeTaskModel } from "../../helpers/fake-model.helper.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
 import type { SelectionService } from "../../../src/services/selection.service.js";
 import type { WorkflowService } from "../../../src/services/workflow.service.js";
+import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
+import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
 import type { WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
 import type { TemplateDocument } from "../../../src/lib/types/template/template.type.js";
 
@@ -29,8 +33,17 @@ function fakeWorkflowService(workflow: WorkflowDefinition): WorkflowService {
         version: 1,
       } as unknown as TemplateDocument);
     },
+    getDocument() {
+      return Promise.resolve(workflow);
+    },
   } as unknown as WorkflowService;
 }
+
+const fakeConfig = {
+  mail: { appPublicUrl: "http://localhost:3001", tokenSecret: "test-secret", tokenTtlDays: 14 },
+} as unknown as AppConfig;
+
+const fakeMailer: IMailer = { send: () => Promise.resolve({ sent: true, error: null }) };
 
 function build({
   taskModel,
@@ -46,6 +59,9 @@ function build({
     selectionService: fakeSelectionService(matched ? workflow : null),
     workflowService: fakeWorkflowService(workflow),
     plannerService: new PlannerService(),
+    executionService: new ExecutionService(),
+    notificationService: new NotificationService({ mailer: fakeMailer, config: fakeConfig }),
+    config: fakeConfig,
   });
 }
 
@@ -143,4 +159,46 @@ test("finalize() attaches the collected advisor to advisor_review.assignee", asy
   const advisorStep = finalized.steps.find((s) => s.step_id === "advisor_review");
 
   assert.deepEqual(advisorStep?.assignee, { name: "Dr. Advisor", email: "advisor@example.com" });
+});
+
+test("start() on a non-ready task throws ConflictError", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+
+  await assert.rejects(() => service.start(task._id), ConflictError);
+});
+
+test("start() dispatches advisor_review, issues a token, and moves the task to in_progress", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+
+  const started = await service.start(task._id);
+
+  assert.equal(started.status, "in_progress");
+  const advisorStep = started.steps.find((s) => s.step_id === "advisor_review");
+  assert.equal(advisorStep?.state, "pending_approval");
+  assert.ok(advisorStep?.approval_token);
+  assert.ok(advisorStep?.token_expires_at);
+});
+
+test("getStatus() surfaces the current pending step before any decision", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
+
+  const status = await service.getStatus(task._id);
+
+  assert.equal(status.status, "in_progress");
+  assert.deepEqual(status.current_steps, ["advisor_review"]);
+  assert.equal(status.reason, null);
 });

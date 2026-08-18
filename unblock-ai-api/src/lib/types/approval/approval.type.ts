@@ -33,3 +33,21 @@ export interface DecisionResultDto {
   completed: boolean;
   terminated: boolean;
 }
+
+export interface TaskTimelineEntry {
+  step: string;
+  outcome: string | null;
+  reason: string | null;
+  at: Date;
+}
+
+export interface TaskStatusDto {
+  status: string;
+  reference: string;
+  workflow_title: string;
+  current_steps: string[];
+  rejected_at_step: string | null;
+  rejected_by: string | null;
+  reason: string | null;
+  timeline: TaskTimelineEntry[];
+}

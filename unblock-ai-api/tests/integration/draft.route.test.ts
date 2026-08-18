@@ -12,6 +12,7 @@ import type { ExtractionService } from "../../src/services/extraction.service.js
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
+import type { ApprovalController } from "../../src/controllers/approval.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 async function buildServer(): Promise<TestServer> {
@@ -34,6 +35,7 @@ async function buildServer(): Promise<TestServer> {
     }),
     selectionController: new SelectionController({ selectionService: {} as SelectionService }),
     taskController: new TaskController({ taskService: {} as TaskService }),
+    approvalController: {} as ApprovalController,
   };
 
   return startTestServer(controllers);

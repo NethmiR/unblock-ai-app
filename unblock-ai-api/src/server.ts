@@ -17,11 +17,16 @@ import { RetrievalService } from "./services/retrieval.service.js";
 import { SelectorService } from "./services/selector.service.js";
 import { SelectionService } from "./services/selection.service.js";
 import { PlannerService } from "./services/planner.service.js";
+import { ExecutionService } from "./services/execution.service.js";
+import { NotificationService } from "./services/notification.service.js";
+import { ApprovalService } from "./services/approval.service.js";
+import { createMailer } from "./services/mailer/index.mailer.js";
 import { TaskService } from "./services/task.service.js";
 import { WorkflowController } from "./controllers/workflow.controller.js";
 import { DraftController } from "./controllers/draft.controller.js";
 import { SelectionController } from "./controllers/selection.controller.js";
 import { TaskController } from "./controllers/task.controller.js";
+import { ApprovalController } from "./controllers/approval.controller.js";
 import { HealthController } from "./controllers/health.controller.js";
 
 async function main(): Promise<void> {
@@ -51,7 +56,25 @@ async function main(): Promise<void> {
     workflowService,
   });
   const plannerService = new PlannerService();
-  const taskService = new TaskService({ taskModel, selectionService, workflowService, plannerService });
+  const mailer = createMailer(config.mail.transport, config.mail);
+  const notificationService = new NotificationService({ mailer, config });
+  const executionService = new ExecutionService();
+  const taskService = new TaskService({
+    taskModel,
+    selectionService,
+    workflowService,
+    plannerService,
+    executionService,
+    notificationService,
+    config,
+  });
+  const approvalService = new ApprovalService({
+    taskModel,
+    workflowService,
+    executionService,
+    notificationService,
+    config,
+  });
 
   const controllers = {
     healthController: new HealthController(),
@@ -59,6 +82,7 @@ async function main(): Promise<void> {
     draftController: new DraftController({ draftService, extractionService, workflowService }),
     selectionController: new SelectionController({ selectionService }),
     taskController: new TaskController({ taskService }),
+    approvalController: new ApprovalController({ approvalService }),
   };
 
   await ensureIndexes();

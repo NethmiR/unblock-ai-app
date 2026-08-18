@@ -10,7 +10,7 @@ import type {
   TaskStatus,
   TaskStepState,
 } from "../lib/types/task/task.type.js";
-import type { RequirementValue } from "../lib/types/task/requirement.type.js";
+import type { RequirementValue, TaskRequirement } from "../lib/types/task/requirement.type.js";
 
 interface CounterDocument extends Document {
   _id: string;
@@ -116,6 +116,45 @@ export class TaskModel {
       );
     } catch (err) {
       throw new DatabaseError("Failed to append task audit entry", { cause: err });
+    }
+    return this.findById(id);
+  }
+
+  async findByStepToken(token: string): Promise<TaskDocument | null> {
+    try {
+      const tasks = await this.collection();
+      return await tasks.findOne({ "steps.approval_token": token });
+    } catch (err) {
+      throw new DatabaseError("Failed to look up task by step token", { cause: err });
+    }
+  }
+
+  async updateStepAndStatus(
+    id: string | ObjectId,
+    steps: TaskStepState[],
+    status: TaskStatus,
+  ): Promise<TaskDocument | null> {
+    try {
+      const tasks = await this.collection();
+      await tasks.updateOne(
+        { _id: toObjectId(id) },
+        { $set: { steps, status, updated_at: new Date() } },
+      );
+    } catch (err) {
+      throw new DatabaseError("Failed to update task steps and status", { cause: err });
+    }
+    return this.findById(id);
+  }
+
+  async appendRequirement(id: string | ObjectId, requirement: TaskRequirement): Promise<TaskDocument | null> {
+    try {
+      const tasks = await this.collection();
+      await tasks.updateOne(
+        { _id: toObjectId(id) },
+        { $push: { requirements: requirement }, $set: { updated_at: new Date() } },
+      );
+    } catch (err) {
+      throw new DatabaseError("Failed to append task requirement", { cause: err });
     }
     return this.findById(id);
   }

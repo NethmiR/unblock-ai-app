@@ -3,22 +3,30 @@ import { TaskModel } from "../models/task.model.js";
 import { SelectionService } from "./selection.service.js";
 import { WorkflowService } from "./workflow.service.js";
 import { PlannerService } from "./planner.service.js";
+import { ExecutionService } from "./execution.service.js";
+import { NotificationService } from "./notification.service.js";
 import { validateValue } from "../utils/task/value-validator.util.js";
 import { buildReference } from "../utils/task/reference.util.js";
+import { issueTokensForDispatched } from "../utils/approval/token.util.js";
 import { logger } from "../utils/shared/logger.util.js";
 import { TASK_STATUS, REQUIREMENT_STATUS, STEP_STATE } from "../data/constants/status.constant.js";
 import { ConflictError } from "../errors/conflict.error.js";
 import { ValidationError } from "../errors/validation.error.js";
 import { NotFoundError } from "../errors/not-found.error.js";
+import type { AppConfig } from "../lib/types/config/config.type.js";
 import type { TaskDocument, TaskStatus, TaskStepState } from "../lib/types/task/task.type.js";
 import type { NextRequirementDto } from "../lib/types/task/task.type.js";
 import type { RequirementValue } from "../lib/types/task/requirement.type.js";
+import type { TaskStatusDto, TaskTimelineEntry } from "../lib/types/approval/approval.type.js";
 
 export interface TaskServiceOptions {
   taskModel: TaskModel;
   selectionService: SelectionService;
   workflowService: WorkflowService;
   plannerService: PlannerService;
+  executionService: ExecutionService;
+  notificationService: NotificationService;
+  config: AppConfig;
 }
 
 export class TaskService {
@@ -26,12 +34,26 @@ export class TaskService {
   private readonly selectionService: SelectionService;
   private readonly workflowService: WorkflowService;
   private readonly plannerService: PlannerService;
+  private readonly executionService: ExecutionService;
+  private readonly notificationService: NotificationService;
+  private readonly config: AppConfig;
 
-  constructor({ taskModel, selectionService, workflowService, plannerService }: TaskServiceOptions) {
+  constructor({
+    taskModel,
+    selectionService,
+    workflowService,
+    plannerService,
+    executionService,
+    notificationService,
+    config,
+  }: TaskServiceOptions) {
     this.taskModel = taskModel;
     this.selectionService = selectionService;
     this.workflowService = workflowService;
     this.plannerService = plannerService;
+    this.executionService = executionService;
+    this.notificationService = notificationService;
+    this.config = config;
   }
 
   async create(sessionId: string | ObjectId): Promise<TaskDocument> {
@@ -123,6 +145,78 @@ export class TaskService {
     await this.taskModel.setStatus(id, TASK_STATUS.READY);
     const finalized = await this.appendAudit(id, "task_finalized", null);
     return finalized;
+  }
+
+  async start(id: string | ObjectId): Promise<TaskDocument> {
+    const task = await this.get(id);
+
+    if (task.status !== TASK_STATUS.READY) {
+      throw new ConflictError(`Task '${String(id)}' is not ready to start (status: ${task.status})`);
+    }
+
+    const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+    const result = this.executionService.advance(task, workflow);
+    const stepsWithTokens = issueTokensForDispatched(
+      String(task._id),
+      result.steps,
+      result.dispatched,
+      this.config.mail.tokenSecret,
+      this.config.mail.tokenTtlDays,
+    );
+
+    const updated = await this.taskModel.updateStepAndStatus(id, stepsWithTokens, TASK_STATUS.IN_PROGRESS);
+    if (!updated) throw NotFoundError.of("Task", String(id));
+
+    const started = await this.appendAudit(updated._id, "task_started", null);
+
+    for (const stepId of result.dispatched) {
+      const step = started.steps.find((s) => s.step_id === stepId);
+      if (!step) continue;
+      const sent = await this.notificationService.sendApprovalRequest(started, workflow, step);
+      if (sent) {
+        await this.taskModel.replaceSteps(
+          started._id,
+          started.steps.map((s) => (s.step_id === stepId ? { ...s, notified_at: new Date() } : s)),
+        );
+      }
+    }
+
+    return this.get(started._id);
+  }
+
+  async getStatus(id: string | ObjectId): Promise<TaskStatusDto> {
+    const task = await this.get(id);
+    const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+
+    const currentSteps = task.steps
+      .filter((s) => s.state === STEP_STATE.PENDING_APPROVAL)
+      .map((s) => s.step_id);
+
+    const rejectedStep =
+      task.status === TASK_STATUS.REJECTED
+        ? task.steps.find((s) => s.state === STEP_STATE.REJECTED) ?? null
+        : null;
+
+    const timeline: TaskTimelineEntry[] = task.steps
+      .filter((s) => s.outcome !== null)
+      .sort((a, b) => (a.responded_at?.getTime() ?? 0) - (b.responded_at?.getTime() ?? 0))
+      .map((s) => ({
+        step: workflow.steps.find((ws) => ws.id === s.step_id)?.name ?? s.step_id,
+        outcome: s.outcome,
+        reason: s.reason,
+        at: s.responded_at as Date,
+      }));
+
+    return {
+      status: task.status,
+      reference: task.reference,
+      workflow_title: workflow.title,
+      current_steps: currentSteps,
+      rejected_at_step: rejectedStep ? workflow.steps.find((ws) => ws.id === rejectedStep.step_id)?.name ?? rejectedStep.step_id : null,
+      rejected_by: rejectedStep?.assignee?.name ?? null,
+      reason: rejectedStep?.reason ?? null,
+      timeline,
+    };
   }
 
   async cancel(id: string | ObjectId): Promise<TaskDocument> {
