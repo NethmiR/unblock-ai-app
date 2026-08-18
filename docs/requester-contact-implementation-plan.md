@@ -219,6 +219,17 @@ live suite.
 > **Checkpoint:** `npm run typecheck && npm test` — back to green, at **236/236**. No test is
 > added or removed by this plan; the count is unchanged.
 
+**These four edits are sufficient — verified, not estimated.** The fixture change was applied
+to a scratch copy and the suite run: it produced exactly 9 failures (6 in `task.service.test.ts`
+from the `fillAllRequirements` cascade, 3 in `requirement-builder.util.test.ts`), and the four
+edits above returned it to 236/236 with a clean typecheck. Two things this rules out:
+
+- **No `metadata` edit is needed.** Neither fixture's `metadata` block carries an input count —
+  it holds `created_from`, `source_text_hash`, `extraction_model`, `extraction_timestamp`,
+  `confidence`, `ambiguities`, `unmapped_roles`, `review_status`. Nothing counts inputs.
+- **No integration-test edit is needed.** `tests/integration/task.route.test.ts` stubs
+  `TaskService` wholesale, so it never builds requirements from a fixture.
+
 ---
 
 ## Phase 4 — Live verification (requires Azure)
@@ -236,6 +247,23 @@ the new input. Phases 1–3 only prove the fixtures and consumers agree.
 adding a code-level backfill. A post-extraction "inject if missing" shim would make the
 few-shot examples and the runtime output disagree, which is the failure mode the three-role
 fixture discipline exists to prevent.
+
+**Decide the threshold before running, not after.** "Intermittently" is otherwise judged
+against whatever result you happen to get:
+
+| Result over 5 runs per fixture | Verdict | Action |
+|---|---|---|
+| 5/5 emit `requester_email`, typed `email` | Pass | Land it |
+| 3–4 of 5 | Prompt is too weak | Reword Phase 1 — make the rule its own bulleted line in the `inputs` guidance rather than prose, then re-run |
+| 0–2 of 5 | Approach is not holding | **Stop.** Do not escalate wording a third time — reconsider Option B, and record why here |
+
+Two runs are not a sample. The reason to fix a number now is that a 4/5 result is genuinely
+ambiguous in the moment, and the tempting reading — "close enough, the fixtures are right" —
+ships a workflow that silently fails to collect a contact address for one requester in five.
+
+**Cap the rewording at two attempts.** If wording alone cannot get to 5/5, that is real
+evidence about the approach, not a prompt-tuning puzzle. The shim stays rejected either way —
+it is the one fix that breaks the three-role fixture discipline.
 
 **Third prose fixture:** `lab_equipment_purchase_request.txt` has no `expected/` gold file, so
 it needs no edit — but it is a useful manual check that the rule generalises beyond the two
@@ -305,8 +333,12 @@ someone asks why an older template sends no mail.
   rather than wasted work.
 - **Reading `notify: Actor[]`.** Still unread by any code. Unchanged by this plan.
 - **Backfilling existing stored workflows.** See Risk 4.
-- **Frontend.** The portal collects requirements generically; one more question needs no UI
-  change.
+- **Frontend.** Verified, not assumed: `unblock-ai-web/` has **no requirement-rendering
+  component at all**. `InputType` (including `"email"`) is declared in
+  `src/types/workflow.ts:102` and consumed by nothing — the portal
+  (`src/components/portal/`) is selection chat only. There is no per-type `switch` that could
+  be missing an `email` branch, so this change cannot break the UI. When requirement
+  collection is eventually built there, `email` must be handled like any other type.
 
 ---
 
