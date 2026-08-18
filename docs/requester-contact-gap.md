@@ -5,12 +5,15 @@ An unresolved gap surfaced while implementing Phase 3 of
 **the system has no way to email the requester**, because nothing anywhere captures a
 requester's email address.
 
-Status: **known gap, handled gracefully in code, not yet closed.** This document records
-what the gap is, why it exists, how Phase 3 currently handles it, and what closing it
-would actually cost.
+**Status: resolved.** Closed by Option A, per
+[requester-contact-implementation-plan.md](requester-contact-implementation-plan.md) — every
+workflow now declares a `requester_email` input, extracted and verified against Azure
+(that plan's Phase 4). This document is kept for §2's analysis of *why* the gap existed
+(one word doing two jobs), which is the reasoning that stops it recurring.
 
-**Scope:** `unblock-ai-api/`. Affects three of the four notification paths in
-`services/notification.service.ts`.
+**Scope:** `unblock-ai-api/`. Affected three of the four notification paths in
+`services/notification.service.ts`; all four now send for newly-extracted workflows (see
+§5).
 
 ---
 
@@ -78,7 +81,7 @@ methods do not.
 
 ---
 
-## 3. How Phase 3 handles it now
+## 3. How Phase 3 handled it before this closed
 
 `services/notification.service.ts` looks for a genuine `email`-typed input requirement
 and returns `false` when there isn't one:
@@ -113,18 +116,21 @@ first and return `false` without sending. `sendApprovalRequest` is unaffected �
    `utils/task/value-validator.util.ts` — the plumbing exists; only the declaration is
    missing.
 
-**What is lost meanwhile:** a rejected requester is not emailed their rejection reason.
-They can still see it via `GET /tasks/:id/status` (Phase 4), which is the requester-facing
-surface the design doc leans on anyway. The demo degrades from "push" to "pull", not to
-broken.
+**What was lost while this held:** a rejected requester was not emailed their rejection
+reason. They could still see it via `GET /tasks/:id/status` (Phase 4), which is the
+requester-facing surface the design doc leans on anyway. The demo degraded from "push" to
+"pull", not to broken. Now that Option A has landed, this no-op path only fires for
+workflows extracted before the change (see §5) — it remains correct, deliberate
+compatibility behaviour rather than dead code.
 
 ---
 
-## 4. How it should be closed
+## 4. How it was closed
 
-Recommended: **Option A.** It is the smallest change that makes the declared intent true.
+Recommended, and implemented: **Option A.** It is the smallest change that makes the
+declared intent true.
 
-### Option A — declare a requester email input in the schema *(recommended)*
+### Option A — declare a requester email input in the schema *(implemented)*
 
 Teach the extractor to always emit a contact input, so every workflow collects it through
 the existing chat loop:
@@ -145,6 +151,9 @@ the existing chat loop:
 | `data/samples/expected/*.json` | Add the input to both fixtures |
 | `tests/unit/utils/requirement-builder.util.test.ts` | Counts shift (7 inputs → 8) |
 | `notification.service.ts` | **Nothing** — already reads it |
+
+Delivered in [requester-contact-implementation-plan.md](requester-contact-implementation-plan.md),
+Phases 1–4, verified against Azure on 2026-08-18.
 
 **Why this one.** It reuses the collection loop wholesale. `GET /tasks/:id/next` already
 walks requirements one at a time, `email` already validates, and the requester is already
@@ -189,33 +198,43 @@ Out of scope for the seven approval-execution phases, and explicitly excluded th
 
 ---
 
-## 5. Consequences if left open
+## 5. Consequences — before and after Option A
 
-| Path | Today | After Option A |
+| Path | Before | After Option A |
 |---|---|---|
 | Approval request → approver | **Works** | Works |
-| Rejection notice → requester | No-op, `false` | Works |
-| Completion notice → requester | No-op, `false` | Works |
-| More-info notice → requester | No-op, `false` | Works |
+| Rejection notice → requester | No-op, `false` | **Works**, for workflows extracted after this change |
+| Completion notice → requester | No-op, `false` | **Works**, for workflows extracted after this change |
+| More-info notice → requester | No-op, `false` | **Works**, for workflows extracted after this change |
 
-The Phase 6 request-more-info loop is the one that **degrades most**. Its whole premise is
-that an approver's question reaches the requester so they can answer via
-`POST /tasks/:id/values`. Without mail the loop still functions — the requirement is
-appended and `status` returns to `collecting` — but the requester is never told to go
-look. **Close this before Phase 6 for the loop to be demonstrable end to end.**
+The Phase 6 request-more-info loop was the one that degraded most under the old no-op —
+its whole premise is that an approver's question reaches the requester so they can answer
+via `POST /tasks/:id/values`. That loop is now demonstrable end to end for newly-extracted
+workflows.
 
-Phase 4 is unaffected: `GET /tasks/:id/status` reads the reason off the step document and
-needs no email at all.
+**Stored workflows predating this change** — anything extracted or published before it
+landed — still have no `requester_email` input, so they keep hitting the no-op path
+described in §3. This is graceful degradation, not a bug, and needs no migration for a
+PoC (see [requester-contact-implementation-plan.md](requester-contact-implementation-plan.md)
+Risk 4).
+
+Phase 4 of the approval-execution plan is unaffected either way: `GET /tasks/:id/status`
+reads the reason off the step document and needs no email at all.
 
 ---
 
-## 6. Recommendation
+## 6. Outcome
 
-1. **Keep the graceful no-op.** It is correct, tested, and blocks nothing.
-2. **Do Option A as its own change**, before Phase 6 — outside the approval-execution
-   plan, since it touches the schema, the extraction prompt, and the gold fixtures rather
-   than the execution slice.
-3. **Update [overview.md](overview.md)** when it lands: the *Not built yet* list should
-   note requester notification alongside the existing directory-resolution entry.
-4. **Leave `notify: Actor[]` unread for now.** Generalising to arbitrary notify targets is
-   a separate design question; the requester is the only target any current fixture uses.
+1. **Option A shipped**, per
+   [requester-contact-implementation-plan.md](requester-contact-implementation-plan.md) —
+   outside the approval-execution plan, since it touched the schema, the extraction
+   prompt, and the gold fixtures rather than the execution slice.
+2. **[overview.md](overview.md) is updated** — the *Not built yet* list now notes that
+   `requester_email` is collected the same self-asserted way as approver contacts, and
+   Area G's notification note reflects that all four paths send for newly-extracted
+   workflows.
+3. **`notify: Actor[]` stays unread.** Generalising to arbitrary notify targets remains a
+   separate design question; the requester is still the only target any fixture uses.
+4. **Not closed by this:** identity verification. A requester-typed address is
+   self-asserted, exactly like approver addresses (design §10). Only Option C
+   (§4, out of scope) closes that.

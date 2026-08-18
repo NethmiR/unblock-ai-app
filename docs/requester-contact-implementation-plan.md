@@ -305,6 +305,24 @@ the five properties as a bulleted list instead of prose. Verdict: **Pass** — l
 3. **`unblock-ai-api/docs/api/api-documentation.md`** — no endpoint changes. If the doc shows
    a worked `POST /tasks/:id/values` sequence, it gains one more requirement.
 
+### 5.1 Result
+
+`api-documentation.md` was checked (§7 task endpoints, §11 postman flow): it describes the
+`POST /tasks/:id/values` loop generically, keyed by `requirement.key`, with no hardcoded
+input count or worked-example field list anywhere. Nothing to change there — confirmed, not
+assumed.
+
+`overview.md` §3 *Not built yet* and Area G's notification-paths note were updated in place
+(not rewritten) to say `requester_email` is now collected the same self-asserted way as
+approver contacts, and that all four notification paths send for newly-extracted workflows
+while stored pre-change workflows still hit the no-op path.
+
+`requester-contact-gap.md` was marked **Status: resolved** at the top, §3–§6 reworded to past
+tense / before-after framing, and a pointer added from §4's Option A section to this plan's
+Phases 1–4. §2's root-cause analysis was left untouched, as instructed.
+
+Verdict: **Done.**
+
 ---
 
 ## Build order summary

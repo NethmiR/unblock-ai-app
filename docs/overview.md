@@ -147,7 +147,11 @@ without a database or a network:
    more-info emails. Never throws; a failed send is logged and returned as `false`
    rather than rolling back a recorded decision. Default transport is `console`,
    which logs the full approval URL to stdout instead of calling a real provider —
-   the whole chain is demonstrable with no email account.
+   the whole chain is demonstrable with no email account. Every workflow now declares a
+   `requester_email` input (extraction prompt rule, see
+   [requester-contact-gap.md](requester-contact-gap.md)), so all four notification paths
+   send for newly-extracted workflows; stored workflows predating that change still hit
+   the no-op path gracefully until re-extracted.
 5. **The request-more-info loop** — an outcome, not a backward graph edge. It resets
    the step to `ready` with a cleared token (forcing a fresh one on redispatch),
    increments a per-step `reopen_count` capped at 3, appends a `followup:*`
@@ -241,7 +245,10 @@ which step**, and **why**, lifted straight from the terminating step's `reason`.
 - **No directory/identity service** integration — task planning's `actor:*` requirements
   are filled with requester-supplied name/email, not a directory lookup. Approval
   execution (G) inherits this: the approval authority emailed for a decision is
-  whatever address the requester typed in, unverified.
+  whatever address the requester typed in, unverified. Every workflow now also collects a
+  `requester_email` input the same self-asserted way (see
+  [requester-contact-gap.md](requester-contact-gap.md), resolved) — closing this gap
+  properly is Option C, still not scheduled.
 - **No `dynamic`-condition evaluation, no SLA/reminders/escalation.** `WorkflowStep.sla`
   and `condition` exist in the schema and stay unread by the execution engine.
 - **No LLM assistance in the approval flow** — question phrasing, context summarising,
