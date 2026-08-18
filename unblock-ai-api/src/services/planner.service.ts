@@ -24,6 +24,10 @@ export class PlannerService {
         reason: null,
         responded_at: null,
         approval_token: null,
+        token_expires_at: null,
+        token_used_at: null,
+        notified_at: null,
+        reopen_count: 0,
       })),
     };
   }

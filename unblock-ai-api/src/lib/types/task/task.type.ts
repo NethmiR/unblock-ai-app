@@ -31,6 +31,10 @@ export interface TaskStepState {
   reason: string | null;
   responded_at: Date | null;
   approval_token: string | null;
+  token_expires_at: Date | null;
+  token_used_at: Date | null;
+  notified_at: Date | null;
+  reopen_count: number;
 }
 
 export interface TaskAuditEntry {

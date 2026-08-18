@@ -35,10 +35,23 @@ export interface RetrievalConfig {
   atlasIndexName: string;
 }
 
+export interface MailConfig {
+  transport: "console" | "smtp";
+  from: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPass: string;
+  appPublicUrl: string;
+  tokenSecret: string;
+  tokenTtlDays: number;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   db: DbConfig;
   azureOpenAI: AzureOpenAIConfig;
   azureEmbedding: AzureEmbeddingConfig;
   retrieval: RetrievalConfig;
+  mail: MailConfig;
 }

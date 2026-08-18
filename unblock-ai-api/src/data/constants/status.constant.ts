@@ -47,3 +47,15 @@ export const STEP_STATE = {
   REJECTED: "rejected",
   SKIPPED: "skipped",
 } as const;
+
+export const STEP_OUTCOME = {
+  APPROVED: "approved",
+  REJECTED: "rejected",
+  REQUEST_MORE_INFO: "request_more_info",
+} as const;
+
+export const OUTCOME_ACTION = {
+  CONTINUE: "continue",
+  TERMINATE_WORKFLOW: "terminate_workflow",
+  REOPEN_INPUT: "reopen_input",
+} as const;

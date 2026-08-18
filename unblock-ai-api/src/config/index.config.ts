@@ -3,6 +3,7 @@ import { db } from "./db.config.js";
 import { azureOpenAI } from "./azure-openai.config.js";
 import { azureEmbedding } from "./azure-embedding.config.js";
 import { retrieval } from "./retrieval.config.js";
+import { mail } from "./mail.config.js";
 import type { AppConfig } from "../lib/types/config/config.type.js";
 
 export const config: AppConfig = Object.freeze({
@@ -11,4 +12,5 @@ export const config: AppConfig = Object.freeze({
   azureOpenAI,
   azureEmbedding,
   retrieval,
+  mail,
 });
