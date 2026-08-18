@@ -36,6 +36,10 @@ Every assignee, collected_from, and notification target is an "actor" object, on
 
 Never write a real person's name into the JSON. Always normalise the role to snake_case. Fields not used by the chosen resolution are set to null (the schema requires every actor key to be present; unused ones are null, not omitted).
 
+## Requester contact input — always required
+
+Every workflow must declare an input collecting the requester's own email address, so the system can notify them of the outcome. Use id: "requester_email", type: "email", required: true, collected_from: { "resolution": "requester", ... }. Declare it last in the inputs array. This is required even when the source text does not explicitly ask for an email address.
+
 ## Suggested role vocabulary
 
 Prefer one of these snake_case keys when it fits. If the text describes a role none of these cover, coin a new, clearly-named snake_case role rather than forcing a poor fit — unmapped roles are recorded in metadata.unmapped_roles for admin review, not treated as an error.
