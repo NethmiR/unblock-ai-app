@@ -13,16 +13,16 @@ export default function NewJobPage() {
     <div className="mx-auto flex h-screen max-w-[1440px] flex-col px-16 pb-7 pt-9">
       <div className="mb-6 flex flex-none items-start justify-between gap-8">
         <div>
-          <div className="mb-2 text-xs font-medium uppercase tracking-[.14em] text-muted">New job</div>
+          <div className="mb-2 text-xs font-medium uppercase tracking-[.14em] text-muted">New request</div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            {workflow ? workflow.title : "Create a new job"}
+            {workflow ? workflow.title : "Create new request"}
           </h1>
         </div>
         <Link href="/portal" className="flex flex-none items-center gap-2.5 px-1 py-2.5 text-[14.5px] font-medium">
           <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden>
             <path d="M11 3.5L5.5 9l5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          See other jobs
+          See other requests
         </Link>
       </div>
 

@@ -176,7 +176,7 @@ export function TemplateEditor({
         <section className="flex h-[calc(100vh-200px)] min-h-[520px] flex-col overflow-hidden rounded-card border border-line-admin bg-surface">
           <header className="flex items-center justify-between border-b border-line-admin px-[18px] py-[13px]">
             <span className="text-[11px] font-bold uppercase tracking-[.07em] text-muted">
-              What Unblock AI understood
+              Generated Workflow
             </span>
             <span className="text-[11.5px] text-muted">
               {workflow ? `Read-only · ${workflow.steps.length} steps` : "Read-only"}

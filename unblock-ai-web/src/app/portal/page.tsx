@@ -15,14 +15,14 @@ export default function JobsPage() {
           <div className="mb-2.5 text-xs font-medium uppercase tracking-[.14em] text-muted">
             Unblock AI
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight">Your jobs</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">My Requests</h1>
           <p className="mt-2 max-w-[52ch] text-[15px] text-muted">
-            Every request you have started, and exactly who it is waiting on.
+            View and track all your requests.
           </p>
         </div>
         <Link href="/portal/jobs/new" className="flex-none">
           <Button className="h-[50px] rounded-card px-[22px] text-[15px] font-medium">
-            Create New Job
+            New Request
           </Button>
         </Link>
       </div>
@@ -37,7 +37,7 @@ export default function JobsPage() {
           </p>
           <Link href="/portal/jobs/new">
             <Button className="h-[50px] rounded-card px-[22px] text-[15px] font-medium">
-              Create New Job
+              New Request
             </Button>
           </Link>
         </div>
