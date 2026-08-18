@@ -72,6 +72,16 @@
       "required": true,
       "validation": { "min_length": null, "max_length": null, "min": 1, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
       "collection_hint": null
+    },
+    {
+      "id": "requester_email",
+      "label": "Your Email Address",
+      "description": "Email address for approval and outcome notifications.",
+      "type": "email",
+      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null
     }
   ],
 
