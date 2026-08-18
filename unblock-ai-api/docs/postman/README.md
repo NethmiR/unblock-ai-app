@@ -5,7 +5,8 @@ Two files:
 - `unblock-ai.postman_collection.json` — requests across 6 folders, run in order:
   **Health → Drafts → Workflows → Selection → Tasks → Error cases**.
 - `unblock-ai.postman_environment.json` — just `baseUrl`. `draftId`, `workflowId`,
-  `sessionId`, `templateVersion`, `selectionDecision`, `taskId`, and `requirementKey`
+  `sessionId`, `templateVersion`, `selectionDecision`, `taskId`, `requirementKey`,
+  `requirementType`, `requirementLabel`, and `requirementValue`
   live only as **collection** variables (declared on the collection itself, visible
   under the collection's *Variables* tab) so that `pm.collectionVariables.set(...)` in
   each request's test script is never shadowed by an empty same-named environment
@@ -59,10 +60,26 @@ requests depending on what the Selector Agent decided — this is expected, not 
 
 Chains `sessionId` (from the **Selection** folder) into `POST /tasks`, then walks the
 requirement list. `Get next requirement` and `Submit next requirement value` are meant
-to be run in a loop until `next` reports `complete: true` — this is the one manual step
-in the collection: `Submit next requirement value`'s body is a placeholder
-(`"example value"`) that you must edit per requirement, since a `person` requirement
-(`source: "actor"`) expects `{ "name": ..., "email": ... }` rather than a scalar.
+to be run in a loop until `next` reports `complete: true`.
+
+The loop is **type-aware**, so it no longer needs hand-editing per requirement.
+`POST /tasks/:id/values` coerces strictly by the requirement's `type`, and a single
+`"example value"` string is rejected with a 400 by every non-string type — including
+`requester_email`, the `type: "email"` input that every workflow now declares. So:
+
+- `Get next requirement` stores `requirement.key` **and** `requirement.type` into
+  `{{requirementKey}}` / `{{requirementType}}`.
+- `Submit next requirement value` reads that type in a **pre-request** script and builds
+  a matching sample into `{{requirementValue}}` — `jane.doe@example.com` for `email`,
+  `{ "name": ..., "email": ... }` for a `person` (`source: "actor"`) requirement, `42`
+  for `number`, `true` for `boolean`, a date 30 days out for `date`/`datetime`, and
+  `"example value"` for the string-ish types.
+
+The body interpolates that variable **unquoted** (`"value": {{requirementValue}}`) so
+numbers, booleans, and objects arrive as their real JSON types rather than as strings.
+To send a specific answer instead of a placeholder, set `{{requirementValue}}` yourself
+as raw JSON (quote it if it is a string) or just edit the body directly.
+
 `Finalize task` will 400 until every required requirement is filled. `Cancel task` is
 terminal — only run it against a task you are done with.
 

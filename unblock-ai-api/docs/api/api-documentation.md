@@ -875,6 +875,18 @@ A `TaskDto` (the shape returned by every endpoint below except §7.4) looks like
       "status": "pending"
     },
     {
+      "key": "requester_email",
+      "source": "input",
+      "ref": "requester_email",
+      "label": "Your Email Address",
+      "description": "Email address for approval and outcome notifications.",
+      "type": "email",
+      "required": true,
+      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
+      "collection_hint": null,
+      "status": "pending"
+    },
+    {
       "key": "actor:advisor_review",
       "source": "actor",
       "ref": "advisor_review",
@@ -928,6 +940,14 @@ value is `{ "name": string, "email": string }`.
 > requirement, the requester types in their own approver's name and email — there is
 > no directory lookup in this slice. See the code comment in
 > `requirement-builder.util.ts` at the point of capture.
+
+> **`requester_email` is a standard input, declared last among inputs on every
+> workflow.** It is what lets `notification.service.ts` email the requester
+> approval outcomes, rejections, and more-info requests. Like approver email, it is
+> self-asserted by the requester, not verified. Workflows saved before this input
+> existed do not have it — their tasks simply skip the requester-notification send
+> (`notification.service.ts` no-ops when the requirement is absent) and stay
+> pull-only via `GET /tasks/:id/status` (§7.9).
 
 ### 7.1 `POST /api/tasks`
 
@@ -1060,9 +1080,33 @@ A `person` requirement (actor collection):
 { "key": "actor:advisor_review", "value": { "name": "Dr. Perera", "email": "perera@university.edu" } }
 ```
 
+The `requester_email` input (`type: "email"`, present on every workflow extracted since
+that input was added — see §7):
+
+```json
+{ "key": "requester_email", "value": "jane.doe@example.com" }
+```
+
 `value` is **not** validated in the controller — it is polymorphic by design, and
 `value-validator.util.ts` owns that judgement. The controller only asserts the `key`
-field is present and non-empty.
+field is present and non-empty. Coercion is strict, and it is per-`type`:
+
+| Requirement `type` | Accepted `value` | Rejected with a 400 |
+| --- | --- | --- |
+| `string`, `text`, `phone`, `enum`, `file` | Any JSON string | Any non-string |
+| `email` | A string matching `user@host.tld` | `"example value"`, or any non-string |
+| `number` | A finite number; a non-empty numeric **string** is coerced to one | `NaN`, `Infinity`, non-numeric text |
+| `boolean` | `true` / `false` | The strings `"true"` / `"false"` |
+| `date`, `datetime` | `"YYYY-MM-DD"` that also parses as a real date | `"2026-13-01"`, any other format |
+| `person` | `{ "name": <non-empty string>, "email": <valid address> }` | A bare string, or either field missing/invalid |
+
+`enum` is **not** checked against a list of allowed values, and `file` expects a plain
+string — neither type does more than the string check in this slice.
+
+> Sending `"example value"` for every requirement therefore stops working as soon as a
+> workflow declares a typed input. `requester_email` is the one every workflow now has,
+> so a fill loop must branch on `type` from `GET /tasks/:id/next` (§7.4). The Postman
+> collection's *Submit next requirement value* request does this in a pre-request script.
 
 **200 OK** — the updated `TaskDto`, with that requirement's `status: "filled"` and
 `values[key]` set to the coerced value.
@@ -1073,7 +1117,7 @@ field is present and non-empty.
 | ------ | ----- |
 | `400`  | `{ "error": "Body must include a non-empty 'key' field", "code": "VALIDATION_ERROR", "details": null }` |
 | `400`  | `{ "error": "Task '<id>' has no requirement with key '<key>'", "code": "VALIDATION_ERROR", "details": null }` |
-| `400`  | Value fails type coercion or validation, e.g. `{ "error": "return date must not be before departure_date", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | Value fails type coercion or validation — the message names the requirement key, e.g. `{ "error": "Requirement 'requester_email' expects a valid email address", "code": "VALIDATION_ERROR", "details": null }` or `{ "error": "Requirement 'return_date' must not be before 'inputs.departure_date'", "code": "VALIDATION_ERROR", "details": null }` |
 | `404`  | Unknown task id |
 | `409`  | `{ "error": "Task '<id>' is not collecting values (status: <status>)", "code": "CONFLICT", "details": null }` |
 
@@ -1428,7 +1472,7 @@ Collection Runner pass needs no manual variable entry.
 | Selection | `GET /selection/sessions/{{sessionId}}/workflow` | the full plan document |
 | Tasks | `POST /tasks` with `{{sessionId}}` | `id` → `{{taskId}}`, confirm `status: "collecting"` |
 | Tasks | `GET /tasks/{{taskId}}/next` | confirm a requirement comes back |
-| Tasks | `POST /tasks/{{taskId}}/values` for each requirement returned by `next` | repeat until `GET /tasks/{{taskId}}/next` returns `complete: true` |
+| Tasks | `POST /tasks/{{taskId}}/values` for each requirement returned by `next` | repeat until `GET /tasks/{{taskId}}/next` returns `complete: true`. The value must match the requirement's `type` (§7.5) — `requester_email` needs a real address |
 | Tasks | `POST /tasks/{{taskId}}/finalize` | confirm `status: "ready"` and step states |
 | Tasks | `GET /tasks?session_id={{sessionId}}` | the task appears in the list |
 | Tasks | `POST /tasks/{{taskId}}/start` | `status: "in_progress"`; watch stdout for the approval email (console mailer) |
@@ -1466,6 +1510,35 @@ and `POST /selection/sessions`:
 pm.collectionVariables.set("sessionId", pm.response.json().session_id);
 ```
 
+The requirement-fill loop needs the requirement's **type**, not just its key, because
+`POST /tasks/:id/values` coerces per type (§7.5). `GET /tasks/:id/next` captures both:
+
+```javascript
+if (json.requirement) {
+    pm.collectionVariables.set("requirementKey", json.requirement.key);
+    pm.collectionVariables.set("requirementType", json.requirement.type);
+}
+```
+
+and *Submit next requirement value* turns that type into a valid sample in a
+**pre-request** script, writing raw JSON into `{{requirementValue}}` — which the body
+interpolates unquoted as `"value": {{requirementValue}}`, so non-string types stay
+numbers, booleans, and objects:
+
+```javascript
+switch (pm.collectionVariables.get("requirementType")) {
+    case "email":  value = "jane.doe@example.com"; break;
+    case "person": value = { name: "Dr. Perera", email: "perera@university.edu" }; break;
+    case "number": value = 42; break;
+    // ...date, boolean, string default
+}
+pm.collectionVariables.set("requirementValue", JSON.stringify(value));
+```
+
+That makes a Collection Runner pass over `next` → `values` fill every requirement
+unattended, including `requester_email`. Override `{{requirementValue}}` by hand (as raw
+JSON) when you want a specific answer rather than a placeholder.
+
 ---
 
 ## 11. Things worth knowing before you test
@@ -1489,6 +1562,10 @@ pm.collectionVariables.set("sessionId", pm.response.json().session_id);
   but not the response shape.
 - **A task can only be created from a matched session.** Run the Selection folder
   through to a `matched` decision (§6) before `POST /tasks`.
+- **Every workflow now collects `requester_email`.** It is declared last among the
+  inputs, so it is the last `source: "input"` requirement `GET /tasks/:id/next` hands
+  back before the `actor:*` ones. It is `type: "email"` and required — a placeholder
+  string is a 400 (§7.5). Templates saved before this input existed do not have it.
 - **Task values can only change while `status: "collecting"`.** `POST
   /tasks/:id/values` and `POST /tasks/:id/finalize` both 409 once the task is
   `ready` or `cancelled`.
