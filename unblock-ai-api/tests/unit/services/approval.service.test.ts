@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { ApprovalService } from "../../../src/services/approval.service.js";
 import { ExecutionService } from "../../../src/services/execution.service.js";
 import { NotificationService } from "../../../src/services/notification.service.js";
+import { TaskService } from "../../../src/services/task.service.js";
 import { PlannerService } from "../../../src/services/planner.service.js";
 import { issueToken } from "../../../src/utils/approval/token.util.js";
 import { NotFoundError } from "../../../src/errors/not-found.error.js";
@@ -86,11 +87,21 @@ function build(taskModel: FakeTaskModel, workflow: WorkflowDefinition = LEAVE_WO
   const mailer = new FakeMailer();
   const notificationService = new NotificationService({ mailer, config: FAKE_CONFIG });
   const executionService = new ExecutionService();
+  const taskService = new TaskService({
+    taskModel: taskModel as unknown as ConstructorParameters<typeof TaskService>[0]["taskModel"],
+    selectionService: {} as unknown as ConstructorParameters<typeof TaskService>[0]["selectionService"],
+    workflowService: fakeWorkflowService(workflow),
+    plannerService: new PlannerService(),
+    executionService,
+    notificationService,
+    config: FAKE_CONFIG,
+  });
   const service = new ApprovalService({
     taskModel: taskModel as unknown as ConstructorParameters<typeof ApprovalService>[0]["taskModel"],
     workflowService: fakeWorkflowService(workflow),
     executionService,
     notificationService,
+    taskService,
     config: FAKE_CONFIG,
   });
   return { service, mailer };
@@ -194,4 +205,25 @@ test("approving advisor_review dispatches hod_review and sends a notification", 
   assert.equal(hodStep?.state, STEP_STATE.PENDING_APPROVAL);
   assert.ok(hodStep?.approval_token);
   assert.equal(mailer.sent.length, 1);
+});
+
+test("requesting more info reopens the step, clears its token, and moves the task back to collecting", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  await service.submitDecision(token, "request_more_info", "Please attach your travel itinerary.");
+
+  const updated = await taskModel.findById(task._id);
+  assert.equal(updated!.status, "collecting");
+
+  const advisorStep = updated!.steps.find((s) => s.step_id === "advisor_review");
+  assert.equal(advisorStep?.state, STEP_STATE.READY);
+  assert.equal(advisorStep?.reopen_count, 1);
+  assert.equal(advisorStep?.approval_token, null);
+
+  const followup = updated!.requirements.find((r) => r.key === "followup:advisor_review:1");
+  assert.ok(followup);
+  assert.equal(followup?.label, "Please attach your travel itinerary.");
 });

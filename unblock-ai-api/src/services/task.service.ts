@@ -16,7 +16,7 @@ import { NotFoundError } from "../errors/not-found.error.js";
 import type { AppConfig } from "../lib/types/config/config.type.js";
 import type { TaskDocument, TaskStatus, TaskStepState } from "../lib/types/task/task.type.js";
 import type { NextRequirementDto } from "../lib/types/task/task.type.js";
-import type { RequirementValue } from "../lib/types/task/requirement.type.js";
+import type { RequirementValue, TaskRequirement } from "../lib/types/task/requirement.type.js";
 import type { TaskStatusDto, TaskTimelineEntry } from "../lib/types/approval/approval.type.js";
 
 export interface TaskServiceOptions {
@@ -138,7 +138,39 @@ export class TaskService {
       );
     }
 
+    const isReopen = task.audit.some((entry) => entry.type === "more_info_requested");
     const steps = this.attachAssignees(task);
+
+    if (isReopen) {
+      const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+      const result = this.executionService.advance({ ...task, steps }, workflow);
+      const stepsWithTokens = issueTokensForDispatched(
+        String(task._id),
+        result.steps,
+        result.dispatched,
+        this.config.mail.tokenSecret,
+        this.config.mail.tokenTtlDays,
+      );
+
+      const updated = await this.taskModel.updateStepAndStatus(id, stepsWithTokens, TASK_STATUS.IN_PROGRESS);
+      if (!updated) throw NotFoundError.of("Task", String(id));
+      const finalized = await this.appendAudit(updated._id, "task_finalized", null);
+
+      for (const stepId of result.dispatched) {
+        const step = finalized.steps.find((s) => s.step_id === stepId);
+        if (!step) continue;
+        const sent = await this.notificationService.sendApprovalRequest(finalized, workflow, step);
+        if (sent) {
+          await this.taskModel.replaceSteps(
+            finalized._id,
+            finalized.steps.map((s) => (s.step_id === stepId ? { ...s, notified_at: new Date() } : s)),
+          );
+        }
+      }
+
+      return this.get(finalized._id);
+    }
+
     const initializedSteps = this.initializeStepStates(steps);
 
     await this.taskModel.replaceSteps(id, initializedSteps);
@@ -217,6 +249,36 @@ export class TaskService {
       reason: rejectedStep?.reason ?? null,
       timeline,
     };
+  }
+
+  async reopenForMoreInfo(id: string | ObjectId, stepId: string, question: string): Promise<TaskDocument> {
+    const task = await this.get(id);
+    const step = task.steps.find((s) => s.step_id === stepId);
+    if (!step) throw NotFoundError.of("Step", stepId);
+
+    const requirement: TaskRequirement = {
+      key: `followup:${stepId}:${step.reopen_count}`,
+      source: "input",
+      ref: stepId,
+      label: question,
+      description: null,
+      type: "text",
+      required: true,
+      validation: null,
+      collection_hint: null,
+      status: REQUIREMENT_STATUS.PENDING,
+    };
+
+    const withRequirement = await this.taskModel.appendRequirement(id, requirement);
+    if (!withRequirement) throw NotFoundError.of("Task", String(id));
+
+    await this.taskModel.setStatus(id, TASK_STATUS.COLLECTING);
+    const reopened = await this.appendAudit(id, "more_info_requested", stepId);
+
+    const workflow = await this.workflowService.getDocument(reopened.workflow_id, reopened.version);
+    await this.notificationService.sendMoreInfoNotice(reopened, workflow, step);
+
+    return reopened;
   }
 
   async cancel(id: string | ObjectId): Promise<TaskDocument> {

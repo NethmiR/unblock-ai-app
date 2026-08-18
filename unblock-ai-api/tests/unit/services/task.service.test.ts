@@ -202,3 +202,68 @@ test("getStatus() surfaces the current pending step before any decision", async 
   assert.deepEqual(status.current_steps, ["advisor_review"]);
   assert.equal(status.reason, null);
 });
+
+test("reopenForMoreInfo() appends exactly one pending requirement and returns status to collecting", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
+
+  const beforeCount = (await service.get(task._id)).requirements.length;
+  const reopened = await service.reopenForMoreInfo(
+    task._id,
+    "advisor_review",
+    "Please attach your travel itinerary.",
+  );
+
+  assert.equal(reopened.status, "collecting");
+  assert.equal(reopened.requirements.length, beforeCount + 1);
+
+  const followup = reopened.requirements.find((r) => r.key === "followup:advisor_review:0");
+  assert.ok(followup);
+  assert.equal(followup?.status, "pending");
+  assert.equal(followup?.required, true);
+  assert.equal(followup?.label, "Please attach your travel itinerary.");
+});
+
+test("re-finalize after a reopen dispatches only the reopened step, leaving approved steps approved", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
+
+  const engine = new ExecutionService();
+  const workflow = LEAVE_WORKFLOW;
+  const current = await service.get(task._id);
+  const decided = engine.applyDecision(current, workflow, "advisor_review", "approved", null);
+  await taskModel.updateStepAndStatus(task._id, decided.steps, decided.status);
+
+  const afterAdvisorApproved = await service.get(task._id);
+  const reopenedHod = engine.applyDecision(
+    afterAdvisorApproved,
+    workflow,
+    "hod_review",
+    "request_more_info",
+    "Need the signed advisor form.",
+  );
+  await taskModel.updateStepAndStatus(task._id, reopenedHod.steps, afterAdvisorApproved.status);
+
+  await service.reopenForMoreInfo(task._id, "hod_review", "Need the signed advisor form.");
+  await service.setValue(task._id, "followup:hod_review:1", "Attached.");
+
+  const refinalized = await service.finalize(task._id);
+
+  assert.equal(refinalized.status, "in_progress");
+  const byId = new Map(refinalized.steps.map((s) => [s.step_id, s]));
+  assert.equal(byId.get("advisor_review")?.state, "approved");
+  assert.equal(byId.get("advisor_review")?.outcome, "approved");
+  assert.equal(byId.get("hod_review")?.state, "pending_approval");
+  assert.ok(byId.get("hod_review")?.approval_token);
+  assert.equal(byId.get("dean_review")?.state, "blocked");
+});

@@ -73,6 +73,7 @@ async function main(): Promise<void> {
     workflowService,
     executionService,
     notificationService,
+    taskService,
     config,
   });
 

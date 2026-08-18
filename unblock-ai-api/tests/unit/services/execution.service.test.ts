@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { ExecutionService } from "../../../src/services/execution.service.js";
 import { PlannerService } from "../../../src/services/planner.service.js";
 import { ValidationError } from "../../../src/errors/validation.error.js";
+import { ConflictError } from "../../../src/errors/conflict.error.js";
 import { STEP_STATE, TASK_STATUS } from "../../../src/data/constants/status.constant.js";
 import { loadExpectedFixture, stepById } from "../../helpers/fixture.helper.js";
 import type { TaskDocument, TaskStepState } from "../../../src/lib/types/task/task.type.js";
@@ -174,4 +175,91 @@ test("applyDecision on an outcome the step does not declare throws ValidationErr
 
 test("dean_review is a real step in the fixture used for these tests", () => {
   assert.ok(stepById(LEAVE_WORKFLOW, "dean_review"));
+});
+
+test("request_more_info reopens the step, bumps reopen_count, and clears the token", () => {
+  const task = finalizedTask(LEAVE_WORKFLOW);
+  const engine = new ExecutionService();
+
+  const dispatched = engine.advance(task, LEAVE_WORKFLOW);
+  const withToken = dispatched.steps.map((s) =>
+    s.step_id === "advisor_review"
+      ? { ...s, approval_token: "tok", token_expires_at: new Date(), token_used_at: null }
+      : s,
+  );
+
+  const result = engine.applyDecision(
+    { ...task, steps: withToken },
+    LEAVE_WORKFLOW,
+    "advisor_review",
+    "request_more_info",
+    "Please attach your travel itinerary.",
+  );
+
+  const advisorStep = result.steps.find((s) => s.step_id === "advisor_review")!;
+  assert.equal(advisorStep.state, STEP_STATE.READY);
+  assert.equal(advisorStep.outcome, "request_more_info");
+  assert.equal(advisorStep.reason, "Please attach your travel itinerary.");
+  assert.equal(advisorStep.reopen_count, 1);
+  assert.equal(advisorStep.approval_token, null);
+  assert.equal(advisorStep.token_expires_at, null);
+  assert.equal(advisorStep.token_used_at, null);
+  assert.deepEqual(result.dispatched, []);
+});
+
+test("a reopen leaves other steps' prior approvals untouched", () => {
+  const task = finalizedTask(LEAVE_WORKFLOW);
+  const engine = new ExecutionService();
+
+  const dispatched = engine.advance(task, LEAVE_WORKFLOW);
+  const afterApprove = engine.applyDecision(
+    { ...task, steps: dispatched.steps },
+    LEAVE_WORKFLOW,
+    "advisor_review",
+    "approved",
+    null,
+  );
+
+  const afterReopen = engine.applyDecision(
+    { ...task, steps: afterApprove.steps },
+    LEAVE_WORKFLOW,
+    "hod_review",
+    "request_more_info",
+    "Need the advisor's signed form.",
+  );
+
+  assert.equal(stateOf(afterReopen.steps, "advisor_review"), STEP_STATE.APPROVED);
+  assert.equal(afterReopen.steps.find((s) => s.step_id === "advisor_review")?.outcome, "approved");
+  assert.equal(stateOf(afterReopen.steps, "hod_review"), STEP_STATE.READY);
+});
+
+test("a 4th reopen of the same step throws ConflictError", () => {
+  const task = finalizedTask(LEAVE_WORKFLOW);
+  const engine = new ExecutionService();
+
+  let steps = engine.advance(task, LEAVE_WORKFLOW).steps;
+  for (let i = 0; i < 3; i += 1) {
+    const result = engine.applyDecision(
+      { ...task, steps },
+      LEAVE_WORKFLOW,
+      "advisor_review",
+      "request_more_info",
+      `Question ${i + 1}`,
+    );
+    steps = result.steps;
+  }
+
+  assert.equal(steps.find((s) => s.step_id === "advisor_review")?.reopen_count, 3);
+
+  assert.throws(
+    () =>
+      engine.applyDecision(
+        { ...task, steps },
+        LEAVE_WORKFLOW,
+        "advisor_review",
+        "request_more_info",
+        "Question 4",
+      ),
+    ConflictError,
+  );
 });

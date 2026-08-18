@@ -1,7 +1,10 @@
 import { STEP_STATE, TASK_STATUS } from "../data/constants/status.constant.js";
 import { resolveOutcomeAction } from "../utils/approval/outcome-resolver.util.js";
+import { ConflictError } from "../errors/conflict.error.js";
 import type { TaskDocument, TaskStatus, TaskStepState, StepOutcomeResult } from "../lib/types/task/task.type.js";
 import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
+
+const MAX_REOPENS = 3;
 
 export interface AdvanceResult {
   steps: TaskStepState[];
@@ -109,13 +112,21 @@ export class ExecutionService {
       if (step.step_id !== stepId) return step;
 
       if (stepOutcome.action === "reopen_input") {
+        if (step.reopen_count >= MAX_REOPENS) {
+          throw new ConflictError(
+            `Step '${stepId}' has already been reopened the maximum number of times (${MAX_REOPENS})`,
+          );
+        }
+
         return {
           ...step,
           state: STEP_STATE.READY,
           outcome,
           reason,
           responded_at: now,
-          token_used_at: now,
+          approval_token: null,
+          token_expires_at: null,
+          token_used_at: null,
           reopen_count: step.reopen_count + 1,
         };
       }

@@ -2,6 +2,7 @@ import { TaskModel } from "../models/task.model.js";
 import { WorkflowService } from "./workflow.service.js";
 import { ExecutionService } from "./execution.service.js";
 import { NotificationService } from "./notification.service.js";
+import { TaskService } from "./task.service.js";
 import { issueTokensForDispatched, verifyToken } from "../utils/approval/token.util.js";
 import { allowedOutcomes, resolveOutcomeAction } from "../utils/approval/outcome-resolver.util.js";
 import { NotFoundError } from "../errors/not-found.error.js";
@@ -17,6 +18,7 @@ export interface ApprovalServiceOptions {
   workflowService: WorkflowService;
   executionService: ExecutionService;
   notificationService: NotificationService;
+  taskService: TaskService;
   config: AppConfig;
 }
 
@@ -31,13 +33,22 @@ export class ApprovalService {
   private readonly workflowService: WorkflowService;
   private readonly executionService: ExecutionService;
   private readonly notificationService: NotificationService;
+  private readonly taskService: TaskService;
   private readonly config: AppConfig;
 
-  constructor({ taskModel, workflowService, executionService, notificationService, config }: ApprovalServiceOptions) {
+  constructor({
+    taskModel,
+    workflowService,
+    executionService,
+    notificationService,
+    taskService,
+    config,
+  }: ApprovalServiceOptions) {
     this.taskModel = taskModel;
     this.workflowService = workflowService;
     this.executionService = executionService;
     this.notificationService = notificationService;
+    this.taskService = taskService;
     this.config = config;
   }
 
@@ -116,6 +127,10 @@ export class ApprovalService {
 
     const decidedStep = updated.steps.find((s) => s.step_id === step.step_id) ?? null;
     await this.sendDecisionNotifications(updated, workflow, result, decidedStep);
+
+    if (stepOutcome.action === "reopen_input") {
+      await this.taskService.reopenForMoreInfo(updated._id, step.step_id, reason ?? "");
+    }
 
     return {
       task_id: String(updated._id),
