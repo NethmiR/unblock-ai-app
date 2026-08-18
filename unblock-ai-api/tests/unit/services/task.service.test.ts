@@ -121,6 +121,7 @@ async function fillAllRequirements(service: TaskService, taskId: ObjectId): Prom
     departure_date: "2027-01-01",
     return_date: "2027-01-10",
     travel_reason: "Conference attendance",
+    requester_email: "jane.doe@example.com",
     "actor:advisor_review": { name: "Dr. Advisor", email: "advisor@example.com" },
     "actor:hod_review": { name: "Prof. Hod", email: "hod@example.com" },
     "actor:dean_review": { name: "Dean Dean", email: "dean@example.com" },

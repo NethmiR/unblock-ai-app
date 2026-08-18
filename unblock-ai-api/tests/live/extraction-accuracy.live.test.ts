@@ -8,7 +8,7 @@ test("IT Faculty Overseas Leave — structural extraction", async () => {
   const extractionService = new ExtractionService({ validationService: new ValidationService() });
   const { workflow } = await extractionService.extract(readInputFixture("it_faculty_overseas_leave.txt"));
 
-  assert.equal(workflow.inputs.length, 7);
+  assert.equal(workflow.inputs.length, 8);
 
   const advisorReview = stepById(workflow, "advisor_review");
   const hodReview = stepById(workflow, "hod_review");

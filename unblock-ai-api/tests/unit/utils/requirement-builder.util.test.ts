@@ -3,18 +3,18 @@ import assert from "node:assert/strict";
 import { buildRequirements } from "../../../src/utils/task/requirement-builder.util.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
 
-test("it_faculty_overseas_leave: 7 input requirements then 3 actor requirements, in order", () => {
+test("it_faculty_overseas_leave: 8 input requirements then 3 actor requirements, in order", () => {
   const workflow = loadExpectedFixture("it_faculty_overseas_leave.json");
   const requirements = buildRequirements(workflow);
 
   const inputs = requirements.filter((r) => r.source === "input");
   const actors = requirements.filter((r) => r.source === "actor");
 
-  assert.equal(inputs.length, 7);
+  assert.equal(inputs.length, 8);
   assert.equal(actors.length, 3);
   assert.deepEqual(
     requirements.map((r) => r.source),
-    [...Array(7).fill("input"), ...Array(3).fill("actor")],
+    [...Array(8).fill("input"), ...Array(3).fill("actor")],
   );
   assert.deepEqual(
     actors.map((r) => r.key),
@@ -35,6 +35,7 @@ test("it_faculty_overseas_leave: input requirements preserve declaration order a
     "departure_date",
     "return_date",
     "travel_reason",
+    "requester_email",
   ]);
 });
 
@@ -57,7 +58,7 @@ test("departmental_event_workshop: all assignees are static, so there are zero a
   const requirements = buildRequirements(workflow);
 
   assert.equal(requirements.filter((r) => r.source === "actor").length, 0);
-  assert.equal(requirements.filter((r) => r.source === "input").length, 2);
+  assert.equal(requirements.filter((r) => r.source === "input").length, 3);
 });
 
 test("dynamic actors sharing role + relative_to de-duplicate into a single requirement", () => {
