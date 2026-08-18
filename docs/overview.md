@@ -15,7 +15,8 @@ This document exists so future implementation work can quickly understand what a
 
 ## 1. Main functions we handle
 
-There are **six** functional areas. Two write paths (admin), two end-user paths (selection, task planning), plus supporting infrastructure.
+There are **seven** functional areas. Two write paths (admin), three end-user paths
+(selection, task planning, approval execution), plus supporting infrastructure.
 
 ### A. Draft management (admin write path, step 1)
 `src/services/draft.service.ts` · `src/models/draft.model.ts`
@@ -104,19 +105,62 @@ every value the workflow needs, then hands off a runnable plan:
 4. **Cancel** (`PATCH /tasks/:id/status`) — the only other status transition; any
    non-terminal task can move to `cancelled`.
 
-**Not execution.** Finalizing computes initial step states only — nothing progresses a
-step, resolves a `dynamic` approver against a real directory, sends a notification, or
-issues an approval token. `steps[].approval_token` and `steps[].reason` exist on the
-document and are always `null` in this slice, reserved for that later work.
-`in_progress` / `completed` / `rejected` are declared `TaskStatus` values with no
-endpoint that sets them yet.
+**Finalizing is not starting.** `POST /tasks/:id/finalize` only computes initial step
+states (`ready` / `blocked`) — nothing progresses a step, resolves a `dynamic` approver
+against a real directory, sends a notification, or issues an approval token yet.
+`steps[].approval_token` and `steps[].reason` stay `null` until `POST /tasks/:id/start`
+(area G below) actually dispatches the entry step(s).
 
 **Approver email is requester-supplied and untrusted** — for an `actor:*` requirement,
 the requester types in their own approver's name and email; there is no directory
 lookup here, so this is a trust boundary worth remembering before building anything
 that emails that address automatically.
 
-### G. Frontend — two distinct UIs
+### G. Approval execution (end-user approval path)
+`src/services/execution.service.ts` · `src/services/approval.service.ts` ·
+`src/services/notification.service.ts` · `src/services/mailer/` · `src/utils/approval/`
+
+Turns a finalized task (from F) into a running approval chain. Split into a pure
+engine and an I/O shell around it, deliberately — the engine is provably correct
+without a database or a network:
+
+1. **`ExecutionService`** (pure, no I/O) — `advance()` walks the step graph: a
+   `blocked` step whose every `depends_on` dependency reports its `required_outcome`
+   becomes `ready`; a `ready` step is collected into a `dispatched[]` list and moves
+   to `pending_approval` (the engine reports what needs sending — it never sends
+   anything itself); completion and termination are evaluated last, with termination
+   checked **before** dispatch, so a rejected task never emits a dispatch for a step
+   downstream of the rejection. `applyDecision()` writes an approver's outcome onto a
+   step and re-runs `advance()`, unless the outcome is `reopen_input` (see below).
+2. **Approval tokens** (`utils/approval/token.util.ts`) — an HMAC-SHA256-signed,
+   non-throwing token (`base64url(payload) + "." + base64url(signature)`) issued per
+   dispatched step. The token proves authenticity only; whether it's still *usable*
+   (unexpired, unused, step still `pending_approval`) is checked separately by
+   `ApprovalService` on every request, so revocation is a DB write, not a key
+   rotation.
+3. **`POST /tasks/:id/start`** and **`POST /approvals/:token/decision`** are the only
+   two places the chain moves. Starting dispatches the entry step(s); each decision
+   advances the graph until the task completes, terminates, or is left waiting on
+   further approvals.
+4. **Notifications** (`notification.service.ts` + pluggable `IMailer`, mirroring
+   `services/vector-store/`) — approval-request, rejection, completion, and
+   more-info emails. Never throws; a failed send is logged and returned as `false`
+   rather than rolling back a recorded decision. Default transport is `console`,
+   which logs the full approval URL to stdout instead of calling a real provider —
+   the whole chain is demonstrable with no email account.
+5. **The request-more-info loop** — an outcome, not a backward graph edge. It resets
+   the step to `ready` with a cleared token (forcing a fresh one on redispatch),
+   increments a per-step `reopen_count` capped at 3, appends a `followup:*`
+   requirement answered through the existing `POST /tasks/:id/values`, and returns
+   `status` to `collecting`. Re-finalizing after a reopen re-dispatches only the
+   reopened step — it must not re-seed the whole graph, which would silently wipe
+   already-recorded approvals.
+
+**`GET /tasks/:id/status`** is the requester-facing view built on top of this: current
+pending steps, and — critically — for a `rejected` task, **who** rejected it, **at
+which step**, and **why**, lifted straight from the terminating step's `reason`.
+
+### H. Frontend — two distinct UIs
 
 **Admin** (`src/app/admin/`) — the authoring surface:
 - Template list with institution-type filtering
@@ -144,6 +188,7 @@ that emails that address automatically.
 | Schema validation | **AJV 8** (draft 2020-12) + `ajv-formats` | |
 | Database | **MongoDB 7** — official driver, no ODM | |
 | Vector search | **Pluggable**: `memory` \| `atlas` | `createVectorStore` factory behind `IVectorStore` |
+| Mailer | **Pluggable**: `console` \| `smtp` (`nodemailer`) | `createMailer` factory behind `IMailer`, mirrors `IVectorStore`'s shape |
 | Config | **dotenv**, validated once at startup | `env.config.ts` is the *only* place reading `process.env` |
 | Testing | **`node:test`** (built-in) via **tsx** + `mongodb-memory-server` | No Jest/Vitest |
 | Dev runner | **tsx watch** | |
@@ -189,18 +234,28 @@ that emails that address automatically.
 **The two worked fixtures serve three roles at once** — few-shot prompt examples, validation test fixtures, *and* live extraction-accuracy gold data. Any schema or prompt change must keep all three consistent.
 
 **Not built yet** (explicitly out of scope):
-- **No execution engine** — task planning (F) compiles requirements and seeds initial step states, but nothing progresses a step past that, resolves a `dynamic` actor against a real directory, evaluates a `condition`, or sends a notification. The schema and task model are designed for it; the runtime isn't built.
-- **No approval flow** — no approval tokens, no approver page, no email dispatch. `steps[].approval_token` / `reason` exist as always-`null` fields on the task document.
-- **No authentication** on any HTTP route (`req.user` is always undefined; `submitted_by` is always `null`).
-- **No directory/identity service** integration — task planning's `actor:*` requirements are filled with requester-supplied name/email, not a directory lookup.
+- **No authentication** on any `/tasks/*` or admin/selection HTTP route (`req.user` is
+  always undefined; `submitted_by` is always `null`). `/approvals/*` is
+  token-authenticated, which is a different mechanism and does not imply session auth
+  exists anywhere else.
+- **No directory/identity service** integration — task planning's `actor:*` requirements
+  are filled with requester-supplied name/email, not a directory lookup. Approval
+  execution (G) inherits this: the approval authority emailed for a decision is
+  whatever address the requester typed in, unverified.
+- **No `dynamic`-condition evaluation, no SLA/reminders/escalation.** `WorkflowStep.sla`
+  and `condition` exist in the schema and stay unread by the execution engine.
+- **No LLM assistance in the approval flow** — question phrasing, context summarising,
+  and reject-vs-more-info suggestion are all left as plain data for a caller to render.
 - **No `DELETE` endpoint** anywhere.
+- **No frontend for approval execution** — the approver page and requester status view
+  are JSON APIs only (G); no UI consumes them yet.
 - Portal job list is **placeholder fixtures**, not real data.
 
 **Known rough edge:** malformed ObjectIds on `/drafts/:id*`, `/selection/sessions/:id*`, and `/tasks/:id*` fail inside the Mongo driver and surface as **500 `DATABASE_ERROR`**, not 400/404. The frontend already works around this at `admin/templates/[id]/page.tsx`.
 
 **Documentation locations** (per-subproject, unusually good and current — check these before implementing anything new):
 - `unblock-ai-api/docs/architecture/project-overview.md` — the best single entry point for the backend
-- `unblock-ai-api/docs/api/api-documentation.md` — all 25 endpoints with request/response bodies
+- `unblock-ai-api/docs/api/api-documentation.md` — all 29 endpoints with request/response bodies
 - `unblock-ai-api/docs/architecture/rag-implementation-guide.md` — retrieval design
 - `unblock-ai-api/docs/postman/` — runnable collection that chains ids automatically
 - `unblock-ai-web/docs/fe-api-migration-plan.md` — FE/API contract history (mostly resolved; see below)
@@ -219,6 +274,7 @@ Full detail in `unblock-ai-api/docs/api/api-documentation.md`. Base URL: `http:/
 | Workflows | `POST /workflows/extract` (preview) · `POST /workflows` · `GET /workflows` · `GET /workflows/:id` · `PUT /workflows/:id` · `POST /workflows/:id/validate` · `GET /workflows/:id/record` · `PATCH /workflows/:id/review` |
 | Drafts | `POST /drafts` · `GET /drafts` · `GET /drafts/:id` · `POST /drafts/:id/extract` |
 | Selection | `POST /selection/sessions` · `POST /selection/sessions/:id/answer` · `POST /selection/sessions/:id/choose` · `GET /selection/sessions/:id/workflow` |
-| Tasks | `POST /tasks` · `GET /tasks` · `GET /tasks/:id` · `GET /tasks/:id/next` · `POST /tasks/:id/values` · `POST /tasks/:id/finalize` · `PATCH /tasks/:id/status` |
+| Tasks | `POST /tasks` · `GET /tasks` · `GET /tasks/:id` · `GET /tasks/:id/next` · `POST /tasks/:id/values` · `POST /tasks/:id/finalize` · `PATCH /tasks/:id/status` · `POST /tasks/:id/start` · `GET /tasks/:id/status` |
+| Approvals | `GET /approvals/:token` · `POST /approvals/:token/decision` |
 
 No `DELETE` route exists anywhere in the API.

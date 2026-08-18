@@ -5,7 +5,7 @@ manual testing in Postman.
 
 - **Server entry point:** `src/server.ts`
 - **App builder:** `src/app.ts`
-- **Route modules:** `src/routes/health.route.ts`, `src/routes/workflow.route.ts`, `src/routes/draft.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`
+- **Route modules:** `src/routes/health.route.ts`, `src/routes/workflow.route.ts`, `src/routes/draft.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`, `src/routes/approval.route.ts`
 
 ---
 
@@ -30,6 +30,7 @@ The port comes from the `PORT` environment variable and defaults to `3000`.
 | `workflowId`    | (filled in from a response) |
 | `sessionId`     | (filled in from a response) |
 | `taskId`        | (filled in from a response) |
+| `approvalToken` | (read from the console mailer's stdout log) |
 
 The runnable Postman collection and environment ship at [../postman/](../postman/).
 
@@ -93,9 +94,17 @@ only affects browsers; Postman ignores it.
 | 22 | `POST`  | `/api/tasks/:id/values`                | Submit a value for a requirement |
 | 23 | `POST`  | `/api/tasks/:id/finalize`              | Finalize a task once all required values are filled |
 | 24 | `PATCH` | `/api/tasks/:id/status`                | Cancel a task |
+| 25 | `POST`  | `/api/tasks/:id/start`                 | Start the approval chain — dispatches the first step(s) and sends email |
+| 26 | `GET`   | `/api/tasks/:id/status`                | Requester-facing status timeline |
+| 27 | `GET`   | `/api/approvals/:token`                | Approver view — the decision page's data |
+| 28 | `POST`  | `/api/approvals/:token/decision`       | Submit an approve / reject / request-more-info decision |
 
-25 total route bindings (24 original + health). There is **no** `DELETE` route
+29 total route bindings (28 original + health). There is **no** `DELETE` route
 anywhere in the codebase; `DELETE` appears in the CORS allow-list only.
+
+> `GET /api/tasks/:id/status` is registered **before** the bare `GET
+> /api/tasks/:id` pattern in `task.route.ts`, so `status` is never swallowed as an
+> `:id` value.
 
 ---
 
@@ -815,7 +824,7 @@ The full document for the matched workflow — this drives the plan preview.
 
 > **Known rough edge.** A `session_id` that is not a 24-character hex ObjectId
 > surfaces as a **500 `DATABASE_ERROR`** rather than a 400 — see
-> [§7.1](#71-malformed-objectid-parameters-return-500), which covers drafts too.
+> [§9.1](#91-malformed-objectid-parameters-return-500), which covers drafts too.
 
 ---
 
@@ -829,16 +838,18 @@ finalizes into a runnable plan. It is created from a **matched** selection sessi
 | --------- | ------- |
 | `collecting` | Values are still being gathered. Only status in which `values` can change. |
 | `ready` | Finalized — every required value is filled and steps have their initial states. |
-| `in_progress` | Reserved for execution (not driven by any endpoint in this slice). |
-| `completed` | Reserved for execution. |
-| `rejected` | Reserved for execution. |
-| `cancelled` | Terminal. Set via §7.6. |
+| `in_progress` | Approval chain running — set by §7.8 `POST /tasks/:id/start`. |
+| `completed` | Every `completion.required_steps` step reached its required outcome. |
+| `rejected` | A step's outcome resolved to `terminate_workflow`; every non-terminal step became `skipped`. |
+| `cancelled` | Terminal. Set via §7.7. |
 
-There is **no email dispatch, no approval tokens, no approver page** in this slice —
-`steps[].approval_token` and `steps[].reason` exist on the task document and are
-always `null`. There is **no LLM question phrasing** — `GET /tasks/:id/next` returns a
-requirement's `label` and `collection_hint` as plain strings; the caller renders the
-prompt.
+Starting a task (§7.8) dispatches its entry step(s) to `pending_approval`, issues each
+one a signed approval token, and emails the assignee via the approver link
+(`POST /approvals/:token/decision`, §8). Each decision advances the graph
+(`ExecutionService.advance`) until the task completes, terminates, or is waiting on
+further approvals. There is **no LLM question phrasing** — `GET /tasks/:id/next`
+returns a requirement's `label` and `collection_hint` as plain strings; the caller
+renders the prompt.
 
 A `TaskDto` (the shape returned by every endpoint below except §7.4) looks like:
 
@@ -888,7 +899,11 @@ A `TaskDto` (the shape returned by every endpoint below except §7.4) looks like
       "outcome": null,
       "reason": null,
       "responded_at": null,
-      "approval_token": null
+      "approval_token": null,
+      "token_expires_at": null,
+      "token_used_at": null,
+      "notified_at": null,
+      "reopen_count": 0
     }
   ],
   "audit": [
@@ -899,12 +914,15 @@ A `TaskDto` (the shape returned by every endpoint below except §7.4) looks like
 }
 ```
 
-Each `requirement.key` is either an input id (`source: "input"`) or `"actor:" +
-step_id` (`source: "actor"`, `type: "person"`). Input requirements come first, in
-declaration order; actor requirements follow, in topological step order, one per
-distinct `role`/`relative_to` pair (two steps needing the same approver share one
-requirement). `values` is keyed by `requirement.key`; a `person` value is
-`{ "name": string, "email": string }`.
+Each `requirement.key` is either an input id (`source: "input"`), `"actor:" +
+step_id` (`source: "actor"`, `type: "person"`), or — after a "request more info"
+decision (§8) reopens a step — `"followup:" + step_id + ":" + reopen_count`
+(`source: "input"`, `type: "text"`, its `label` the approver's question). Input
+requirements come first, in declaration order; actor requirements follow, in
+topological step order, one per distinct `role`/`relative_to` pair (two steps
+needing the same approver share one requirement); follow-up requirements are
+appended as they are generated. `values` is keyed by `requirement.key`; a `person`
+value is `{ "name": string, "email": string }`.
 
 > **Approver email is requester-supplied and untrusted.** For an `actor:*`
 > requirement, the requester types in their own approver's name and email — there is
@@ -1120,7 +1138,212 @@ audit entry appended.
 
 ---
 
-## 8. Error responses
+### 7.8 `POST /api/tasks/:id/start`
+
+Starts the approval chain. Rejects unless `status === "ready"` (i.e. §7.6 has run).
+Loads the version-pinned workflow, runs `ExecutionService.advance()` to compute which
+step(s) become `pending_approval`, issues each a fresh signed approval token
+(`token_expires_at` = now + `APPROVAL_TOKEN_TTL_DAYS`), persists steps and status
+together, then emails each dispatched step's assignee. `status` moves to
+`in_progress`.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `id`      | path | yes      | Task id |
+
+**Request body:** none.
+
+**200 OK** — the updated `TaskDto`: `status: "in_progress"`, the entry step(s) have a
+non-null `approval_token` and `token_expires_at`, `notified_at` set if the email send
+succeeded.
+
+A failed email send is **not** an error — `notification.service.ts` never throws.
+`notified_at` stays `null` for that step, and the task still moves to `in_progress`
+with a live token. Re-fetch the task (§7.2) to check.
+
+**Errors**
+
+| Status | Cause |
+| ------ | ----- |
+| `404`  | Unknown task id |
+| `409`  | `{ "error": "Task '<id>' is not ready to start (status: <status>)", "code": "CONFLICT", "details": null }` |
+
+> **Console mailer.** With `MAIL_TRANSPORT=console` (the default), the approval
+> email is not actually sent — it is logged to the server's stdout, full approval
+> URL included: `${APP_PUBLIC_URL}/approvals/<token>`. Copy the token out of that
+> log line into `{{approvalToken}}` to drive §8 from Postman.
+
+---
+
+### 7.9 `GET /api/tasks/:id/status`
+
+The requester-facing timeline — what to show someone tracking their own request.
+Distinct from §7.2 (`GET /api/tasks/:id`), which returns the full internal document;
+this endpoint returns a smaller, presentation-oriented shape.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `id`      | path | yes      | Task id |
+
+**200 OK**
+
+```json
+{
+  "status": "in_progress",
+  "reference": "TASK-2026-00042",
+  "workflow_title": "IT Faculty Overseas Leave Approval",
+  "current_steps": ["hod_review"],
+  "rejected_at_step": null,
+  "rejected_by": null,
+  "reason": null,
+  "timeline": [
+    {
+      "step": "Academic Advisor Approval",
+      "outcome": "approved",
+      "reason": null,
+      "at": "2026-08-15T09:00:00.000Z"
+    }
+  ]
+}
+```
+
+`current_steps` lists the names of steps currently `pending_approval`. `timeline` is
+every step with a non-null `outcome`, oldest first. On a `rejected` task,
+`rejected_at_step` / `rejected_by` / `reason` are lifted from the step whose outcome
+resolved to `terminate_workflow` — this is what lets a requester see **who** rejected
+their request, **where**, and **why**. On any other status they are all `null`.
+
+**404 Not Found** — same shape as §7.2.
+
+---
+
+## 8. Approval endpoints (approver decision path)
+
+Token-authenticated, not session-authenticated — a different mechanism from the rest
+of the API (which has no auth at all). The token is the credential; anyone holding the
+link in an approval email can act as that approver. `src/controllers/approval.controller.ts`
++ `src/routes/approval.route.ts`.
+
+The token is opaque: `base64url(payload) + "." + base64url(HMAC-SHA256(payload, secret))`,
+where `payload` encodes `{ task_id, step_id, nonce }` (`src/utils/approval/token.util.ts`).
+It proves authenticity only — whether it is still *usable* (unexpired, unused, and its
+step still `pending_approval`) is a separate check made on every request.
+
+### 8.1 `GET /api/approvals/:token`
+
+The approver's decision-page data — everything needed to render the approval form
+without a second round trip.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `token`   | path | yes      | From an approval email, or the console mailer's stdout log |
+
+**200 OK**
+
+```json
+{
+  "task_reference": "TASK-2026-00042",
+  "workflow_title": "IT Faculty Overseas Leave Approval",
+  "step": {
+    "step_id": "advisor_review",
+    "name": "Academic Advisor Approval",
+    "instructions_to_approver": "Confirm the student is in good standing.",
+    "response_fields": []
+  },
+  "approver": { "name": "Dr. Perera", "email": "perera@university.edu" },
+  "requester_answers": [
+    { "label": "Destination Country", "value": "United Kingdom" }
+  ],
+  "computed": [],
+  "prior_decisions": [],
+  "allowed_outcomes": ["approved", "rejected"],
+  "already_decided": false,
+  "decided_outcome": null,
+  "decided_at": null
+}
+```
+
+`allowed_outcomes` reflects only the outcomes this **specific step** declares
+(`workflow.steps[].outcomes`, non-null entries) — never a hardcoded
+approve/reject/more-info list. A step whose schema omits `request_more_info` will
+never show that option here.
+
+**A re-clicked link on an already-decided step is not an error.** The response comes
+back `200` with `already_decided: true` and `decided_outcome` / `decided_at` filled
+in, so the page can render "already approved on 15 Aug" instead of failing.
+
+**Errors**
+
+| Status | Cause |
+| ------ | ----- |
+| `404`  | `{ "error": "Approval token '<token>' not found", "code": "NOT_FOUND", "details": null }` — malformed, tampered, or unrecognized token. Deliberately **404, not 401** — the response does not confirm or deny that a token of that shape ever existed. |
+
+---
+
+### 8.2 `POST /api/approvals/:token/decision`
+
+Records the approver's decision and advances the workflow. This is the one endpoint
+in the whole API that can send email as a direct side effect of the call.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `token`   | path | yes      | Same token as §8.1 |
+
+**Request body**
+
+| Field     | Type           | Required | Notes |
+| --------- | -------------- | -------- | ----- |
+| `outcome` | string         | yes      | One of `approved`, `rejected`, `request_more_info` |
+| `reason`  | string \| null | no       | Required (non-empty after trimming) when the step's outcome config sets `include_reason: true` — driven by the workflow, not hardcoded per outcome name |
+
+```json
+{ "outcome": "rejected", "reason": "Missing signed advisor endorsement letter." }
+```
+
+**200 OK**
+
+```json
+{
+  "task_id": "6710fa11b2c3d4e5f6078912",
+  "step_id": "advisor_review",
+  "outcome": "rejected",
+  "status": "rejected",
+  "completed": false,
+  "terminated": true
+}
+```
+
+The step is persisted **before** any notification is sent, so a failed email never
+rolls back a recorded decision. What happens next depends on the step's declared
+`action` for that outcome:
+
+| `action` | Effect |
+| --- | --- |
+| `continue` | Step → `approved`; the engine advances — any newly-`ready` step is dispatched with a fresh token and an approval-request email |
+| `terminate_workflow` | Step → `rejected`; every other non-terminal step → `skipped`; task `status` → `rejected`; a rejection notice emails the requester |
+| `reopen_input` | Step → `ready` with a cleared token (the next dispatch issues a new one); `reopen_count` on that step increments (capped at 3); a `followup:<step_id>:<n>` requirement is appended, task `status` → `collecting`, and a more-info notice emails the requester |
+
+If this decision satisfies `workflow.completion.required_steps`, `status` becomes
+`completed` and a completion notice emails the requester instead.
+
+**Errors**
+
+| Status | Cause |
+| ------ | ----- |
+| `400`  | `{ "error": "outcome must be one of: approved, rejected, request_more_info", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | `{ "error": "A reason is required for outcome '<outcome>' on step '<step_id>'", "code": "VALIDATION_ERROR", "details": null }` — reason missing or whitespace-only when the step requires one |
+| `404`  | Invalid or unrecognized token — same as §8.1 |
+| `409`  | `{ "error": "Approval token has already been used for step '<step_id>'", "code": "CONFLICT", "details": null }` — replay of a used token |
+
+> **Approver identity is requester-supplied and untrusted.** The email a decision is
+> sent to comes from whatever the requester typed into an `actor:*` task requirement
+> (§7) — there is no directory lookup. This slice trusts that address with real
+> approval authority; see the comment in `notification.service.ts` at the dispatch
+> site.
+
+---
+
+## 9. Error responses
 
 All errors are JSON. `src/middlewares/error-handler.middleware.ts` reads the
 status and body straight off any `BaseError` subclass (see
@@ -1155,11 +1378,12 @@ The split is deliberate: **400** means the document you sent is wrong, **422** m
 extraction could not build one from your prose. Both are client-visible failures, but
 only the second implies the LLM was involved.
 
-### 8.1 Malformed ObjectId parameters return 500
+### 9.1 Malformed ObjectId parameters return 500
 
 Routes whose `:id` is a **MongoDB ObjectId** — every `/drafts/:id*` route, every
 `/selection/sessions/:id*` route, and every `/tasks/:id*` route — behave differently
-depending on *how* the id is wrong:
+depending on *how* the id is wrong. `/approvals/:token*` is unaffected — the token is
+not an ObjectId, and an invalid one is a clean 404 (§8.1) rather than a 500:
 
 | `:id` you send | Status | Body |
 | -------------- | ------ | ---- |
@@ -1176,7 +1400,7 @@ string (`departmental_event_workshop`), not an ObjectId, so any unknown value is
 
 ---
 
-## 9. Suggested Postman test order
+## 10. Suggested Postman test order
 
 Run these folders in sequence — later calls depend on ids produced by earlier ones.
 The runnable collection at [../postman/](../postman/) automates this order with
@@ -1207,8 +1431,14 @@ Collection Runner pass needs no manual variable entry.
 | Tasks | `POST /tasks/{{taskId}}/values` for each requirement returned by `next` | repeat until `GET /tasks/{{taskId}}/next` returns `complete: true` |
 | Tasks | `POST /tasks/{{taskId}}/finalize` | confirm `status: "ready"` and step states |
 | Tasks | `GET /tasks?session_id={{sessionId}}` | the task appears in the list |
-| Tasks | `PATCH /tasks/{{taskId}}/status` with `{"status":"cancelled"}` | only on a scratch task — this is terminal |
-| Error cases | one request per error class (400, 404, 422, 409) | asserts `{ error, code, details }` |
+| Tasks | `POST /tasks/{{taskId}}/start` | `status: "in_progress"`; watch stdout for the approval email (console mailer) |
+| Approvals | copy the token out of the stdout log into `{{approvalToken}}` | — |
+| Approvals | `GET /approvals/{{approvalToken}}` | confirm `already_decided: false` and `allowed_outcomes` |
+| Approvals | `POST /approvals/{{approvalToken}}/decision` with `{"outcome":"approved"}` | confirm `status`; repeat the start→copy→get→decide loop for each subsequent step until `completed: true` |
+| Tasks | `GET /tasks/{{taskId}}/status` | confirm the timeline reflects every decision made |
+| Tasks | `GET /tasks?session_id={{sessionId}}` | the task appears in the list |
+| Tasks | `PATCH /tasks/{{taskId}}/status` with `{"status":"cancelled"}` | only on a scratch task **before** `start` — this is terminal |
+| Error cases | one request per error class (400, 404, 409, 422) | asserts `{ error, code, details }` |
 
 Repeat the Drafts/Workflows folders with a second template
 (`src/data/samples/demo-drafts/workshop_event.txt`) so the selector has something to
@@ -1238,7 +1468,7 @@ pm.collectionVariables.set("sessionId", pm.response.json().session_id);
 
 ---
 
-## 10. Things worth knowing before you test
+## 11. Things worth knowing before you test
 
 - **LLM routes are slow.** `POST /workflows/extract` and `POST /drafts/:id/extract`
   make up to `EXTRACTION_MAX_ATTEMPTS` Azure calls. Set the Postman timeout well
@@ -1262,7 +1492,20 @@ pm.collectionVariables.set("sessionId", pm.response.json().session_id);
 - **Task values can only change while `status: "collecting"`.** `POST
   /tasks/:id/values` and `POST /tasks/:id/finalize` both 409 once the task is
   `ready` or `cancelled`.
-- **No execution engine.** Finalizing a task (§7.6) only computes initial step
-  states (`ready` / `blocked`) — nothing progresses a step, sends a notification,
-  or issues an approval token after that. `in_progress`, `completed`, and
-  `rejected` are reserved statuses with no endpoint that sets them yet.
+- **The approval chain only moves on `POST /tasks/:id/start` and
+  `POST /approvals/:token/decision`.** Finalizing (§7.6) only computes initial step
+  states — nothing is dispatched, tokened, or emailed until §7.8 starts the task.
+- **Approval tokens live in the console log, not the API response.** With the
+  default `MAIL_TRANSPORT=console`, no email provider is involved — the mailer logs
+  the subject, recipient, and full approval URL to the server's stdout. Read the
+  token from there for manual testing.
+- **A used or expired token is a 409, not a 404 or 500.** A malformed/unknown
+  token is 404 (§8); a syntactically valid token whose step already has
+  `token_used_at` set, or whose `token_expires_at` has passed, is a 409 from
+  `POST /approvals/:token/decision`. `GET /approvals/:token` instead renders
+  `already_decided: true` for the used case — it never errors on a stale-but-valid
+  link.
+- **A `request_more_info` decision reopens collection.** No new endpoint —
+  `status` returns to `collecting` and a `followup:<step_id>:<n>` requirement is
+  appended, answered through the existing `POST /tasks/:id/values` (§7.5). Reopens
+  on the same step are capped at 3 (`reopen_count`); a 4th is a 409.

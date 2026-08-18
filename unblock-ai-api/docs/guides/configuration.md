@@ -29,8 +29,21 @@ configs into a single frozen `config` object that every other module imports.
 | `SELECTION_MAX_ROUNDS` | no | `2` | `src/config/retrieval.config.ts` | `config.retrieval.maxSelectionRounds` — clarifying-question round cap |
 | `VECTOR_BACKEND` | no | `memory` | `src/config/retrieval.config.ts` | `config.retrieval.vectorBackend` — selects `InMemoryVectorStore` or `AtlasVectorStore` at composition root |
 | `ATLAS_VECTOR_INDEX` | no | `template_vector_index` | `src/config/retrieval.config.ts` | `config.retrieval.atlasIndexName` — only used when `VECTOR_BACKEND=atlas` |
+| `MAIL_TRANSPORT` | no | `console` | `src/config/mail.config.ts` | `config.mail.transport` — `console` \| `smtp`, selects `IMailer` at composition root |
+| `MAIL_FROM` | no | `Unblock AI <noreply@localhost>` | `src/config/mail.config.ts` | `config.mail.from` — `From` header on outgoing approval mail |
+| `SMTP_HOST` | no | `""` | `src/config/mail.config.ts` | `config.mail.smtpHost` — passed to `nodemailer.createTransport`; not validated at startup, so an empty host only surfaces as a send failure once `MAIL_TRANSPORT=smtp` actually sends |
+| `SMTP_PORT` | no | `587` | `src/config/mail.config.ts` | `config.mail.smtpPort` — `465` selects implicit TLS (`secure: true`) |
+| `SMTP_USER` | no | `""` | `src/config/mail.config.ts` | `config.mail.smtpUser` — omitted from transporter `auth` entirely when empty |
+| `SMTP_PASS` | no | `""` | `src/config/mail.config.ts` | `config.mail.smtpPass` |
+| `APP_PUBLIC_URL` | no | `http://localhost:3001` | `src/config/mail.config.ts` | `config.mail.appPublicUrl` — base URL used to build `/approvals/:token` links in emails |
+| `APPROVAL_TOKEN_SECRET` | \*\* | `""` | `src/config/mail.config.ts` | `config.mail.tokenSecret` — HMAC-SHA256 signing key for approval tokens (`token.util.ts`); **required when `MAIL_TRANSPORT=smtp`**, throwing `ConfigurationError` at startup — an empty dev default is otherwise tolerated |
+| `APPROVAL_TOKEN_TTL_DAYS` | no | `14` | `src/config/mail.config.ts` | `config.mail.tokenTtlDays` — approval token lifetime, in days |
 
-21 variables total (\* = required, throws at startup if missing/empty).
+31 variables total (\* = required, throws at startup if missing/empty; \*\* = only
+`APPROVAL_TOKEN_SECRET` is conditionally required, when `MAIL_TRANSPORT=smtp` — see
+below. The four `SMTP_*` vars are not validated at startup at all; a misconfigured
+SMTP transport fails at send time instead, caught and logged by
+`notification.service.ts` rather than crashing the process).
 
 `KNOWLEDGE_BANK_PATH` was **removed** during the restructure. It was read into
 the pre-restructure config but consumed by nothing after the migration to MongoDB —
@@ -48,6 +61,11 @@ value as an argument, which is why `env.config.ts` is the only file that touches
 - `optionalString(name, raw, fallback)`
 - `parseNumber(name, raw, fallback)` — throws if present but non-numeric.
 - `parseEnum(name, raw, allowed, fallback)` — throws if present but not one of `allowed`.
+
+`mail.config.ts` adds one check of its own, outside these four helpers: after
+building the frozen `mail` object, it throws `ConfigurationError` if
+`transport === "smtp"` and `tokenSecret === ""`. A dev default that leaves approval
+tokens unsigned is fine; a production SMTP deployment silently doing the same is not.
 
 ## Two config files, two purposes
 
