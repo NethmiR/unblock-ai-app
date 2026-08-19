@@ -1,12 +1,26 @@
-"use client";
-import { useState } from "react";
 import Link from "next/link";
-import { JobRow } from "@/components/portal/JobRow";
+import { JobRow, type JobRowTask } from "@/components/portal/JobRow";
 import { Button } from "@/components/ui/Button";
-import { PLACEHOLDER_JOBS, type Job } from "@/lib/fixtures/jobs";
+import { tasksApi } from "@/lib/api/tasks";
+import { workflowsApi } from "@/lib/api/workflows";
 
-export default function JobsPage() {
-  const [jobs, setJobs] = useState<Job[]>(PLACEHOLDER_JOBS);
+export const dynamic = "force-dynamic";
+
+/**
+ * The requester's job list, driven by `GET /tasks` - replaces the
+ * `PLACEHOLDER_JOBS` fixture now that the execution engine has shipped.
+ *
+ * `TaskDto` carries `workflow_id`, not a title, so titles are joined from
+ * `workflowsApi.list()` - one extra call for the whole page rather than N
+ * calls through the per-task `/status` endpoint.
+ */
+export default async function JobsPage() {
+  const [tasks, workflows] = await Promise.all([tasksApi.list(), workflowsApi.list()]);
+  const titleById = new Map(workflows.map((w) => [w.workflow_id, w.title]));
+  const jobs: JobRowTask[] = tasks.map((task) => ({
+    ...task,
+    workflow_title: titleById.get(task.workflow_id) ?? task.workflow_id,
+  }));
 
   return (
     <div className="mx-auto max-w-[1440px] px-16 pb-[120px] pt-14">
@@ -44,7 +58,7 @@ export default function JobsPage() {
       ) : (
         <div className="flex flex-col gap-3.5">
           {jobs.map((job) => (
-            <JobRow key={job.id} job={job} onDelete={(id) => setJobs((j) => j.filter((x) => x.id !== id))} />
+            <JobRow key={job.id} job={job} />
           ))}
         </div>
       )}
