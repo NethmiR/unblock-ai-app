@@ -1,13 +1,45 @@
 "use client";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSelectionSession } from "@/lib/hooks/useSelectionSession";
 import { SelectionChat } from "@/components/portal/SelectionChat";
 import { PlanPanel } from "@/components/portal/PlanPanel";
+import { tasksApi } from "@/lib/api/tasks";
+import { ApiError } from "@/lib/api/client";
 import Link from "next/link";
 
 export default function NewJobPage() {
   const router = useRouter();
-  const { messages, decision, workflow, isBusy, send, choose, hasStarted } = useSelectionSession();
+  const { messages, sessionId, decision, workflow, isBusy, send, choose, hasStarted } =
+    useSelectionSession();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  /**
+   * Creates the task and hands off to the collection loop.
+   *
+   * `POST /tasks` 409s unless the session has matched. The button is only
+   * rendered once `workflow` is set, which happens on a matched decision and
+   * nowhere else - so the precondition is already encoded in the state.
+   */
+  async function submitRequest() {
+    if (!sessionId) return;
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      const task = await tasksApi.create(sessionId);
+      router.push(`/portal/jobs/${task.id}/collect`);
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError
+          ? err.message
+          : "Something went wrong creating your request. Please try again.",
+      );
+      setIsSubmitting(false);
+    }
+    // On success the route changes, so `isSubmitting` stays true and the
+    // button stays disabled until this page unmounts.
+  }
 
   return (
     <div className="mx-auto flex h-screen max-w-[1440px] flex-col px-16 pb-7 pt-9">
@@ -35,7 +67,12 @@ export default function NewJobPage() {
           onSend={send}
           onChoose={choose}
         />
-        <PlanPanel workflow={workflow} onSubmit={() => router.push("/portal")} />
+        <PlanPanel
+          workflow={workflow}
+          onSubmit={submitRequest}
+          isSubmitting={isSubmitting}
+          error={submitError}
+        />
       </div>
     </div>
   );

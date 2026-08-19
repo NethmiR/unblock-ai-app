@@ -136,5 +136,7 @@ export function useSelectionSession() {
     [sessionId, push],
   );
 
-  return { messages, decision, workflow, isBusy, send, choose, hasStarted: messages.length > 0 };
+  // `sessionId` is the seam the whole task flow hangs off - `POST /tasks`
+  // takes it, and nothing else in the app knows it.
+  return { messages, sessionId, decision, workflow, isBusy, send, choose, hasStarted: messages.length > 0 };
 }

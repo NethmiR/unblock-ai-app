@@ -5,7 +5,16 @@ import { Button } from "@/components/ui/Button";
 import { toPlanNodes } from "@/lib/workflow/toPlanNodes";
 import type { Workflow } from "@/types/workflow";
 
-export function PlanPanel({ workflow, onSubmit }: { workflow: Workflow | null; onSubmit: () => void }) {
+interface PlanPanelProps {
+  workflow: Workflow | null;
+  onSubmit: () => void;
+  /** True while `POST /tasks` is in flight - the button must not be clickable twice. */
+  isSubmitting?: boolean;
+  /** Surfaced inline; the API writes these messages to be shown. */
+  error?: string | null;
+}
+
+export function PlanPanel({ workflow, onSubmit, isSubmitting = false, error = null }: PlanPanelProps) {
   const nodes = useMemo(() => (workflow ? toPlanNodes(workflow) : []), [workflow]);
 
   return (
@@ -35,10 +44,18 @@ export function PlanPanel({ workflow, onSubmit }: { workflow: Workflow | null; o
 
             <div className="mt-8 flex items-center justify-between gap-5 border-t border-line pt-6">
               <div className="max-w-[34ch] text-[13.5px] leading-normal text-muted">
-                Nothing is sent to any approver until you submit.
+                {error ? (
+                  <span className="text-danger">{error}</span>
+                ) : (
+                  "Nothing is sent to any approver until you submit."
+                )}
               </div>
-              <Button onClick={onSubmit} className="h-[48px] flex-none rounded-card px-[22px] text-[15px] font-medium">
-                Submit request
+              <Button
+                onClick={onSubmit}
+                disabled={isSubmitting}
+                className="h-[48px] flex-none rounded-card px-[22px] text-[15px] font-medium"
+              >
+                {isSubmitting ? "Starting…" : "Submit request"}
               </Button>
             </div>
           </div>
