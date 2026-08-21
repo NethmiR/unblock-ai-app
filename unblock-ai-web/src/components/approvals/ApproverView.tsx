@@ -52,6 +52,7 @@ export function ApproverView({ token, initialView: view }: { token: string; init
   function chooseOutcome(outcome: StepOutcomeResult) {
     if (includeReasonFor(outcome)) {
       setReason("");
+      setError(null);
       setPendingConfirm(outcome);
       return;
     }
@@ -61,6 +62,7 @@ export function ApproverView({ token, initialView: view }: { token: string; init
   function cancelConfirm() {
     setPendingConfirm(null);
     setReason("");
+    setError(null);
   }
 
   async function submit(outcome: StepOutcomeResult, reasonToSend: string | null) {
@@ -169,7 +171,7 @@ export function ApproverView({ token, initialView: view }: { token: string; init
         </Card>
       ) : (
         <Card className="px-7 py-6">
-          {error && (
+          {error && !pendingConfirm && (
             <p className="mb-4 text-[13.5px] text-danger">{error}</p>
           )}
 
@@ -194,6 +196,7 @@ export function ApproverView({ token, initialView: view }: { token: string; init
           reason={reason}
           onReasonChange={setReason}
           submitting={pendingOutcome === pendingConfirm}
+          error={error}
           onConfirm={() => submit(pendingConfirm, reason.trim())}
           onCancel={cancelConfirm}
         />

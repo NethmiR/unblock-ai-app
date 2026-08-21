@@ -31,7 +31,7 @@ export function Button({ variant = "primary", size = "md", className, children, 
       {...props}
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-control font-semibold transition-colors",
-        "disabled:cursor-not-allowed",
+        "cursor-pointer disabled:cursor-not-allowed",
         VARIANTS[variant],
         SIZES[size],
         className,
