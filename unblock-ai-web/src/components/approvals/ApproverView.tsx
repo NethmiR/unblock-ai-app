@@ -125,26 +125,6 @@ export function ApproverView({ token, initialView: view }: { token: string; init
         </Card>
       )}
 
-      {view.prior_decisions.length > 0 && (
-        <Card className="mb-6 px-7 py-6">
-          <div className="mb-4 text-[13px] font-semibold uppercase tracking-[.08em] text-muted">
-            What happened already
-          </div>
-          <div className="flex flex-col gap-3">
-            {view.prior_decisions.map((d, i) => (
-              <div key={`${d.step}-${i}`} className="flex items-start justify-between gap-4 text-[13.5px]">
-                <div>
-                  <span className="font-medium text-ink">{d.step}</span>
-                  <span className="text-muted"> — {d.outcome}</span>
-                  {d.reason && <p className="mt-1 text-[13px] text-muted">{d.reason}</p>}
-                </div>
-                <div className="flex-none text-[12.5px] text-faint">{formatDateTime(d.at)}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
       {alreadyDecided ? (
         <Card className="px-7 py-6">
           {blocked ? (

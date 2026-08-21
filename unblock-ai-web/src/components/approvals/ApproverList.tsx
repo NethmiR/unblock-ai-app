@@ -1,5 +1,6 @@
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { formatDateTime } from "@/lib/utils/format";
 import type { ApproverStatus, ApproverViewDto } from "@/types/approval";
 
 const STATUS_TONE: Record<ApproverStatus, "success" | "danger" | "warn" | "neutral"> = {
@@ -36,9 +37,12 @@ export function ApproverList({ approvers }: { approvers: ApproverViewDto["approv
                 {a.name ? `${a.name}${a.email ? ` (${a.email})` : ""}` : "Not yet provided"}
               </p>
             </div>
-            <Badge tone={STATUS_TONE[a.status]} className="flex-none">
-              {STATUS_LABEL[a.status]}
-            </Badge>
+            <div className="flex flex-none flex-col items-end gap-1">
+              <Badge tone={STATUS_TONE[a.status]}>{STATUS_LABEL[a.status]}</Badge>
+              {a.decided_at && (
+                <span className="text-[12.5px] text-faint">{formatDateTime(a.decided_at)}</span>
+              )}
+            </div>
           </div>
         ))}
       </div>
