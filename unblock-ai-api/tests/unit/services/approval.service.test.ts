@@ -264,6 +264,90 @@ test("submitDecision on a step that is no longer pending_approval throws Conflic
   await assert.rejects(() => service.submitDecision(token, "approved", null), ConflictError);
 });
 
+test("approvers lists every actor requirement, ordered by workflow step order", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const view = await service.getApproverView(token);
+
+  assert.deepEqual(
+    view.approvers.map((a) => a.step_id),
+    ["advisor_review", "hod_review", "dean_review"],
+  );
+});
+
+test("approvers marks the dispatched step 'awaiting' and downstream steps 'not_yet_reached'", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const view = await service.getApproverView(token);
+  const byStep = new Map(view.approvers.map((a) => [a.step_id, a]));
+
+  assert.equal(byStep.get("advisor_review")?.status, "awaiting");
+  assert.equal(byStep.get("advisor_review")?.is_current, true);
+  assert.equal(byStep.get("hod_review")?.status, "not_yet_reached");
+  assert.equal(byStep.get("hod_review")?.is_current, false);
+});
+
+test("approvers reports a decided step's outcome and decided_at", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  await service.submitDecision(token, "approved", null);
+
+  const hodToken = (await taskModel.findById(task._id))!.steps.find((s) => s.step_id === "hod_review")!
+    .approval_token!;
+  const view = await service.getApproverView(hodToken);
+  const advisor = view.approvers.find((a) => a.step_id === "advisor_review");
+
+  assert.equal(advisor?.status, "approved");
+  assert.ok(advisor?.decided_at);
+});
+
+test("approvers uses the requirement's designation label, not the raw actor key", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTask(taskModel);
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const view = await service.getApproverView(token);
+  const advisor = view.approvers.find((a) => a.step_id === "advisor_review");
+
+  assert.equal(advisor?.designation, "Academic Advisor");
+  assert.ok(!advisor?.designation.startsWith("actor:"));
+});
+
+test("approvers reports null name/email for a step whose assignee was never supplied (deduped-actor case)", async () => {
+  // Finding 3: when two steps share a role, buildActorRequirements dedupes to one
+  // requirement keyed to the first step, so the second step's requirement.ref can point
+  // at a task.steps entry whose assignee is legitimately null. The approver list must
+  // reflect that as "not yet supplied", not throw or fall back to step.assignee.
+  const taskModel = new FakeTaskModel();
+  const base = finalizedTask(LEAVE_WORKFLOW);
+  const withNullAssignee: TaskDocument = {
+    ...base,
+    steps: base.steps.map((s) => (s.step_id === "hod_review" ? { ...s, assignee: null } : s)),
+  };
+  const inserted = await taskModel.insert(withNullAssignee);
+  const dispatched = dispatchAdvisorStep(inserted);
+  await taskModel.updateStepAndStatus(dispatched._id, dispatched.steps, TASK_STATUS.IN_PROGRESS);
+  const { service } = build(taskModel);
+  const token = dispatched.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const view = await service.getApproverView(token);
+  const hod = view.approvers.find((a) => a.step_id === "hod_review");
+
+  assert.equal(hod?.name, null);
+  assert.equal(hod?.email, null);
+  assert.equal(hod?.status, "not_yet_reached");
+});
+
 test("requesting more info reopens the step, clears its token, and moves the task back to collecting", async () => {
   const taskModel = new FakeTaskModel();
   const task = await seedDispatchedTask(taskModel);

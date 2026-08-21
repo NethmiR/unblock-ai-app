@@ -261,6 +261,22 @@ export class FakeTaskModel {
     return Promise.resolve(task);
   }
 
+  updateStepAndStatusIfUnused(
+    id: string | ObjectId,
+    stepId: string,
+    steps: TaskStepState[],
+    status: TaskStatus,
+  ): Promise<boolean> {
+    const task = this.tasks.get(String(id));
+    if (!task) return Promise.resolve(false);
+    const current = task.steps.find((s) => s.step_id === stepId);
+    if (!current || current.token_used_at !== null) return Promise.resolve(false);
+    task.steps = steps;
+    task.status = status;
+    task.updated_at = new Date();
+    return Promise.resolve(true);
+  }
+
   appendRequirement(id: string | ObjectId, requirement: TaskRequirement): Promise<TaskDocument | null> {
     const task = this.tasks.get(String(id));
     if (!task) return Promise.resolve(null);

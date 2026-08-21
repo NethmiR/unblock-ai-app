@@ -7,7 +7,7 @@ import { ApproverList } from "@/components/approvals/ApproverList";
 import { ReasonDialog } from "@/components/approvals/ReasonDialog";
 import { formatDateTime } from "@/lib/utils/format";
 import { approvalsApi } from "@/lib/api/approvals";
-import { ApiError } from "@/lib/api/client";
+import { classifySubmitError } from "@/lib/utils/submit-error";
 import type { ApproverViewDto } from "@/types/approval";
 import type { StepOutcomeResult } from "@/types/task";
 
@@ -71,11 +71,12 @@ export function ApproverView({ token, initialView: view }: { token: string; init
       setResult({ outcome: decision.outcome, completed: decision.completed, terminated: decision.terminated });
       setPendingConfirm(null);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setBlocked({ message: err.message });
+      const classified = classifySubmitError(err);
+      if (classified.kind === "terminal") {
+        setBlocked({ message: classified.message });
         setPendingConfirm(null);
       } else {
-        setError(err instanceof ApiError ? err.message : "Something went wrong submitting your decision. Please try again.");
+        setError(classified.message);
       }
     } finally {
       setPendingOutcome(null);
