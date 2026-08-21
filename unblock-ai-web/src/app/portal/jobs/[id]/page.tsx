@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { tasksApi } from "@/lib/api/tasks";
+import { workflowsApi } from "@/lib/api/workflows";
 import { ApiError } from "@/lib/api/client";
 import { JobStatusView } from "@/components/portal/JobStatusView";
 
@@ -15,13 +16,22 @@ export const dynamic = "force-dynamic";
 export default async function JobStatusPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  let status;
+  let status, task;
   try {
-    status = await tasksApi.status(id);
+    [status, task] = await Promise.all([tasksApi.status(id), tasksApi.get(id)]);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     throw err;
   }
 
-  return <JobStatusView taskId={id} initialStatus={status} />;
+  /**
+   * The plan is supporting detail, not the page: a template deleted out from
+   * under a finished task must not take the whole status view down with it, so
+   * a failed fetch degrades to no plan rather than an error.
+   */
+  const workflow = await workflowsApi
+    .get(task.workflow_id, task.version)
+    .catch(() => null);
+
+  return <JobStatusView taskId={id} initialStatus={status} task={task} workflow={workflow} />;
 }

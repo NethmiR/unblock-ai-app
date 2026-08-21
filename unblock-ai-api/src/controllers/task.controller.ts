@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { TaskService } from "../services/task.service.js";
 import { optionalString, requireNonEmptyString, requireOneOf } from "../utils/http/request-validator.util.js";
 import { serializeTask, serializeTaskSummary } from "../utils/http/serializer.util.js";
+import { actorFromRequest } from "../utils/http/actor.util.js";
 import { TASK_STATUS } from "../data/constants/status.constant.js";
 import type { TaskStatus } from "../lib/types/task/task.type.js";
 
@@ -58,6 +59,15 @@ export class TaskController {
     requireOneOf(req.body, "status", ["cancelled"] as const);
     const task = await this.taskService.cancel(req.params.id as string);
     res.json(serializeTask(task));
+  };
+
+  /**
+   * `DELETE /tasks/:id` - permanent. Only finished tasks qualify; the service
+   * 409s on a live one rather than orphaning approval links already in inboxes.
+   */
+  deleteTask = async (req: Request, res: Response): Promise<void> => {
+    await this.taskService.delete(req.params.id as string, actorFromRequest(req), req.requestId);
+    res.status(204).send();
   };
 
   listTasks = async (req: Request, res: Response): Promise<void> => {

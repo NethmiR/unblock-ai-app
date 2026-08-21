@@ -1,13 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { ObjectId } from "mongodb";
+import { ObjectId } from "mongodb";
 import { TaskService } from "../../../src/services/task.service.js";
 import { PlannerService } from "../../../src/services/planner.service.js";
 import { ExecutionService } from "../../../src/services/execution.service.js";
 import { NotificationService } from "../../../src/services/notification.service.js";
 import { ConflictError } from "../../../src/errors/conflict.error.js";
 import { ValidationError } from "../../../src/errors/validation.error.js";
-import { FakeTaskModel } from "../../helpers/fake-model.helper.js";
+import { NotFoundError } from "../../../src/errors/not-found.error.js";
+import { FakeAuditLogModel, FakeTaskModel } from "../../helpers/fake-model.helper.js";
+import { AuditService } from "../../../src/services/audit.service.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
 import type { SelectionService } from "../../../src/services/selection.service.js";
 import type { WorkflowService } from "../../../src/services/workflow.service.js";
@@ -45,14 +47,24 @@ const fakeConfig = {
 
 const fakeMailer: IMailer = { send: () => Promise.resolve({ sent: true, error: null }) };
 
+function fakeAuditService(auditLogModel: FakeAuditLogModel): AuditService {
+  return new AuditService({
+    auditLogModel: auditLogModel as unknown as ConstructorParameters<
+      typeof AuditService
+    >[0]["auditLogModel"],
+  });
+}
+
 function build({
   taskModel,
   workflow,
   matched = true,
+  auditLogModel = new FakeAuditLogModel(),
 }: {
   taskModel: FakeTaskModel;
   workflow: WorkflowDefinition;
   matched?: boolean;
+  auditLogModel?: FakeAuditLogModel;
 }): TaskService {
   return new TaskService({
     taskModel: taskModel as unknown as ConstructorParameters<typeof TaskService>[0]["taskModel"],
@@ -61,11 +73,15 @@ function build({
     plannerService: new PlannerService(),
     executionService: new ExecutionService(),
     notificationService: new NotificationService({ mailer: fakeMailer, config: fakeConfig }),
+    auditService: fakeAuditService(auditLogModel),
     config: fakeConfig,
   });
 }
 
 const LEAVE_WORKFLOW = loadExpectedFixture("it_faculty_overseas_leave.json");
+
+/** No login yet, so an unauthenticated delete still has to be representable. */
+const ANONYMOUS_ACTOR = { id: null, email: null, role: null };
 
 test("create() from an unmatched session throws ConflictError", async () => {
   const taskModel = new FakeTaskModel();
@@ -267,4 +283,58 @@ test("re-finalize after a reopen dispatches only the reopened step, leaving appr
   assert.equal(byId.get("hod_review")?.state, "pending_approval");
   assert.ok(byId.get("hod_review")?.approval_token);
   assert.equal(byId.get("dean_review")?.state, "blocked");
+});
+
+test("delete() on a live task throws ConflictError and removes nothing", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+
+  await assert.rejects(() => service.delete(task._id, ANONYMOUS_ACTOR), ConflictError);
+  assert.ok(await taskModel.findById(task._id));
+});
+
+test("delete() removes a completed task and records who did it", async () => {
+  const taskModel = new FakeTaskModel();
+  const auditLogModel = new FakeAuditLogModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW, auditLogModel });
+
+  const task = await service.create("session-1");
+  await taskModel.setStatus(task._id, "completed");
+
+  await service.delete(task._id, { id: "u-1", email: "dean@uni.edu", role: "requester" }, "req-9");
+
+  assert.equal(await taskModel.findById(task._id), null);
+
+  const entries = await auditLogModel.findByResource("task", String(task._id));
+  assert.equal(entries.length, 1);
+  const entry = entries[0]!;
+  assert.equal(entry.action, "deleted");
+  assert.equal(entry.actor.email, "dean@uni.edu");
+  assert.equal(entry.request_id, "req-9");
+  // The row is gone - the snapshot is the only thing left that can identify it.
+  assert.equal(entry.snapshot.reference, task.reference);
+  assert.equal(entry.snapshot.status, "completed");
+});
+
+test("delete() is allowed once a live task has been cancelled", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await service.cancel(task._id);
+  await service.delete(task._id, ANONYMOUS_ACTOR);
+
+  assert.equal(await taskModel.findById(task._id), null);
+});
+
+test("delete() of an unknown task throws NotFoundError", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  await assert.rejects(
+    () => service.delete(new ObjectId(), ANONYMOUS_ACTOR),
+    NotFoundError,
+  );
 });

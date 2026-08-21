@@ -7,11 +7,13 @@ import { DraftModel } from "./models/draft.model.js";
 import { TemplateModel } from "./models/template.model.js";
 import { SelectionSessionModel } from "./models/selection-session.model.js";
 import { TaskModel } from "./models/task.model.js";
+import { AuditLogModel } from "./models/audit-log.model.js";
 import { EmbeddingService } from "./services/embedding.service.js";
 import { ValidationService } from "./services/validation.service.js";
 import { ExtractionService } from "./services/extraction.service.js";
 import { DraftService } from "./services/draft.service.js";
 import { WorkflowService } from "./services/workflow.service.js";
+import { AuditService } from "./services/audit.service.js";
 import { createVectorStore } from "./services/vector-store/index.vector-store.js";
 import { RetrievalService } from "./services/retrieval.service.js";
 import { SelectorService } from "./services/selector.service.js";
@@ -34,12 +36,20 @@ async function main(): Promise<void> {
   const templateModel = new TemplateModel();
   const sessionModel = new SelectionSessionModel();
   const taskModel = new TaskModel();
+  const auditLogModel = new AuditLogModel();
 
+  const auditService = new AuditService({ auditLogModel });
   const embeddingService = new EmbeddingService();
   const validationService = new ValidationService();
   const extractionService = new ExtractionService({ validationService });
   const draftService = new DraftService({ draftModel });
-  const workflowService = new WorkflowService({ templateModel, embeddingService, validationService });
+  const workflowService = new WorkflowService({
+    templateModel,
+    embeddingService,
+    validationService,
+    taskModel,
+    auditService,
+  });
 
   const vectorStore = createVectorStore(config.retrieval.vectorBackend, {
     templateReader: templateModel,
@@ -66,6 +76,7 @@ async function main(): Promise<void> {
     plannerService,
     executionService,
     notificationService,
+    auditService,
     config,
   });
   const approvalService = new ApprovalService({

@@ -29,6 +29,12 @@ export const tasksApi = {
 
   status: (id: string) => apiRequest<TaskStatusDto>(`/tasks/${id}/status`),
 
+  /**
+   * Permanent, and only for finished tasks - the API 409s on a live one rather
+   * than orphaning approval links already sitting in approvers' inboxes.
+   */
+  remove: (id: string) => apiRequest<void>(`/tasks/${id}`, { method: "DELETE" }),
+
   /** The only accepted `PATCH /tasks/:id/status` transition - the controller 400s on any other value. */
   cancel: (id: string) =>
     apiRequest<TaskDto>(`/tasks/${id}/status`, {

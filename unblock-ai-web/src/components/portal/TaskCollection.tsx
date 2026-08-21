@@ -30,6 +30,14 @@ export function TaskCollection({
   const answered = task.requirements.filter((r) => r.status !== "pending").length;
   const total = task.requirements.length;
 
+  /**
+   * A finished task reports `complete: true` from `/next` - every requirement
+   * IS filled - which would otherwise render the "Send for approval" button and
+   * 409 on click. Only a `collecting` task is actually collecting, so the
+   * status decides, exactly as the routing rule above says it must.
+   */
+  const isCollecting = task.status === "collecting";
+
   return (
     <div className="mx-auto max-w-[720px] px-6 py-14">
       <div className="mb-2 text-xs font-medium uppercase tracking-[.14em] text-muted">
@@ -58,7 +66,7 @@ export function TaskCollection({
             </Button>
           </Link>
         </Card>
-      ) : current ? (
+      ) : current && isCollecting ? (
         <Card className="px-7 py-7">
           {isFollowUp(current.key) && (
             <p className="mb-4 text-[13px] font-semibold uppercase tracking-[.08em] text-warn-ink">
@@ -74,7 +82,7 @@ export function TaskCollection({
           />
           {error && <p className="mt-4 text-[13.5px] text-danger">{error}</p>}
         </Card>
-      ) : complete ? (
+      ) : complete && isCollecting ? (
         <Card className="px-7 py-7">
           <div className="mb-1.5 text-[15px] font-semibold tracking-tight">
             That is everything we need
@@ -94,14 +102,15 @@ export function TaskCollection({
           </Button>
         </Card>
       ) : (
-        // `/next` reports neither a requirement nor completion: the task has
-        // moved on from `collecting` (already sent, cancelled, or decided).
+        // The task has moved on from `collecting` - already sent, cancelled, or
+        // decided. Point at the status page, which is where a finished request
+        // is actually readable.
         <Card className="px-7 py-6">
           <p className="text-[14.5px] text-ink">
             This request is not collecting information right now.
           </p>
-          <Link href="/portal" className="mt-4 inline-block text-[14px] font-medium">
-            Back to my requests
+          <Link href={`/portal/jobs/${task.id}`} className="mt-4 inline-block text-[14px] font-medium">
+            View this request
           </Link>
         </Card>
       )}

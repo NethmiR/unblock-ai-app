@@ -56,6 +56,19 @@ export const workflowsApi = {
     apiRequest<SaveResult>(`/workflows/${id}`, { method: "PUT", body: { workflow } }),
 
   /**
+   * Permanent, and irreversible: removes EVERY version of the workflow.
+   *
+   * `confirmation` must be the word "delete" and `confirmTitle` must match the
+   * template's title - the API re-checks both, so the two-step dialog in the
+   * admin UI is a real guard rather than a decoration.
+   */
+  remove: (id: string, confirmation: string, confirmTitle: string) =>
+    apiRequest<void>(`/workflows/${id}`, {
+      method: "DELETE",
+      body: { confirmation, confirm_title: confirmTitle },
+    }),
+
+  /**
    * Checks a document without saving it. Unlike `create`/`update` this never
    * throws on an invalid document - it resolves with `{ valid: false, errors }`.
    */

@@ -9,6 +9,8 @@ import {
   requireObject,
   requireOneOf,
 } from "../utils/http/request-validator.util.js";
+import { actorFromRequest } from "../utils/http/actor.util.js";
+import { ValidationError } from "../errors/validation.error.js";
 import { serializeTemplateRecord } from "../utils/http/serializer.util.js";
 import { REVIEW_STATUS } from "../data/constants/status.constant.js";
 import type { ExtractResponseDto } from "../lib/types/http/http.type.js";
@@ -76,6 +78,33 @@ export class WorkflowController {
     res.json(serializeTemplateRecord(record));
   };
 
+  /**
+   * `DELETE /workflows/:id` - permanent, and gated on a typed confirmation.
+   *
+   * The admin UI asks for the word "delete" and then the template's exact
+   * title; both are re-checked here so the guard survives anything that calls
+   * the API directly. Titles are compared case-insensitively and
+   * whitespace-normalised - the intent is to prove the admin knows WHICH
+   * template this is, not to test their typing.
+   */
+  remove = async (req: Request, res: Response): Promise<void> => {
+    const workflowId = req.params.id as string;
+    const record = await this.workflowService.getRecord(workflowId);
+
+    const confirmation = requireNonEmptyString(req.body, "confirmation");
+    if (confirmation.trim().toLowerCase() !== "delete") {
+      throw new ValidationError("confirmation must be the word 'delete'");
+    }
+
+    const confirmTitle = requireNonEmptyString(req.body, "confirm_title");
+    if (normalise(confirmTitle) !== normalise(record.title)) {
+      throw new ValidationError("confirm_title must exactly match the template title");
+    }
+
+    await this.workflowService.delete(workflowId, actorFromRequest(req), req.requestId);
+    res.status(204).send();
+  };
+
   setReviewStatus = async (req: Request, res: Response): Promise<void> => {
     const reviewStatus = requireOneOf(req.body, "review_status", Object.values(REVIEW_STATUS));
     const version = optionalPositiveInt(req.body.version, "version");
@@ -83,4 +112,9 @@ export class WorkflowController {
     const summary = await this.workflowService.setReviewStatus(record.workflow_id, record.version, reviewStatus);
     res.json(summary);
   };
+}
+
+/** Case- and whitespace-insensitive, so the check reads intent rather than keystrokes. */
+function normalise(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }

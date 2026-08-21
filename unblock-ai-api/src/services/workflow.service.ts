@@ -1,19 +1,30 @@
 import type { ObjectId } from "mongodb";
 import { TemplateModel } from "../models/template.model.js";
+import { TaskModel } from "../models/task.model.js";
 import { EmbeddingService } from "./embedding.service.js";
 import { ValidationService } from "./validation.service.js";
+import { AuditService } from "./audit.service.js";
 import { renderForEmbedding, renderAliasesLower } from "../utils/retrieval/render-summary.util.js";
 import { serializeTemplateSummary } from "../utils/http/serializer.util.js";
 import { logger } from "../utils/shared/logger.util.js";
-import { REVIEW_STATUS } from "../data/constants/status.constant.js";
+import { REVIEW_STATUS, TASK_STATUS } from "../data/constants/status.constant.js";
 import { NotFoundError } from "../errors/not-found.error.js";
+import { ConflictError } from "../errors/conflict.error.js";
 import type { ReviewStatus, WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
 import type { SaveResult, TemplateDocument, TemplateSummary } from "../lib/types/template/template.type.js";
+import type { AuditActor } from "../lib/types/audit/audit.type.js";
+import type { TaskStatus } from "../lib/types/task/task.type.js";
 
 export interface WorkflowServiceOptions {
   templateModel: TemplateModel;
   embeddingService: EmbeddingService;
   validationService: ValidationService;
+  /**
+   * Read directly rather than through TaskService: TaskService already depends
+   * on this service, so taking it as a dependency here would close a cycle.
+   */
+  taskModel: TaskModel;
+  auditService: AuditService;
 }
 
 export interface SaveOptions {
@@ -24,11 +35,21 @@ export class WorkflowService {
   private readonly templateModel: TemplateModel;
   private readonly embeddingService: EmbeddingService;
   private readonly validationService: ValidationService;
+  private readonly taskModel: TaskModel;
+  private readonly auditService: AuditService;
 
-  constructor({ templateModel, embeddingService, validationService }: WorkflowServiceOptions) {
+  constructor({
+    templateModel,
+    embeddingService,
+    validationService,
+    taskModel,
+    auditService,
+  }: WorkflowServiceOptions) {
     this.templateModel = templateModel;
     this.embeddingService = embeddingService;
     this.validationService = validationService;
+    this.taskModel = taskModel;
+    this.auditService = auditService;
   }
 
   async save(workflow: WorkflowDefinition, options: SaveOptions = {}): Promise<SaveResult> {
@@ -96,6 +117,49 @@ export class WorkflowService {
     if (!needle) return [];
     const docs = await this.templateModel.searchByText(needle);
     return docs.map(serializeTemplateSummary);
+  }
+
+  /**
+   * Hard-deletes every version of a template, leaving an audit entry behind.
+   *
+   * Refused while any task is still live on the workflow: `GET /tasks/:id/status`
+   * resolves step names and the title out of the template, so removing it would
+   * turn every in-flight request into a 404 the requester cannot act on.
+   * Finished tasks are unaffected in practice - they are read from the audit
+   * trail and their own document, not re-planned - so they do not block.
+   */
+  async delete(workflowId: string, actor: AuditActor, requestId?: string | null): Promise<void> {
+    const record = await this.getRecord(workflowId);
+
+    const live: TaskStatus[] = [TASK_STATUS.COLLECTING, TASK_STATUS.READY, TASK_STATUS.IN_PROGRESS];
+    const activeTasks = await this.taskModel.countByWorkflow(workflowId, live);
+    if (activeTasks > 0) {
+      throw new ConflictError(
+        `Template '${workflowId}' has ${activeTasks} request${activeTasks === 1 ? "" : "s"} still in progress - ` +
+          "wait for them to finish or cancel them before deleting it",
+      );
+    }
+
+    await this.auditService.record({
+      resource: "template",
+      resourceId: workflowId,
+      action: "deleted",
+      actor,
+      snapshot: {
+        title: record.title,
+        description: record.description,
+        latest_version: record.version,
+        institution_type: record.institution_type,
+        review_status: record.review_status,
+        created_at: record.created_at,
+      },
+      requestId,
+    });
+
+    const removed = await this.templateModel.deleteAllVersions(workflowId);
+    if (removed === 0) throw NotFoundError.of("Workflow", workflowId);
+
+    logger.info("template deleted", { workflowId, title: record.title, versions: removed });
   }
 
   async setReviewStatus(

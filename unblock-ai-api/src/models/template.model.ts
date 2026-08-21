@@ -115,6 +115,25 @@ export class TemplateModel {
     }
   }
 
+  /**
+   * Hard-deletes EVERY version of a workflow, not just the latest.
+   *
+   * Templates are versioned by insert-and-demote, so removing only the
+   * `is_latest` row would resurrect the previous version as an orphan that
+   * `findAll` still hides (it filters on `is_latest`) but retrieval no longer
+   * ranks - a document nobody can see or manage. Deleting the whole lineage is
+   * the only removal that leaves consistent state.
+   */
+  async deleteAllVersions(workflowId: string): Promise<number> {
+    try {
+      const templates = await this.collection();
+      const { deletedCount } = await templates.deleteMany({ workflow_id: workflowId });
+      return deletedCount;
+    } catch (err) {
+      throw new DatabaseError("Failed to delete template", { cause: err });
+    }
+  }
+
   async listForRetrieval(options: { institutionType?: string | null }): Promise<RetrievalProjection[]> {
     try {
       const templates = await this.collection();

@@ -14,6 +14,7 @@ export function createTaskRouter(controller: TaskController): Router {
   router.post("/tasks/:id/finalize", asyncHandler(controller.finalizeTask));
   router.post("/tasks/:id/start", asyncHandler(controller.startTask));
   router.patch("/tasks/:id/status", asyncHandler(controller.updateStatus));
+  router.delete("/tasks/:id", asyncHandler(controller.deleteTask));
 
   return router;
 }

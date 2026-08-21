@@ -5,6 +5,7 @@ import { WorkflowService } from "./workflow.service.js";
 import { PlannerService } from "./planner.service.js";
 import { ExecutionService } from "./execution.service.js";
 import { NotificationService } from "./notification.service.js";
+import { AuditService } from "./audit.service.js";
 import { validateValue } from "../utils/task/value-validator.util.js";
 import { buildReference } from "../utils/task/reference.util.js";
 import { issueTokensForDispatched } from "../utils/approval/token.util.js";
@@ -18,6 +19,7 @@ import type { TaskDocument, TaskStatus, TaskStepState } from "../lib/types/task/
 import type { NextRequirementDto } from "../lib/types/task/task.type.js";
 import type { RequirementValue, TaskRequirement } from "../lib/types/task/requirement.type.js";
 import type { TaskStatusDto, TaskTimelineEntry } from "../lib/types/approval/approval.type.js";
+import type { AuditActor } from "../lib/types/audit/audit.type.js";
 
 export interface TaskServiceOptions {
   taskModel: TaskModel;
@@ -26,6 +28,7 @@ export interface TaskServiceOptions {
   plannerService: PlannerService;
   executionService: ExecutionService;
   notificationService: NotificationService;
+  auditService: AuditService;
   config: AppConfig;
 }
 
@@ -36,6 +39,7 @@ export class TaskService {
   private readonly plannerService: PlannerService;
   private readonly executionService: ExecutionService;
   private readonly notificationService: NotificationService;
+  private readonly auditService: AuditService;
   private readonly config: AppConfig;
 
   constructor({
@@ -45,6 +49,7 @@ export class TaskService {
     plannerService,
     executionService,
     notificationService,
+    auditService,
     config,
   }: TaskServiceOptions) {
     this.taskModel = taskModel;
@@ -53,6 +58,7 @@ export class TaskService {
     this.plannerService = plannerService;
     this.executionService = executionService;
     this.notificationService = notificationService;
+    this.auditService = auditService;
     this.config = config;
   }
 
@@ -291,6 +297,58 @@ export class TaskService {
 
     await this.taskModel.setStatus(id, TASK_STATUS.CANCELLED);
     return this.appendAudit(id, "task_cancelled", null);
+  }
+
+  /**
+   * Hard-deletes a finished task, leaving an audit entry behind.
+   *
+   * Restricted to terminal statuses on purpose: a live task holds unexpired
+   * approval tokens that approvers may already be holding in their inbox, and
+   * deleting it turns those links into 404s with no explanation. A requester
+   * who wants rid of a live request cancels it first - `cancel` then makes it
+   * terminal and this becomes available.
+   *
+   * The audit entry is written BEFORE the delete so a failed delete still
+   * leaves a record of the attempt rather than a silent gap.
+   */
+  async delete(id: string | ObjectId, actor: AuditActor, requestId?: string | null): Promise<void> {
+    const task = await this.get(id);
+
+    const deletable: TaskStatus[] = [TASK_STATUS.COMPLETED, TASK_STATUS.REJECTED, TASK_STATUS.CANCELLED];
+    if (!deletable.includes(task.status)) {
+      throw new ConflictError(
+        `Task '${String(id)}' is still active (${task.status}) - cancel it before deleting`,
+      );
+    }
+
+    await this.auditService.record({
+      resource: "task",
+      resourceId: String(task._id),
+      action: "deleted",
+      actor,
+      snapshot: {
+        reference: task.reference,
+        workflow_id: task.workflow_id,
+        version: task.version,
+        status: task.status,
+        created_at: task.created_at,
+        step_outcomes: task.steps.map((step) => ({
+          step_id: step.step_id,
+          state: step.state,
+          outcome: step.outcome,
+        })),
+      },
+      requestId,
+    });
+
+    const deleted = await this.taskModel.deleteById(id);
+    if (!deleted) throw NotFoundError.of("Task", String(id));
+
+    logger.info("task deleted", { taskId: String(task._id), reference: task.reference, status: task.status });
+  }
+
+  countByWorkflow(workflowId: string, statuses?: TaskStatus[]): Promise<number> {
+    return this.taskModel.countByWorkflow(workflowId, statuses);
   }
 
   list(filters: { session_id?: string; status?: TaskStatus }): Promise<TaskDocument[]> {

@@ -11,7 +11,8 @@ import { NotFoundError } from "../../../src/errors/not-found.error.js";
 import { ValidationError } from "../../../src/errors/validation.error.js";
 import { ConflictError } from "../../../src/errors/conflict.error.js";
 import { STEP_STATE, TASK_STATUS } from "../../../src/data/constants/status.constant.js";
-import { FakeTaskModel } from "../../helpers/fake-model.helper.js";
+import { FakeAuditLogModel, FakeTaskModel } from "../../helpers/fake-model.helper.js";
+import { AuditService } from "../../../src/services/audit.service.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
 import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
 import type { MailMessage, MailSendResult } from "../../../src/lib/types/approval/mail.type.js";
@@ -94,6 +95,11 @@ function build(taskModel: FakeTaskModel, workflow: WorkflowDefinition = LEAVE_WO
     plannerService: new PlannerService(),
     executionService,
     notificationService,
+    auditService: new AuditService({
+      auditLogModel: new FakeAuditLogModel() as unknown as ConstructorParameters<
+        typeof AuditService
+      >[0]["auditLogModel"],
+    }),
     config: FAKE_CONFIG,
   });
   const service = new ApprovalService({

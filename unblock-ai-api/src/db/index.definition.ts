@@ -60,6 +60,16 @@ const INDEX_SPECS: IndexSpec[] = [
     keys: { "steps.approval_token": 1 },
     options: { name: "task_step_token", sparse: true },
   },
+  {
+    collection: COLLECTIONS.TASKS,
+    keys: { workflow_id: 1, status: 1 },
+    options: { name: "task_workflow_status" },
+  },
+  {
+    collection: COLLECTIONS.AUDIT_LOGS,
+    keys: { resource: 1, resource_id: 1, created_at: -1 },
+    options: { name: "audit_resource_created" },
+  },
 ];
 
 export async function ensureIndexes(): Promise<void> {

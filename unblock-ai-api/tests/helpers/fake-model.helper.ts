@@ -14,6 +14,7 @@ import type {
   TaskStepState,
 } from "../../src/lib/types/task/task.type.js";
 import type { RequirementValue, TaskRequirement } from "../../src/lib/types/task/requirement.type.js";
+import type { AuditLogDocument, AuditResource } from "../../src/lib/types/audit/audit.type.js";
 
 export class FakeDraftModel {
   readonly drafts = new Map<string, DraftDocument>();
@@ -109,6 +110,17 @@ export class FakeTemplateModel {
     match.document = { ...match.document, metadata: { ...match.document.metadata, review_status: reviewStatus } };
     match.updated_at = new Date();
     return Promise.resolve(match);
+  }
+
+  deleteAllVersions(workflowId: string): Promise<number> {
+    let removed = 0;
+    for (let i = this.templates.length - 1; i >= 0; i -= 1) {
+      if (this.templates[i]!.workflow_id === workflowId) {
+        this.templates.splice(i, 1);
+        removed += 1;
+      }
+    }
+    return Promise.resolve(removed);
   }
 
   listForRetrieval(options: { institutionType?: string | null }): Promise<RetrievalProjection[]> {
@@ -285,8 +297,36 @@ export class FakeTaskModel {
     return Promise.resolve(task);
   }
 
+  deleteById(id: string | ObjectId): Promise<boolean> {
+    return Promise.resolve(this.tasks.delete(String(id)));
+  }
+
+  countByWorkflow(workflowId: string, statuses?: TaskStatus[]): Promise<number> {
+    const matches = [...this.tasks.values()].filter(
+      (t) => t.workflow_id === workflowId && (!statuses || statuses.includes(t.status)),
+    );
+    return Promise.resolve(matches.length);
+  }
+
   nextSequence(): Promise<number> {
     this.seq += 1;
     return Promise.resolve(this.seq);
+  }
+}
+
+export class FakeAuditLogModel {
+  readonly entries: AuditLogDocument[] = [];
+
+  insert(doc: Omit<AuditLogDocument, "_id">): Promise<AuditLogDocument> {
+    const inserted: AuditLogDocument = { ...doc, _id: new ObjectId() };
+    this.entries.push(inserted);
+    return Promise.resolve(inserted);
+  }
+
+  findByResource(resource: AuditResource, resourceId?: string): Promise<AuditLogDocument[]> {
+    const matches = this.entries.filter(
+      (e) => e.resource === resource && (!resourceId || e.resource_id === resourceId),
+    );
+    return Promise.resolve([...matches].reverse());
   }
 }

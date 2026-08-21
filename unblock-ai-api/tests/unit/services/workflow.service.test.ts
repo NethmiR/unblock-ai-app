@@ -8,8 +8,16 @@ await startInMemoryMongo();
 const { WorkflowService } = await import("../../../src/services/workflow.service.js");
 const { TemplateModel } = await import("../../../src/models/template.model.js");
 const { ValidationService } = await import("../../../src/services/validation.service.js");
+const { TaskModel } = await import("../../../src/models/task.model.js");
+const { AuditService } = await import("../../../src/services/audit.service.js");
+const { AuditLogModel } = await import("../../../src/models/audit-log.model.js");
 const { getDb, closeDb } = await import("../../../src/db/mongo.client.js");
 const { REVIEW_STATUS } = await import("../../../src/data/constants/status.constant.js");
+const { ConflictError } = await import("../../../src/errors/conflict.error.js");
+const { NotFoundError } = await import("../../../src/errors/not-found.error.js");
+
+/** No login yet, so an unauthenticated delete still has to be representable. */
+const ANONYMOUS_ACTOR = { id: null, email: null, role: null };
 
 const fixture = loadExpectedFixture("it_faculty_overseas_leave.json");
 
@@ -35,6 +43,8 @@ function newService(): InstanceType<typeof WorkflowService> {
     templateModel: new TemplateModel(),
     embeddingService: fakeEmbeddingService(),
     validationService: new ValidationService(),
+    taskModel: new TaskModel(),
+    auditService: new AuditService({ auditLogModel: new AuditLogModel() }),
   });
 }
 
@@ -52,7 +62,15 @@ after(async () => {
 beforeEach(async () => {
   const db = await getDb();
   await db.collection("templates").deleteMany({});
+  await db.collection("tasks").deleteMany({});
+  await db.collection("audit_logs").deleteMany({});
 });
+
+/** Only the fields `delete` reads - it counts by workflow_id and status. */
+async function seedTask(workflowId: string, status: string): Promise<void> {
+  const db = await getDb();
+  await db.collection("tasks").insertOne({ workflow_id: workflowId, status, created_at: new Date() });
+}
 
 test("save creates version 1", async () => {
   const service = newService();
@@ -137,4 +155,70 @@ test("listForRetrieval-backed search excludes templates pending admin review", a
   const afterPublish = await templateModel.listForRetrieval({});
   assert.equal(afterPublish.length, 1);
   assert.equal(afterPublish[0]?.workflow_id, fixture.workflow_id);
+});
+
+test("delete removes every version, not just the latest", async () => {
+  const service = newService();
+  await service.save(fixture);
+  await service.save({ ...fixture, title: "Updated title" });
+
+  await service.delete(fixture.workflow_id, ANONYMOUS_ACTOR);
+
+  const db = await getDb();
+  const remaining = await db.collection("templates").countDocuments({ workflow_id: fixture.workflow_id });
+  assert.equal(remaining, 0);
+});
+
+test("delete records who did it, with the title the row no longer carries", async () => {
+  const service = newService();
+  await service.save(fixture);
+
+  await service.delete(fixture.workflow_id, { id: "a-1", email: "admin@uni.edu", role: "admin" }, "req-4");
+
+  const db = await getDb();
+  const entries = await db.collection("audit_logs").find({ resource: "template" }).toArray();
+  assert.equal(entries.length, 1);
+  const entry = entries[0]!;
+  assert.equal(entry.resource_id, fixture.workflow_id);
+  assert.equal(entry.action, "deleted");
+  assert.equal(entry.actor.email, "admin@uni.edu");
+  assert.equal(entry.request_id, "req-4");
+  assert.equal(entry.snapshot.title, fixture.title);
+});
+
+test("delete is refused while a task is still in progress on the workflow", async () => {
+  const service = newService();
+  await service.save(fixture);
+  await seedTask(fixture.workflow_id, "in_progress");
+
+  await assert.rejects(
+    () => service.delete(fixture.workflow_id, ANONYMOUS_ACTOR),
+    (err: unknown) => {
+      assert.ok(err instanceof ConflictError);
+      assert.match(err.message, /still in progress/);
+      return true;
+    },
+  );
+
+  // Refused means untouched - both the template and the audit log.
+  const db = await getDb();
+  assert.equal(await db.collection("templates").countDocuments({ workflow_id: fixture.workflow_id }), 1);
+  assert.equal(await db.collection("audit_logs").countDocuments({}), 0);
+});
+
+test("finished tasks do not block a delete", async () => {
+  const service = newService();
+  await service.save(fixture);
+  await seedTask(fixture.workflow_id, "completed");
+  await seedTask(fixture.workflow_id, "cancelled");
+
+  await service.delete(fixture.workflow_id, ANONYMOUS_ACTOR);
+
+  const db = await getDb();
+  assert.equal(await db.collection("templates").countDocuments({ workflow_id: fixture.workflow_id }), 0);
+});
+
+test("delete of an unknown workflow throws NotFoundError", async () => {
+  const service = newService();
+  await assert.rejects(() => service.delete("does_not_exist", ANONYMOUS_ACTOR), NotFoundError);
 });

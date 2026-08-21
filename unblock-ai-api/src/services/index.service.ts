@@ -11,3 +11,4 @@ export { SelectionService } from "./selection.service.js";
 export { InMemoryVectorStore, AtlasVectorStore, createVectorStore } from "./vector-store/index.vector-store.js";
 export { ConsoleMailer, SmtpMailer, createMailer } from "./mailer/index.mailer.js";
 export { NotificationService } from "./notification.service.js";
+export { AuditService } from "./audit.service.js";

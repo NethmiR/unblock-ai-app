@@ -8,7 +8,8 @@ import { HealthController } from "../../src/controllers/health.controller.js";
 import { WorkflowService } from "../../src/services/workflow.service.js";
 import { ValidationService } from "../../src/services/validation.service.js";
 import { startTestServer, type TestServer } from "../helpers/test-server.helper.js";
-import { FakeTemplateModel } from "../helpers/fake-model.helper.js";
+import { FakeAuditLogModel, FakeTaskModel, FakeTemplateModel } from "../helpers/fake-model.helper.js";
+import { AuditService } from "../../src/services/audit.service.js";
 import { loadExpectedFixture } from "../helpers/fixture.helper.js";
 import type { EmbeddingService } from "../../src/services/embedding.service.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
@@ -29,10 +30,16 @@ function fakeEmbeddingService(): EmbeddingService {
 
 async function buildServer(): Promise<TestServer & { close: () => Promise<void> }> {
   const templateModel = new FakeTemplateModel();
+  const taskModel = new FakeTaskModel();
+  const auditLogModel = new FakeAuditLogModel();
   const workflowService = new WorkflowService({
     templateModel: templateModel as unknown as ConstructorParameters<typeof WorkflowService>[0]["templateModel"],
     embeddingService: fakeEmbeddingService(),
     validationService: new ValidationService(),
+    taskModel: taskModel as unknown as ConstructorParameters<typeof WorkflowService>[0]["taskModel"],
+    auditService: new AuditService({
+      auditLogModel: auditLogModel as unknown as ConstructorParameters<typeof AuditService>[0]["auditLogModel"],
+    }),
   });
   const validationService = new ValidationService();
 
@@ -294,6 +301,104 @@ test("PATCH /api/workflows/:id/review publishes a template", async () => {
     assert.equal(res.status, 200);
     const body = (await res.json()) as { review_status: string };
     assert.equal(body.review_status, "confirmed");
+  } finally {
+    await server.close();
+  }
+});
+
+async function seedTemplate(baseUrl: string): Promise<void> {
+  await fetch(`${baseUrl}/api/workflows`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workflow: fixture }),
+  });
+}
+
+function deleteTemplate(baseUrl: string, id: string, body: Record<string, unknown>): Promise<Response> {
+  return fetch(`${baseUrl}/api/workflows/${id}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", "x-actor-email": "admin@uni.edu" },
+    body: JSON.stringify(body),
+  });
+}
+
+test("DELETE /api/workflows/:id removes the template on a correct confirmation", async () => {
+  const server = await buildServer();
+  try {
+    await seedTemplate(server.baseUrl);
+
+    const res = await deleteTemplate(server.baseUrl, fixture.workflow_id, {
+      confirmation: "delete",
+      confirm_title: fixture.title,
+    });
+    assert.equal(res.status, 204);
+
+    const after = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`);
+    assert.equal(after.status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+test("DELETE /api/workflows/:id rejects a wrong confirmation word", async () => {
+  const server = await buildServer();
+  try {
+    await seedTemplate(server.baseUrl);
+
+    const res = await deleteTemplate(server.baseUrl, fixture.workflow_id, {
+      confirmation: "yes",
+      confirm_title: fixture.title,
+    });
+    assert.equal(res.status, 400);
+
+    const after = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`);
+    assert.equal(after.status, 200);
+  } finally {
+    await server.close();
+  }
+});
+
+test("DELETE /api/workflows/:id rejects a mismatched title", async () => {
+  const server = await buildServer();
+  try {
+    await seedTemplate(server.baseUrl);
+
+    const res = await deleteTemplate(server.baseUrl, fixture.workflow_id, {
+      confirmation: "delete",
+      confirm_title: "Some other template",
+    });
+    assert.equal(res.status, 400);
+
+    const after = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`);
+    assert.equal(after.status, 200);
+  } finally {
+    await server.close();
+  }
+});
+
+test("DELETE /api/workflows/:id accepts a title differing only in case and spacing", async () => {
+  const server = await buildServer();
+  try {
+    await seedTemplate(server.baseUrl);
+
+    const res = await deleteTemplate(server.baseUrl, fixture.workflow_id, {
+      confirmation: "DELETE",
+      confirm_title: `  ${fixture.title.toUpperCase().replace(/ /g, "  ")}  `,
+    });
+    assert.equal(res.status, 204);
+  } finally {
+    await server.close();
+  }
+});
+
+test("DELETE /api/workflows/:id returns 404 for an unknown workflow", async () => {
+  const server = await buildServer();
+  try {
+    const res = await deleteTemplate(server.baseUrl, "does_not_exist", {
+      confirmation: "delete",
+      confirm_title: "anything",
+    });
+    assert.equal(res.status, 404);
   } finally {
     await server.close();
   }

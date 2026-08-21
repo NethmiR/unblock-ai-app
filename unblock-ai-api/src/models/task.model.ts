@@ -187,6 +187,33 @@ export class TaskModel {
     return this.findById(id);
   }
 
+  /**
+   * How many tasks still point at a workflow, optionally narrowed to a set of
+   * statuses. Used to refuse a template delete that would strand live requests
+   * whose `/status` reads the template to render step names and the title.
+   */
+  async countByWorkflow(workflowId: string, statuses?: TaskStatus[]): Promise<number> {
+    try {
+      const tasks = await this.collection();
+      const query: Record<string, unknown> = { workflow_id: workflowId };
+      if (statuses && statuses.length > 0) query.status = { $in: statuses };
+      return await tasks.countDocuments(query);
+    } catch (err) {
+      throw new DatabaseError("Failed to count tasks for workflow", { cause: err });
+    }
+  }
+
+  /** Hard delete. The audit log, not this row, is what survives the removal. */
+  async deleteById(id: string | ObjectId): Promise<boolean> {
+    try {
+      const tasks = await this.collection();
+      const { deletedCount } = await tasks.deleteOne({ _id: toObjectId(id) });
+      return deletedCount === 1;
+    } catch (err) {
+      throw new DatabaseError("Failed to delete task", { cause: err });
+    }
+  }
+
   async nextSequence(now = new Date()): Promise<number> {
     try {
       const counters = await this.counters();
