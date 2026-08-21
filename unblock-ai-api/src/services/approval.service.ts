@@ -5,6 +5,7 @@ import { NotificationService } from "./notification.service.js";
 import { TaskService } from "./task.service.js";
 import { issueTokensForDispatched, verifyToken } from "../utils/approval/token.util.js";
 import { allowedOutcomes, resolveOutcomeAction } from "../utils/approval/outcome-resolver.util.js";
+import { formatRequirementValue } from "../utils/approval/answer-format.util.js";
 import { NotFoundError } from "../errors/not-found.error.js";
 import { ConflictError } from "../errors/conflict.error.js";
 import { ValidationError } from "../errors/validation.error.js";
@@ -12,7 +13,7 @@ import { STEP_STATE } from "../data/constants/status.constant.js";
 import type { AppConfig } from "../lib/types/config/config.type.js";
 import type { TaskDocument, TaskStepState, StepOutcomeResult } from "../lib/types/task/task.type.js";
 import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
-import type { ApproverViewDto, DecisionResultDto } from "../lib/types/approval/approval.type.js";
+import type { ApproverViewDto, ApproverStatus, DecisionResultDto } from "../lib/types/approval/approval.type.js";
 
 export interface ApprovalServiceOptions {
   taskModel: TaskModel;
@@ -58,10 +59,9 @@ export class ApprovalService {
     const workflowStep = workflow.steps.find((s) => s.id === step.step_id);
     if (!workflowStep) throw NotFoundError.of("Step", step.step_id);
 
-    const requesterAnswers = Object.entries(task.values).map(([key, value]) => {
-      const input = workflow.inputs.find((i) => i.id === key);
-      return { label: input?.label ?? key, value: value === null ? "" : String(value) };
-    });
+    const requesterAnswers = task.requirements
+      .filter((r) => r.source === "input")
+      .map((r) => ({ label: r.label, value: formatRequirementValue(task.values[r.key] ?? null) }));
 
     const priorDecisions = task.steps
       .filter((s) => s.outcome !== null)
@@ -72,6 +72,32 @@ export class ApprovalService {
         reason: s.reason,
         at: s.responded_at as Date,
       }));
+
+    const stepOrder = new Map(workflow.steps.map((ws, i) => [ws.id, i]));
+
+    const approvers = task.requirements
+      .filter((r) => r.source === "actor")
+      .map((r) => {
+        const taskStep = task.steps.find((s) => s.step_id === r.ref);
+        const status: ApproverStatus =
+          taskStep?.outcome ??
+          (taskStep?.state === STEP_STATE.PENDING_APPROVAL ? "awaiting" : "not_yet_reached");
+
+        return {
+          step_id: r.ref,
+          designation: r.label,
+          name: taskStep?.assignee?.name ?? null,
+          email: taskStep?.assignee?.email ?? null,
+          status,
+          is_current: r.ref === step.step_id,
+          decided_at: taskStep?.responded_at ?? null,
+        };
+      })
+      .sort((a, b) => (stepOrder.get(a.step_id) ?? 0) - (stepOrder.get(b.step_id) ?? 0));
+
+    const outcomes = (Object.entries(workflowStep.outcomes) as Array<[StepOutcomeResult, (typeof workflowStep.outcomes)[StepOutcomeResult]]>)
+      .filter(([, declared]) => declared !== null)
+      .map(([outcome, declared]) => ({ outcome, include_reason: declared?.include_reason ?? false }));
 
     return {
       task_reference: task.reference,
@@ -86,7 +112,9 @@ export class ApprovalService {
       requester_answers: requesterAnswers,
       computed: [],
       prior_decisions: priorDecisions,
+      approvers,
       allowed_outcomes: allowedOutcomes(workflowStep),
+      outcomes,
       already_decided: step.token_used_at !== null,
       decided_outcome: step.outcome,
       decided_at: step.responded_at,

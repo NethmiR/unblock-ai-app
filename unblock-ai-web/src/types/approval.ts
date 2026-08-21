@@ -8,6 +8,13 @@
 import type { ResponseField } from "./workflow";
 import type { StepOutcomeResult } from "./task";
 
+export type ApproverStatus =
+  | "approved"
+  | "rejected"
+  | "request_more_info"
+  | "awaiting"
+  | "not_yet_reached";
+
 export interface ApproverViewDto {
   task_reference: string;
   workflow_title: string;
@@ -21,7 +28,17 @@ export interface ApproverViewDto {
   requester_answers: Array<{ label: string; value: string }>;
   computed: Array<{ label: string; value: string }>; // always [] today — see phase plan §0 Finding 3
   prior_decisions: Array<{ step: string; outcome: string; reason: string | null; at: string }>;
+  approvers: Array<{
+    step_id: string;
+    designation: string;
+    name: string | null;
+    email: string | null;
+    status: ApproverStatus;
+    is_current: boolean;
+    decided_at: string | null;
+  }>;
   allowed_outcomes: StepOutcomeResult[];
+  outcomes: Array<{ outcome: StepOutcomeResult; include_reason: boolean }>;
   already_decided: boolean;
   decided_outcome: StepOutcomeResult | null;
   decided_at: string | null;

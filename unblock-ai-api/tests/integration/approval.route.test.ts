@@ -27,7 +27,13 @@ function fakeApproverView(overrides: Partial<ApproverViewDto> = {}): ApproverVie
     requester_answers: [],
     computed: [],
     prior_decisions: [],
+    approvers: [],
     allowed_outcomes: ["approved", "rejected", "request_more_info"],
+    outcomes: [
+      { outcome: "approved", include_reason: false },
+      { outcome: "rejected", include_reason: true },
+      { outcome: "request_more_info", include_reason: true },
+    ],
     already_decided: false,
     decided_outcome: null,
     decided_at: null,
