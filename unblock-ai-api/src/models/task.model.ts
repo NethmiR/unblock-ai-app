@@ -146,6 +146,34 @@ export class TaskModel {
     return this.findById(id);
   }
 
+  /**
+   * Same as `updateStepAndStatus`, but only writes if `stepId` is still unused
+   * (`token_used_at: null`) at the moment of the write. Closes the check-then-write race
+   * between reading `step.token_used_at` and issuing this update: two near-simultaneous
+   * decisions on the same step can both pass the earlier in-memory check, but only one
+   * of these conditional updates can match.
+   */
+  async updateStepAndStatusIfUnused(
+    id: string | ObjectId,
+    stepId: string,
+    steps: TaskStepState[],
+    status: TaskStatus,
+  ): Promise<boolean> {
+    try {
+      const tasks = await this.collection();
+      const { matchedCount } = await tasks.updateOne(
+        {
+          _id: toObjectId(id),
+          steps: { $elemMatch: { step_id: stepId, token_used_at: null } },
+        },
+        { $set: { steps, status, updated_at: new Date() } },
+      );
+      return matchedCount > 0;
+    } catch (err) {
+      throw new DatabaseError("Failed to update task steps and status", { cause: err });
+    }
+  }
+
   async appendRequirement(id: string | ObjectId, requirement: TaskRequirement): Promise<TaskDocument | null> {
     try {
       const tasks = await this.collection();

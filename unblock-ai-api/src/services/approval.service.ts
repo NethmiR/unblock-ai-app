@@ -158,7 +158,17 @@ export class ApprovalService {
       this.config.mail.tokenTtlDays,
     );
 
-    const updated = await this.taskModel.updateStepAndStatus(task._id, stepsWithTokens, result.status);
+    const wrote = await this.taskModel.updateStepAndStatusIfUnused(
+      task._id,
+      step.step_id,
+      stepsWithTokens,
+      result.status,
+    );
+    if (!wrote) {
+      throw new ConflictError(`Approval token has already been used for step '${step.step_id}'`);
+    }
+
+    const updated = await this.taskModel.findById(task._id);
     if (!updated) throw NotFoundError.of("Task", String(task._id));
 
     await this.taskModel.appendAudit(updated._id, {
