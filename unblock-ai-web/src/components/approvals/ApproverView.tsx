@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ApproverList } from "@/components/approvals/ApproverList";
+import { ReasonDialog } from "@/components/approvals/ReasonDialog";
 import { formatDateTime } from "@/lib/utils/format";
 import { approvalsApi } from "@/lib/api/approvals";
 import { ApiError } from "@/lib/api/client";
@@ -38,24 +39,50 @@ function DefinitionList({ rows }: { rows: Array<{ label: string; value: string }
 
 export function ApproverView({ token, initialView: view }: { token: string; initialView: ApproverViewDto }) {
   const [reason, setReason] = useState("");
+  const [pendingConfirm, setPendingConfirm] = useState<StepOutcomeResult | null>(null);
   const [pendingOutcome, setPendingOutcome] = useState<StepOutcomeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ outcome: StepOutcomeResult; completed: boolean; terminated: boolean } | null>(null);
+  const [blocked, setBlocked] = useState<{ message: string } | null>(null);
 
-  async function submit(outcome: StepOutcomeResult) {
+  function includeReasonFor(outcome: StepOutcomeResult): boolean {
+    return view.outcomes.find((o) => o.outcome === outcome)?.include_reason ?? false;
+  }
+
+  function chooseOutcome(outcome: StepOutcomeResult) {
+    if (includeReasonFor(outcome)) {
+      setReason("");
+      setPendingConfirm(outcome);
+      return;
+    }
+    submit(outcome, null);
+  }
+
+  function cancelConfirm() {
+    setPendingConfirm(null);
+    setReason("");
+  }
+
+  async function submit(outcome: StepOutcomeResult, reasonToSend: string | null) {
     setPendingOutcome(outcome);
     setError(null);
     try {
-      const decision = await approvalsApi.submitDecision(token, outcome, reason.trim() || null);
+      const decision = await approvalsApi.submitDecision(token, outcome, reasonToSend);
       setResult({ outcome: decision.outcome, completed: decision.completed, terminated: decision.terminated });
+      setPendingConfirm(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong submitting your decision. Please try again.");
+      if (err instanceof ApiError && err.status === 409) {
+        setBlocked({ message: err.message });
+        setPendingConfirm(null);
+      } else {
+        setError(err instanceof ApiError ? err.message : "Something went wrong submitting your decision. Please try again.");
+      }
     } finally {
       setPendingOutcome(null);
     }
   }
 
-  const alreadyDecided = result !== null || view.already_decided;
+  const alreadyDecided = result !== null || view.already_decided || blocked !== null;
   const decidedOutcome = result?.outcome ?? view.decided_outcome;
 
   return (
@@ -117,36 +144,30 @@ export function ApproverView({ token, initialView: view }: { token: string; init
 
       {alreadyDecided ? (
         <Card className="px-7 py-6">
-          {decidedOutcome && (
-            <Badge tone={OUTCOME_TONE[decidedOutcome]} className="mb-3">
-              {OUTCOME_LABEL[decidedOutcome]}
-            </Badge>
-          )}
-          <p className="text-[14.5px] text-ink">
-            {result
-              ? "Your decision has been recorded."
-              : `This step was already decided${view.decided_at ? ` on ${formatDateTime(view.decided_at)}` : ""}.`}
-          </p>
-          {result && (result.completed || result.terminated) && (
-            <p className="mt-2 text-[13.5px] text-muted">
-              {result.terminated ? "This request has been terminated." : "This request is now complete."}
-            </p>
+          {blocked ? (
+            <p className="text-[14.5px] text-ink">{blocked.message}</p>
+          ) : (
+            <>
+              {decidedOutcome && (
+                <Badge tone={OUTCOME_TONE[decidedOutcome]} className="mb-3">
+                  {OUTCOME_LABEL[decidedOutcome]}
+                </Badge>
+              )}
+              <p className="text-[14.5px] text-ink">
+                {result
+                  ? "Your decision has been recorded."
+                  : `This step was already decided${view.decided_at ? ` on ${formatDateTime(view.decided_at)}` : ""}.`}
+              </p>
+              {result && (result.completed || result.terminated) && (
+                <p className="mt-2 text-[13.5px] text-muted">
+                  {result.terminated ? "This request has been terminated." : "This request is now complete."}
+                </p>
+              )}
+            </>
           )}
         </Card>
       ) : (
         <Card className="px-7 py-6">
-          <label className="mb-2 block text-[13px] font-medium text-muted" htmlFor="reason">
-            Reason <span className="text-faint">(optional, unless the server asks for one)</span>
-          </label>
-          <textarea
-            id="reason"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows={3}
-            placeholder="Add context for your decision…"
-            className="mb-5 w-full resize-none rounded-control border border-line-admin bg-surface px-3.5 py-2.5 text-[13.5px] text-ink placeholder:text-faint focus:outline-none"
-          />
-
           {error && (
             <p className="mb-4 text-[13.5px] text-danger">{error}</p>
           )}
@@ -157,13 +178,24 @@ export function ApproverView({ token, initialView: view }: { token: string; init
                 key={outcome}
                 variant={outcome === "approved" ? "primary" : "secondary"}
                 disabled={pendingOutcome !== null}
-                onClick={() => submit(outcome)}
+                onClick={() => chooseOutcome(outcome)}
               >
                 {pendingOutcome === outcome ? "Submitting…" : OUTCOME_LABEL[outcome]}
               </Button>
             ))}
           </div>
         </Card>
+      )}
+
+      {pendingConfirm && (
+        <ReasonDialog
+          title={`${OUTCOME_LABEL[pendingConfirm]} this request`}
+          reason={reason}
+          onReasonChange={setReason}
+          submitting={pendingOutcome === pendingConfirm}
+          onConfirm={() => submit(pendingConfirm, reason.trim())}
+          onCancel={cancelConfirm}
+        />
       )}
     </div>
   );
