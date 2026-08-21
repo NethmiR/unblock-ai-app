@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ApproverList } from "@/components/approvals/ApproverList";
 import { formatDateTime } from "@/lib/utils/format";
 import { approvalsApi } from "@/lib/api/approvals";
 import { ApiError } from "@/lib/api/client";
@@ -82,6 +83,8 @@ export function ApproverView({ token, initialView: view }: { token: string; init
         </div>
         <DefinitionList rows={view.requester_answers} />
       </Card>
+
+      {view.approvers.length > 0 && <ApproverList approvers={view.approvers} />}
 
       {view.computed.length > 0 && (
         <Card className="mb-6 px-7 py-6">
