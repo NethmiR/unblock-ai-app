@@ -46,6 +46,12 @@ export interface TemplateRecordDto {
   review_status: ReviewStatus;
   document: WorkflowDefinition;
   updated_at: Date;
+  /**
+   * The originating draft's prose, inlined so the admin editor does not need a
+   * second round-trip. `null` when there is no draft_id, or when the draft row
+   * is missing/unreadable - see the controller for why that is not a 404.
+   */
+  draft_text?: string | null;
 }
 
 export interface RetrievalProjection {

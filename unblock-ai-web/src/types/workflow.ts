@@ -246,4 +246,6 @@ export interface WorkflowRecord {
   review_status: ReviewStatus;
   document: Workflow;
   updated_at: string;
+  /** The originating draft's prose, inlined by the API. `null` if unavailable. */
+  draft_text?: string | null;
 }

@@ -80,6 +80,7 @@ async function buildServer(taskService: TaskService): Promise<TestServer> {
       workflowService: {} as WorkflowService,
       extractionService: {} as ExtractionService,
       validationService: {} as never,
+      draftService: {} as never,
     }),
     draftController: new DraftController({
       draftService: {} as DraftService,

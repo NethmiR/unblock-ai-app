@@ -49,7 +49,7 @@ export function serializeTaskSummary(doc: TaskDocument): TaskDto {
   return serializeTask(doc);
 }
 
-export function serializeTemplateRecord(doc: TemplateDocument): TemplateRecordDto {
+export function serializeTemplateRecord(doc: TemplateDocument, draftText?: string | null): TemplateRecordDto {
   return {
     workflow_id: doc.workflow_id,
     version: doc.version,
@@ -57,5 +57,6 @@ export function serializeTemplateRecord(doc: TemplateDocument): TemplateRecordDt
     review_status: doc.review_status,
     document: doc.document,
     updated_at: doc.updated_at,
+    draft_text: draftText ?? null,
   };
 }

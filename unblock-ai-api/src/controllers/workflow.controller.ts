@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { WorkflowService } from "../services/workflow.service.js";
 import { ExtractionService } from "../services/extraction.service.js";
 import { ValidationService } from "../services/validation.service.js";
+import { DraftService } from "../services/draft.service.js";
 import {
   optionalPositiveInt,
   optionalString,
@@ -20,17 +21,20 @@ export interface WorkflowControllerOptions {
   workflowService: WorkflowService;
   extractionService: ExtractionService;
   validationService: ValidationService;
+  draftService: DraftService;
 }
 
 export class WorkflowController {
   private readonly workflowService: WorkflowService;
   private readonly extractionService: ExtractionService;
   private readonly validationService: ValidationService;
+  private readonly draftService: DraftService;
 
-  constructor({ workflowService, extractionService, validationService }: WorkflowControllerOptions) {
+  constructor({ workflowService, extractionService, validationService, draftService }: WorkflowControllerOptions) {
     this.workflowService = workflowService;
     this.extractionService = extractionService;
     this.validationService = validationService;
+    this.draftService = draftService;
   }
 
   extract = async (req: Request, res: Response): Promise<void> => {
@@ -75,7 +79,22 @@ export class WorkflowController {
   getRecord = async (req: Request, res: Response): Promise<void> => {
     const version = optionalPositiveInt(req.query.version, "version");
     const record = await this.workflowService.getRecord(req.params.id as string, version);
-    res.json(serializeTemplateRecord(record));
+
+    // A missing or malformed draft must NOT 404 the template. The template is the
+    // real resource; the prose is a convenience for the left panel. Previously the
+    // web layer turned a DATABASE_ERROR here into notFound(), which meant one bad
+    // draft_id made a perfectly good template unopenable.
+    let draftText: string | null = null;
+    if (record.draft_id) {
+      try {
+        const draft = await this.draftService.findById(String(record.draft_id));
+        draftText = draft?.raw_text ?? null;
+      } catch {
+        draftText = null;
+      }
+    }
+
+    res.json(serializeTemplateRecord(record, draftText));
   };
 
   /**

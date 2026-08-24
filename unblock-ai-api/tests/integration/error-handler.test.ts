@@ -22,6 +22,7 @@ async function buildServer(selectionService: SelectionService): Promise<TestServ
       workflowService: {} as WorkflowService,
       extractionService: {} as ExtractionService,
       validationService: {} as never,
+      draftService: {} as never,
     }),
     draftController: new DraftController({
       draftService: {} as DraftService,

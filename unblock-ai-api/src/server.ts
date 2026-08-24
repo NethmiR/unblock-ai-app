@@ -90,7 +90,7 @@ async function main(): Promise<void> {
 
   const controllers = {
     healthController: new HealthController(),
-    workflowController: new WorkflowController({ workflowService, extractionService, validationService }),
+    workflowController: new WorkflowController({ workflowService, extractionService, validationService, draftService }),
     draftController: new DraftController({ draftService, extractionService, workflowService }),
     selectionController: new SelectionController({ selectionService }),
     taskController: new TaskController({ taskService }),
