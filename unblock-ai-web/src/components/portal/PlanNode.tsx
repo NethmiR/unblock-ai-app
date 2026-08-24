@@ -45,10 +45,16 @@ function CurrentNode({ node }: { node: PlanNodeData }) {
   return (
     <div className="rounded-card border-2 border-warn bg-surface p-5 shadow-[0_6px_20px_rgba(245,158,11,.20)]">
       <div className="flex items-start gap-3.5">
-        <Spinner size={24} />
+        {/* A queued node (one carrying its own eyebrow, e.g. "Coming next")
+            gets a static ring: a spinner reads as work already underway. */}
+        {node.eyebrow ? (
+          <div className="mt-px h-6 w-6 flex-none rounded-full border-2 border-warn" />
+        ) : (
+          <Spinner size={24} />
+        )}
         <div className="min-w-0 flex-1">
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-warn-ink">
-            Current step
+            {node.eyebrow ?? "Current step"}
           </div>
           <div className="text-[17px] font-semibold tracking-tight text-ink">{node.label}</div>
           <div className="mt-1 text-sm text-muted">{node.sub}</div>

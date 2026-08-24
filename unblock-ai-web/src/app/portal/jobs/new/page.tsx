@@ -4,14 +4,26 @@ import { useRouter } from "next/navigation";
 import { useSelectionSession } from "@/lib/hooks/useSelectionSession";
 import { SelectionChat } from "@/components/portal/SelectionChat";
 import { PlanPanel } from "@/components/portal/PlanPanel";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { tasksApi } from "@/lib/api/tasks";
 import { ApiError } from "@/lib/api/client";
 import Link from "next/link";
 
 export default function NewJobPage() {
   const router = useRouter();
-  const { messages, sessionId, decision, workflow, isBusy, send, choose, hasStarted } =
-    useSelectionSession();
+  const {
+    messages,
+    sessionId,
+    decision,
+    workflow,
+    pendingMatch,
+    isBusy,
+    send,
+    choose,
+    confirmMatch,
+    rejectMatch,
+    hasStarted,
+  } = useSelectionSession();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -64,6 +76,7 @@ export default function NewJobPage() {
           decision={decision}
           isBusy={isBusy}
           hasStarted={hasStarted}
+          isClosed={workflow !== null}
           onSend={send}
           onChoose={choose}
         />
@@ -74,6 +87,34 @@ export default function NewJobPage() {
           error={submitError}
         />
       </div>
+
+      {/*
+        The checkpoint between narrowing down a workflow and building the plan
+        for it. Only the automatic `matched` decision routes through here - a
+        pick from the manual-choice list is already an explicit choice, so
+        re-asking there would just make the person say it twice.
+      */}
+      {pendingMatch && (
+        <ConfirmDialog
+          title="Have we got the right process?"
+          confirmLabel="Yes, continue"
+          cancelLabel="No, that's not it"
+          onConfirm={confirmMatch}
+          onCancel={rejectMatch}
+        >
+          <p>
+            From what you&apos;ve told us, this looks like{" "}
+            <span className="font-semibold text-ink">{pendingMatch.title}</span>.
+          </p>
+          {pendingMatch.retrieval_summary?.one_liner && (
+            <p className="mt-2">{pendingMatch.retrieval_summary.one_liner}</p>
+          )}
+          <p className="mt-3">
+            Are you sure you want to request{" "}
+            <span className="font-semibold text-ink">{pendingMatch.title}</span>?
+          </p>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

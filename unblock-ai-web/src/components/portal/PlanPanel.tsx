@@ -22,7 +22,7 @@ export function PlanPanel({ workflow, onSubmit, isSubmitting = false, error = nu
       <header className="flex flex-none items-center justify-between gap-4 border-b border-line px-7 py-5">
         <div className="text-[15px] font-semibold tracking-tight">Workflow plan</div>
         <div className="text-[13px] text-muted">
-          {workflow ? `${nodes.length} steps · not yet submitted` : "Waiting for your request"}
+          {workflow ? `${nodes.length} steps · nothing sent yet` : "Waiting for your request"}
         </div>
       </header>
 
@@ -47,7 +47,10 @@ export function PlanPanel({ workflow, onSubmit, isSubmitting = false, error = nu
                 {error ? (
                   <span className="text-danger">{error}</span>
                 ) : (
-                  "Nothing is sent to any approver until you submit."
+                  // This button opens the detail form; it does NOT notify anyone.
+                  // Approvers are only contacted from "Send for approval" at the
+                  // end of the collection loop.
+                  "You'll fill in your details next. Nothing is sent to any approver yet."
                 )}
               </div>
               <Button
@@ -55,7 +58,7 @@ export function PlanPanel({ workflow, onSubmit, isSubmitting = false, error = nu
                 disabled={isSubmitting}
                 className="h-[48px] flex-none rounded-card px-[22px] text-[15px] font-medium"
               >
-                {isSubmitting ? "Starting…" : "Submit request"}
+                {isSubmitting ? "Opening…" : "Continue — provide your details"}
               </Button>
             </div>
           </div>

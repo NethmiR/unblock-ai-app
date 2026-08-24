@@ -25,6 +25,7 @@ export function useSelectionSession() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [decision, setDecision] = useState<SelectionResponse | null>(null);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
+  const [pendingMatch, setPendingMatch] = useState<Workflow | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
   const push = useCallback((message: Omit<ChatMessage, "id">) => {
@@ -68,11 +69,12 @@ export function useSelectionSession() {
         case "matched": {
           try {
             const matched = await selectionApi.getWorkflow(response.session_id);
-            setWorkflow(matched);
-            push({
-              role: "system",
-              text: `I'll use ${matched.title}. Review the steps on the right and submit when you're ready.`,
-            });
+            // The clarifying questions have landed on one workflow with high
+            // confidence. Stage it rather than committing: `setWorkflow` is
+            // what compiles the plan into the right-hand panel, and that must
+            // not happen until the person confirms this is the process they
+            // meant. `confirmMatch` / `rejectMatch` resolve it.
+            setPendingMatch(matched);
           } catch (err) {
             push({
               role: "system",
@@ -88,9 +90,18 @@ export function useSelectionSession() {
     [push],
   );
 
-  /** Handles both the first message and every subsequent answer. */
+  /**
+   * Handles both the first message and every subsequent answer.
+   *
+   * Once `workflow` is set the session is finalized server-side, and POSTing
+   * to /answer would 409 with "No open question to answer on this session".
+   * The composer is retired at that point, so this guard is belt-and-braces -
+   * it keeps a stray call (quick reply, double submit) from surfacing a raw
+   * backend conflict as a chat error.
+   */
   const send = useCallback(
     async (text: string) => {
+      if (workflow) return;
       push({ role: "user", text });
       setIsBusy(true);
       try {
@@ -109,7 +120,7 @@ export function useSelectionSession() {
         setIsBusy(false);
       }
     },
-    [sessionId, push, handleDecision],
+    [sessionId, workflow, push, handleDecision],
   );
 
   /** Explicit pick from the manual-choice list. */
@@ -121,7 +132,10 @@ export function useSelectionSession() {
         await selectionApi.choose(sessionId, workflowId);
         const matched = await selectionApi.getWorkflow(sessionId);
         setWorkflow(matched);
-        push({ role: "system", text: `I'll use ${matched.title}. Review the steps on the right.` });
+        push({
+          role: "system",
+          text: `I'll use ${matched.title}. Review the steps on the right, then press Continue to enter your details.`,
+        });
       } catch (err) {
         push({
           role: "system",
@@ -136,7 +150,55 @@ export function useSelectionSession() {
     [sessionId, push],
   );
 
+  /**
+   * Confirmed: this is the process they meant. Build the plan.
+   *
+   * Committing `workflow` is what renders the customized plan on the right and
+   * retires the composer. The backend session already resolved when it
+   * matched, so this sends nothing - it is purely the UI agreeing to proceed.
+   */
+  const confirmMatch = useCallback(() => {
+    if (!pendingMatch) return;
+    setWorkflow(pendingMatch);
+    setPendingMatch(null);
+    push({
+      role: "system",
+      text: `I'll use ${pendingMatch.title}. Review the steps on the right, then press Continue to enter your details.`,
+    });
+  }, [pendingMatch, push]);
+
+  /**
+   * Rejected: we picked the wrong process. Hand it back to the conversation.
+   *
+   * `sessionId` is deliberately KEPT. The chat is the mechanism for narrowing
+   * down the right workflow, so a wrong guess should return the person to it
+   * rather than throwing the session away - their next message refines the
+   * same session exactly as an answer to a clarifying question would.
+   */
+  const rejectMatch = useCallback(() => {
+    const rejected = pendingMatch;
+    setPendingMatch(null);
+    push({
+      role: "system",
+      text: rejected
+        ? `Sorry about that - ${rejected.title} isn't the one. Tell me a bit more about what you need and I'll narrow it down again.`
+        : "Tell me a bit more about what you need and I'll narrow it down again.",
+    });
+  }, [pendingMatch, push]);
+
   // `sessionId` is the seam the whole task flow hangs off - `POST /tasks`
   // takes it, and nothing else in the app knows it.
-  return { messages, sessionId, decision, workflow, isBusy, send, choose, hasStarted: messages.length > 0 };
+  return {
+    messages,
+    sessionId,
+    decision,
+    workflow,
+    pendingMatch,
+    isBusy,
+    send,
+    choose,
+    confirmMatch,
+    rejectMatch,
+    hasStarted: messages.length > 0,
+  };
 }

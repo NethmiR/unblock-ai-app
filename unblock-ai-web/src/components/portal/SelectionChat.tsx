@@ -10,6 +10,7 @@ interface Props {
   decision: SelectionResponse | null;
   isBusy: boolean;
   hasStarted: boolean;
+  isClosed: boolean;
   onSend: (text: string) => void;
   onChoose: (workflowId: string) => void;
 }
@@ -23,8 +24,20 @@ interface Props {
  * `onChoose`), while every other quick reply is free text sent through the
  * same `send` path as typing it would be (per ChatMessage's contract that
  * typing and clicking must produce the same result).
+ *
+ * `isClosed` retires the composer once a workflow has matched. Note that
+ * `no_match` deliberately does NOT close the chat - that branch asks the
+ * person to rephrase, so the input has to stay live for them to answer.
  */
-export function SelectionChat({ messages, decision, isBusy, hasStarted, onSend, onChoose }: Props) {
+export function SelectionChat({
+  messages,
+  decision,
+  isBusy,
+  hasStarted,
+  isClosed,
+  onSend,
+  onChoose,
+}: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -64,14 +77,14 @@ export function SelectionChat({ messages, decision, isBusy, hasStarted, onSend, 
                 key={message.id}
                 message={message}
                 onOptionClick={handleOptionClick}
-                disabled={isBusy || !isLastMessage(i)}
+                disabled={isBusy || isClosed || !isLastMessage(i)}
               />
             ))}
           </div>
         )}
       </div>
 
-      <ChatComposer onSend={onSend} disabled={isBusy} />
+      <ChatComposer onSend={onSend} disabled={isBusy} closed={isClosed} />
     </div>
   );
 }

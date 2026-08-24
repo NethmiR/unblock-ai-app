@@ -10,6 +10,8 @@ export interface PlanNode {
   inputs: string[];
   note: string | null;
   meta: string;
+  /** Eyebrow above the label on a `current` node. Defaults to "Current step". */
+  eyebrow?: string;
 }
 
 /**
@@ -37,16 +39,23 @@ export function toPlanNodes(workflow: Workflow): PlanNode[] {
   });
 
   // 2. Everything the requester must provide, as one node.
+  //
+  // This node is a PREVIEW, not a form. The values are collected field by field
+  // on /portal/jobs/[id]/collect, which does not exist until `POST /tasks` runs
+  // on submit. The wording has to say "next", never "now" - listing the labels
+  // under a "Current step" heading previously read as an instruction to type
+  // them into the chat, which posts to the selection endpoint and 409s.
   const requesterInputs = workflow.inputs.filter((i) => i.collected_from.resolution === "requester");
   if (requesterInputs.length > 0) {
     nodes.push({
       id: "__inputs",
       label: "Provide Details",
-      sub: "Information required from you",
+      sub: "You'll be asked for these after you continue",
       status: "current",
       inputs: requesterInputs.map((i) => i.label),
       note: null,
       meta: "",
+      eyebrow: "Coming next",
     });
   }
 
