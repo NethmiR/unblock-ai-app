@@ -12,6 +12,14 @@ export interface PlanNode {
   meta: string;
   /** Eyebrow above the label on a `current` node. Defaults to "Current step". */
   eyebrow?: string;
+  /**
+   * Label for an action button rendered inside the node, e.g. "Provide details".
+   *
+   * Purely descriptive - what the button DOES is decided by whoever renders the
+   * plan, since `toPlanNodes` and `applyTaskProgress` stay pure. `PlanNode`
+   * shows the button only when a handler is wired up alongside this label.
+   */
+  action?: string;
 }
 
 /**
@@ -40,11 +48,15 @@ export function toPlanNodes(workflow: Workflow): PlanNode[] {
 
   // 2. Everything the requester must provide, as one node.
   //
-  // This node is a PREVIEW, not a form. The values are collected field by field
-  // on /portal/jobs/[id]/collect, which does not exist until `POST /tasks` runs
-  // on submit. The wording has to say "next", never "now" - listing the labels
-  // under a "Current step" heading previously read as an instruction to type
-  // them into the chat, which posts to the selection endpoint and 409s.
+  // This node is a PREVIEW here, not a form. On the new-request page there is
+  // no task yet - `POST /tasks` has not run - so there is nothing to collect
+  // against and the node carries no action. Once the task exists, the status
+  // page's plan attaches the button (see `applyTaskProgress`) and the dialog
+  // collects the values field by field.
+  //
+  // The wording has to say "next", never "now" - listing the labels under a
+  // "Current step" heading previously read as an instruction to type them into
+  // the chat, which posts to the selection endpoint and 409s.
   const requesterInputs = workflow.inputs.filter((i) => i.collected_from.resolution === "requester");
   if (requesterInputs.length > 0) {
     nodes.push({

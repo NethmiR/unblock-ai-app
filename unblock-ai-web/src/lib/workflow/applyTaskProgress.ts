@@ -43,6 +43,30 @@ export function applyTaskProgress(nodes: PlanNode[], task: TaskDto): PlanNode[] 
 
     if (node.id === "__inputs") {
       const pending = task.requirements.some((r) => r.status === "pending");
+      /**
+       * The button that opens requirement collection lives on THIS node,
+       * because this is the step that is waiting on the person reading the
+       * plan. It is offered only while the task is `collecting` - the same
+       * gate `RequirementDialog` applies - so a task already sent for approval
+       * shows the answers as provided with nothing left to click.
+       *
+       * `sub` and the "Coming next" eyebrow both come from `toPlanNodes`,
+       * which describes an unsubmitted workflow. Once a task exists this step
+       * is genuinely current and actionable, so both are corrected here.
+       */
+      const isCollecting = task.status === "collecting";
+      if (pending && isCollecting) {
+        return {
+          ...node,
+          status: "current",
+          sub: "We need these before this can go to an approver",
+          meta: "",
+          eyebrow: undefined,
+          action: task.requirements.some((r) => r.status !== "pending")
+            ? "Continue"
+            : "Provide details",
+        };
+      }
       return {
         ...node,
         status: pending ? "current" : "done",

@@ -24,7 +24,21 @@ const SUMMARY: Record<TaskStatus, string> = {
  * first plan the requester ever sees is this one, built from the stored task -
  * customized to them, and accurate about what has actually happened.
  */
-export function TaskPlanPanel({ task, workflow }: { task: TaskDto; workflow: Workflow }) {
+export function TaskPlanPanel({
+  task,
+  workflow,
+  onNodeAction,
+}: {
+  task: TaskDto;
+  workflow: Workflow;
+  /**
+   * Runs a node's `action` - in practice the one on `__inputs`, which opens
+   * requirement collection. Keyed by node id rather than hardcoded here so the
+   * panel stays a renderer: `applyTaskProgress` decides which node offers an
+   * action, and the page decides what that action does.
+   */
+  onNodeAction?: (nodeId: string) => void;
+}) {
   const nodes = useMemo(
     () => applyTaskProgress(toPlanNodes(workflow), task),
     [workflow, task],
@@ -42,7 +56,12 @@ export function TaskPlanPanel({ task, workflow }: { task: TaskDto; workflow: Wor
       <div className="px-7 pb-9 pt-7">
         <div className="mx-auto flex max-w-[560px] flex-col">
           {nodes.map((node, i) => (
-            <PlanNode key={node.id} node={node} isLast={i === nodes.length - 1} />
+            <PlanNode
+              key={node.id}
+              node={node}
+              isLast={i === nodes.length - 1}
+              onAction={onNodeAction ? () => onNodeAction(node.id) : undefined}
+            />
           ))}
         </div>
       </div>

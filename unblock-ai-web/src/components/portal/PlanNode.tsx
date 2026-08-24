@@ -1,9 +1,17 @@
 import { Spinner } from "@/components/ui/Spinner";
+import { Button } from "@/components/ui/Button";
 import type { PlanNode as PlanNodeData } from "@/lib/workflow/toPlanNodes";
 
 interface Props {
   node: PlanNodeData;
   isLast: boolean;
+  /**
+   * Runs the node's `action`. Optional, and the button appears only when BOTH
+   * this and `node.action` are present - the plan is drawn read-only in places
+   * that have no task to act on (the new-request page), and a button there
+   * would have nothing to do.
+   */
+  onAction?: () => void;
 }
 
 /** The connector rendered between nodes: a short vertical line plus a chevron. */
@@ -41,7 +49,7 @@ function DoneNode({ node }: { node: PlanNodeData }) {
   );
 }
 
-function CurrentNode({ node }: { node: PlanNodeData }) {
+function CurrentNode({ node, onAction }: { node: PlanNodeData; onAction?: () => void }) {
   return (
     <div className="rounded-card border-2 border-warn bg-surface p-5 shadow-[0_6px_20px_rgba(245,158,11,.20)]">
       <div className="flex items-start gap-3.5">
@@ -76,6 +84,17 @@ function CurrentNode({ node }: { node: PlanNodeData }) {
           )}
 
           {node.meta && <div className="mt-[13px] text-[12.5px] font-medium text-warn-ink">{node.meta}</div>}
+
+          {/* The step's own call to action, in the step that is waiting on it -
+              so the plan is read and answered in one place. */}
+          {node.action && onAction && (
+            <Button
+              onClick={onAction}
+              className="mt-[18px] h-[44px] rounded-card px-[20px] text-[14.5px] font-medium"
+            >
+              {node.action}
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -111,11 +130,11 @@ function TodoNode({ node }: { node: PlanNodeData }) {
   );
 }
 
-export function PlanNode({ node, isLast }: Props) {
+export function PlanNode({ node, isLast, onAction }: Props) {
   return (
     <div>
       {node.status === "done" && <DoneNode node={node} />}
-      {node.status === "current" && <CurrentNode node={node} />}
+      {node.status === "current" && <CurrentNode node={node} onAction={onAction} />}
       {node.status === "todo" && <TodoNode node={node} />}
       {!isLast && <Connector />}
     </div>

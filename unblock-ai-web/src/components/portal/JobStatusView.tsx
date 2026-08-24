@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
@@ -7,12 +7,13 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { TaskPlanPanel } from "@/components/portal/TaskPlanPanel";
+import { RequirementDialog } from "@/components/portal/RequirementDialog";
 import { formatDateTime } from "@/lib/utils/format";
 import { tasksApi } from "@/lib/api/tasks";
 import { ApiError } from "@/lib/api/client";
 import { STATUS_LABEL, STATUS_TONE } from "@/components/portal/JobRow";
 import type { TaskStatusDto } from "@/types/approval";
-import type { TaskDto, TaskStatus } from "@/types/task";
+import type { NextRequirementDto, TaskDto, TaskStatus } from "@/types/task";
 import type { Workflow } from "@/types/workflow";
 
 /** `PATCH /tasks/:id/status` 409s on any of these - hide the control rather than let it fail. */
@@ -60,6 +61,53 @@ export function JobStatusView({
   const [prompt, setPrompt] = useState<Prompt>(isCompleted ? "on-open" : null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  /**
+   * Requirement collection, opened over this page instead of on a route of its
+   * own. `null` is closed; the value is the `GET /tasks/:id/next` response the
+   * dialog starts from.
+   *
+   * Fetched on open rather than server-side with the rest of the page, because
+   * `/next` is only meaningful while the task is `collecting` and most visits
+   * here never open the dialog at all. It also has to be FRESH: an approver can
+   * append follow-up requirements at any moment, and a snapshot taken at page
+   * render would miss them.
+   */
+  const [collecting, setCollecting] = useState<NextRequirementDto | null>(null);
+  const [isOpening, setIsOpening] = useState(false);
+
+  async function openCollection() {
+    setIsOpening(true);
+    setError(null);
+    try {
+      setCollecting(await tasksApi.next(taskId));
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Something went wrong opening this form. Please try again.",
+      );
+    } finally {
+      setIsOpening(false);
+    }
+  }
+
+  /**
+   * Closes the dialog and re-reads the task from the server.
+   *
+   * Both exits refresh, because both can have changed server state: sending
+   * moves the task out of `collecting` and writes the timeline, and dismissing
+   * part-way still leaves the answers given so far saved - the plan's step and
+   * the "answered" count are rendered from the server copy either way.
+   *
+   * `useCallback` because `RequirementDialog` reports `sent` from an effect
+   * keyed on this identity; a fresh function each render would re-run it on
+   * every unrelated re-render of this page.
+   */
+  const closeCollection = useCallback(() => {
+    setCollecting(null);
+    router.refresh();
+  }, [router]);
 
   async function cancel() {
     setIsCancelling(true);
@@ -141,11 +189,16 @@ export function JobStatusView({
               ? "An approver asked for more information. Answer it to send this back for approval."
               : "Your request is saved and the plan below is yours. Fill in a few details and it will be ready to send for approval."}
           </p>
-          <Link href={`/portal/jobs/${taskId}/collect`}>
-            <Button className="h-[46px] rounded-card px-[22px] text-[15px] font-medium">
-              Continue
-            </Button>
-          </Link>
+          {/* The same action the plan's "Provide details" step offers - this
+              card is the one at the top of the page, for someone who has not
+              scrolled to the plan yet. Both open the one dialog. */}
+          <Button
+            onClick={openCollection}
+            disabled={isOpening}
+            className="h-[46px] rounded-card px-[22px] text-[15px] font-medium"
+          >
+            {isOpening ? "Opening…" : "Continue"}
+          </Button>
         </Card>
       )}
 
@@ -216,7 +269,15 @@ export function JobStatusView({
 
       {workflow && (
         <div className="mb-6">
-          <TaskPlanPanel task={task} workflow={workflow} />
+          <TaskPlanPanel
+            task={task}
+            workflow={workflow}
+            /* Only `__inputs` carries an action today; ignoring every other id
+               keeps this honest if a later node grows one of its own. */
+            onNodeAction={(nodeId) => {
+              if (nodeId === "__inputs") openCollection();
+            }}
+          />
         </div>
       )}
 
@@ -253,6 +314,15 @@ export function JobStatusView({
           </Button>
         )}
       </div>
+
+      {collecting && (
+        <RequirementDialog
+          task={task}
+          initialNext={collecting}
+          onDismiss={closeCollection}
+          onSent={closeCollection}
+        />
+      )}
 
       {prompt && (
         <ConfirmDialog

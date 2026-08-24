@@ -43,11 +43,11 @@ function step(step_id: string, state: TaskStepState["state"], extra: Partial<Tas
   };
 }
 
-function requirement(status: TaskRequirement["status"]): TaskRequirement {
+function requirement(status: TaskRequirement["status"], key = "full_name"): TaskRequirement {
   return {
-    key: "full_name",
+    key,
     source: "input",
-    ref: "full_name",
+    ref: key,
     label: "Full name",
     description: null,
     type: "string",
@@ -137,6 +137,41 @@ describe("applyTaskProgress", () => {
 
     expect(result.get("__inputs")?.status).toBe("current");
     expect(result.get("__inputs")?.meta).toBe("");
+    // The step that is waiting on the requester carries the button that opens
+    // collection - nothing has been answered yet, so it invites rather than resumes.
+    expect(result.get("__inputs")?.action).toBe("Provide details");
+    // "Coming next" describes an unsubmitted workflow; this task exists and is
+    // genuinely waiting, so the default "Current step" eyebrow applies.
+    expect(result.get("__inputs")?.eyebrow).toBeUndefined();
+  });
+
+  it("offers to resume once some but not all requirements are answered", () => {
+    const result = byId(
+      applyTaskProgress(
+        planNodes("advisor"),
+        task("collecting", [step("advisor", "blocked")], [
+          requirement("filled"),
+          requirement("pending", "start_date"),
+        ]),
+      ),
+    );
+
+    expect(result.get("__inputs")?.action).toBe("Continue");
+  });
+
+  it("offers no action on a task that is past collecting", () => {
+    // A follow-up requirement appended by an approver leaves one pending on a
+    // task that is `in_progress`. It is not answerable until the approver's
+    // decision sends the task back to `collecting`, so no button is offered.
+    const result = byId(
+      applyTaskProgress(
+        planNodes("advisor"),
+        task("in_progress", [step("advisor", "pending_approval")], [requirement("pending")]),
+      ),
+    );
+
+    expect(result.get("__inputs")?.status).toBe("current");
+    expect(result.get("__inputs")?.action).toBeUndefined();
   });
 
   it("marks the details node done once every requirement is answered", () => {
