@@ -1,14 +1,24 @@
 "use client";
 import { useState, useTransition } from "react";
+import dynamic from "next/dynamic";
 import { draftsApi } from "@/lib/api/drafts";
 import { workflowsApi } from "@/lib/api/workflows";
 import { deriveEditorState, ctaFor } from "@/lib/workflow/editorState";
 import { countWords } from "@/lib/utils/format";
 import { DraftEditor } from "./DraftEditor";
-import { WorkflowFlowchart } from "./flowchart/WorkflowFlowchart";
 import { Button } from "@/components/ui/Button";
 import { ApiError } from "@/lib/api/client";
 import type { ReviewStatus, Workflow } from "@/types/workflow";
+
+/**
+ * Deferred: React Flow measures the DOM, so it cannot server-render, and it is
+ * the heaviest dependency on this route. The skeleton reuses InertPlaceholder's
+ * box so deferring it does not shift the layout when it mounts.
+ */
+const WorkflowFlowchart = dynamic(
+  () => import("./flowchart/WorkflowFlowchart").then((m) => m.WorkflowFlowchart),
+  { ssr: false, loading: () => <FlowchartSkeleton /> },
+);
 
 interface Props {
   initialText?: string;
@@ -222,6 +232,21 @@ function StaleBanner() {
   return (
     <div className="border-b border-dashed border-warn/60 bg-warn/10 px-[15px] py-[11px] text-center text-xs leading-normal text-muted">
       Edit not yet compiled — the flowchart still shows the previous version.
+    </div>
+  );
+}
+
+function FlowchartSkeleton() {
+  return (
+    <div className="flex flex-1 animate-pulse flex-col items-center justify-center gap-[18px] bg-[repeating-linear-gradient(135deg,rgba(71,85,105,.025)_0_8px,transparent_8px_16px)]">
+      <div className="flex flex-col items-center gap-[9px] opacity-55">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="contents">
+            <div className="h-[34px] w-[132px] rounded-[9px] border border-dashed border-line-admin" />
+            {i < 2 && <div className="h-4 w-px bg-line-admin" />}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
