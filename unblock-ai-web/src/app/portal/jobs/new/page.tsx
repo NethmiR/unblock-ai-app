@@ -1,19 +1,15 @@
 "use client";
-import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSelectionSession } from "@/lib/hooks/useSelectionSession";
 import { SelectionChat } from "@/components/portal/SelectionChat";
 import { PlanPanel } from "@/components/portal/PlanPanel";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { tasksApi } from "@/lib/api/tasks";
-import { ApiError } from "@/lib/api/client";
 import Link from "next/link";
 
 export default function NewJobPage() {
   const router = useRouter();
   const {
     messages,
-    sessionId,
     decision,
     workflow,
     pendingMatch,
@@ -24,33 +20,22 @@ export default function NewJobPage() {
     rejectMatch,
     hasStarted,
   } = useSelectionSession();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
 
   /**
-   * Creates the task and hands off to the collection loop.
+   * Confirming the process is what commits the request.
    *
-   * `POST /tasks` 409s unless the session has matched. The button is only
-   * rendered once `workflow` is set, which happens on a matched decision and
-   * nowhere else - so the precondition is already encoded in the state.
+   * The dialog is the last decision this page asks for: saying yes saves the
+   * job and hands the person to its own page, where the plan is rendered from
+   * the stored task. Nothing is sent to any approver by this - the task is
+   * created in `collecting`, and `/portal/jobs/:id` is where they pick up
+   * filling in their details.
+   *
+   * A failed save returns null and has already explained itself in the chat,
+   * so there is nothing to navigate to and nothing more to say here.
    */
-  async function submitRequest() {
-    if (!sessionId) return;
-    setIsSubmitting(true);
-    setSubmitError(null);
-    try {
-      const task = await tasksApi.create(sessionId);
-      router.push(`/portal/jobs/${task.id}/collect`);
-    } catch (err) {
-      setSubmitError(
-        err instanceof ApiError
-          ? err.message
-          : "Something went wrong creating your request. Please try again.",
-      );
-      setIsSubmitting(false);
-    }
-    // On success the route changes, so `isSubmitting` stays true and the
-    // button stays disabled until this page unmounts.
+  async function handleConfirm() {
+    const taskId = await confirmMatch();
+    if (taskId) router.push(`/portal/jobs/${taskId}`);
   }
 
   return (
@@ -80,26 +65,29 @@ export default function NewJobPage() {
           onSend={send}
           onChoose={choose}
         />
-        <PlanPanel
-          workflow={workflow}
-          onSubmit={submitRequest}
-          isSubmitting={isSubmitting}
-          error={submitError}
-        />
+        {/*
+          The panel stays empty for the whole of this page's life - confirming
+          navigates away rather than compiling a plan here. It is kept as the
+          right-hand half of the layout, explaining what will be mapped out
+          once a process is found.
+        */}
+        <PlanPanel />
       </div>
 
       {/*
-        The checkpoint between narrowing down a workflow and building the plan
-        for it. Only the automatic `matched` decision routes through here - a
-        pick from the manual-choice list is already an explicit choice, so
-        re-asking there would just make the person say it twice.
+        The checkpoint between narrowing down a workflow and saving the job.
+        BOTH branches route through here - an automatic `matched` decision and
+        an explicit pick from the manual-choice list - because this dialog is
+        the only thing standing in front of a saved request.
       */}
       {pendingMatch && (
         <ConfirmDialog
           title="Have we got the right process?"
           confirmLabel="Yes, continue"
           cancelLabel="No, that's not it"
-          onConfirm={confirmMatch}
+          busy={isBusy}
+          busyLabel="Creating your request…"
+          onConfirm={handleConfirm}
           onCancel={rejectMatch}
         >
           <p>

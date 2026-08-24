@@ -19,10 +19,10 @@ const SUMMARY: Record<TaskStatus, string> = {
 /**
  * The requester's plan for a task that already exists.
  *
- * Read-only by design: PlanPanel is the composer's version and owns the submit
- * action, which has no meaning for a task already in flight. Sharing PlanNode
- * between them keeps the two views looking identical, which matters - the
- * requester should recognise the plan they approved at submission time.
+ * This is the ONLY place a real plan is drawn. The new-request page confirms a
+ * process and saves the job rather than compiling a preview of its own, so the
+ * first plan the requester ever sees is this one, built from the stored task -
+ * customized to them, and accurate about what has actually happened.
  */
 export function TaskPlanPanel({ task, workflow }: { task: TaskDto; workflow: Workflow }) {
   const nodes = useMemo(

@@ -132,10 +132,14 @@ export function JobStatusView({
 
       {taskStatus === "collecting" && (
         <Card className="mb-6 px-7 py-6">
+          {/* Two very different arrivals share this card: straight from
+              creating the request, and coming back after an approver asked a
+              question. The timeline is what separates them - an untouched
+              task has none. */}
           <p className="mb-4 text-[14.5px] text-ink">
             {status.timeline.length > 0
               ? "An approver asked for more information. Answer it to send this back for approval."
-              : "This request still needs a few details before it can be sent for approval."}
+              : "Your request is saved and the plan below is yours. Fill in a few details and it will be ready to send for approval."}
           </p>
           <Link href={`/portal/jobs/${taskId}/collect`}>
             <Button className="h-[46px] rounded-card px-[22px] text-[15px] font-medium">

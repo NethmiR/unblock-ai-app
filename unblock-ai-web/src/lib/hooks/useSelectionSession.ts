@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useState } from "react";
 import { selectionApi } from "@/lib/api/selection";
+import { tasksApi } from "@/lib/api/tasks";
 import { getRequesterContext, getSession } from "@/lib/auth/session";
 import { ApiError } from "@/lib/api/client";
 import type { SelectionResponse } from "@/types/selection";
@@ -70,10 +71,10 @@ export function useSelectionSession() {
           try {
             const matched = await selectionApi.getWorkflow(response.session_id);
             // The clarifying questions have landed on one workflow with high
-            // confidence. Stage it rather than committing: `setWorkflow` is
-            // what compiles the plan into the right-hand panel, and that must
-            // not happen until the person confirms this is the process they
-            // meant. `confirmMatch` / `rejectMatch` resolve it.
+            // confidence. Stage it rather than committing: confirming is what
+            // saves the job, and that must not happen until the person agrees
+            // this is the process they meant. `confirmMatch` / `rejectMatch`
+            // resolve it.
             setPendingMatch(matched);
           } catch (err) {
             push({
@@ -123,19 +124,22 @@ export function useSelectionSession() {
     [sessionId, workflow, push, handleDecision],
   );
 
-  /** Explicit pick from the manual-choice list. */
+  /**
+   * Explicit pick from the manual-choice list.
+   *
+   * Resolves the pick server-side, then stages the workflow exactly as a
+   * `matched` decision does. The confirmation popup is the single gate in
+   * front of `POST /tasks` for BOTH branches - a pick from a list of similar
+   * titles is easy to misread, and committing straight to a saved job would
+   * give the person no chance to catch it.
+   */
   const choose = useCallback(
     async (workflowId: string) => {
       if (!sessionId) return;
       setIsBusy(true);
       try {
         await selectionApi.choose(sessionId, workflowId);
-        const matched = await selectionApi.getWorkflow(sessionId);
-        setWorkflow(matched);
-        push({
-          role: "system",
-          text: `I'll use ${matched.title}. Review the steps on the right, then press Continue to enter your details.`,
-        });
+        setPendingMatch(await selectionApi.getWorkflow(sessionId));
       } catch (err) {
         push({
           role: "system",
@@ -151,21 +155,44 @@ export function useSelectionSession() {
   );
 
   /**
-   * Confirmed: this is the process they meant. Build the plan.
+   * Confirmed: this is the process they meant. Save the job.
    *
-   * Committing `workflow` is what renders the customized plan on the right and
-   * retires the composer. The backend session already resolved when it
-   * matched, so this sends nothing - it is purely the UI agreeing to proceed.
+   * This is the commit point of the whole selection flow. `POST /tasks` turns
+   * the resolved session into a stored task whose `requirements` and `steps`
+   * are the workflow customized for this requester - which is why the plan is
+   * not compiled here: the task page renders it from the saved record, so
+   * building a throwaway copy on this page first would only show the person
+   * the same thing twice.
+   *
+   * Returns the new task id so the caller can navigate; `null` means the save
+   * failed and the message pushed into the chat already says so. `workflow` is
+   * committed on success purely to retire the composer - the session is
+   * finalized server-side and any further answer would 409.
    */
-  const confirmMatch = useCallback(() => {
-    if (!pendingMatch) return;
-    setWorkflow(pendingMatch);
-    setPendingMatch(null);
-    push({
-      role: "system",
-      text: `I'll use ${pendingMatch.title}. Review the steps on the right, then press Continue to enter your details.`,
-    });
-  }, [pendingMatch, push]);
+  const confirmMatch = useCallback(async (): Promise<string | null> => {
+    if (!pendingMatch || !sessionId) return null;
+    setIsBusy(true);
+    try {
+      const task = await tasksApi.create(sessionId);
+      setWorkflow(pendingMatch);
+      setPendingMatch(null);
+      return task.id;
+    } catch (err) {
+      push({
+        role: "system",
+        text: err instanceof ApiError
+          ? `Something went wrong creating your request: ${err.message}`
+          : "Something went wrong creating your request. Please try again.",
+      });
+      // The staged match is cleared either way: leaving the popup open on a
+      // failure would trap the person behind a button that just failed, while
+      // dropping back to the chat lets them retry or say something else.
+      setPendingMatch(null);
+      return null;
+    } finally {
+      setIsBusy(false);
+    }
+  }, [pendingMatch, sessionId, push]);
 
   /**
    * Rejected: we picked the wrong process. Hand it back to the conversation.
