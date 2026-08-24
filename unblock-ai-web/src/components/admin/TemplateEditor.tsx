@@ -1,5 +1,6 @@
 "use client";
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { draftsApi } from "@/lib/api/drafts";
 import { workflowsApi } from "@/lib/api/workflows";
@@ -60,6 +61,7 @@ export function TemplateEditor({
   const [isGenerating, startGenerating] = useTransition();
   const [isPublishing, startPublishing] = useTransition();
   const [isSaving, startSaving] = useTransition();
+  const router = useRouter();
 
   const state = deriveEditorState({ text, hasCompiled: workflow !== null, compiledFromText });
   const cta = ctaFor(state);
@@ -122,6 +124,10 @@ export function TemplateEditor({
         );
         setReviewStatus(summary.review_status);
         setVersion(summary.version);
+        // Invalidates the cached RSC payload for /admin so the list's badge
+        // reflects this change on the next visit, without ever caching the
+        // always-fresh `getRecord`/list reads themselves (see client.ts).
+        router.refresh();
       } catch (err) {
         setPublishError(
           err instanceof ApiError
