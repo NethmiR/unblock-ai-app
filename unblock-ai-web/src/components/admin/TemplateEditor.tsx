@@ -158,8 +158,11 @@ export function TemplateEditor({
     <div className="px-7 pt-5">
       <div className="mb-4 flex items-end justify-between gap-7">
         <div>
-          <a href="/admin" className="mb-2.5 inline-flex items-center gap-[7px] text-[12.5px] text-muted hover:text-ink">
-            <span className="text-[13px]">←</span>See other templates
+          <a href="/admin" className="mb-2.5 inline-flex items-center gap-2.5 text-[14.5px] font-medium text-muted transition-colors hover:text-ink">
+            <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden>
+              <path d="M11 3.5L5.5 9l5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            See other templates
           </a>
           <h1 className="text-[22px] font-bold tracking-tight">{documentTitle}</h1>
           <div className="mt-[7px] flex items-center gap-2 text-xs text-muted">

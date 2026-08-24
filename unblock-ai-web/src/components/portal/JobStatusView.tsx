@@ -172,6 +172,16 @@ export function JobStatusView({
 
   return (
     <div className="mx-auto max-w-[720px] px-6 py-14">
+      <button
+        type="button"
+        onClick={handleBack}
+        className="mb-6 flex cursor-pointer items-center gap-2.5 text-[14.5px] font-medium text-muted transition-colors hover:text-ink"
+      >
+        <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden>
+          <path d="M11 3.5L5.5 9l5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Back to my requests
+      </button>
       <div className="mb-2 flex items-center justify-between gap-4">
         <div className="text-xs font-medium uppercase tracking-[.14em] text-muted">{status.reference}</div>
         <Badge tone={STATUS_TONE[taskStatus] ?? "neutral"}>{STATUS_LABEL[taskStatus] ?? status.status}</Badge>
@@ -287,13 +297,6 @@ export function JobStatusView({
       {deleteError && !prompt && <p className="mb-4 text-[13.5px] text-danger">{deleteError}</p>}
 
       <div className="flex items-center gap-4">
-        <button
-          type="button"
-          onClick={handleBack}
-          className="cursor-pointer text-[14px] font-medium text-muted transition-colors hover:text-ink"
-        >
-          Back to my requests
-        </button>
         {canCancel && (
           <Button
             variant="secondary"

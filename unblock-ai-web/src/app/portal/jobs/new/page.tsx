@@ -40,19 +40,21 @@ export default function NewJobPage() {
 
   return (
     <div className="mx-auto flex h-screen max-w-[1440px] flex-col px-16 pb-7 pt-9">
-      <div className="mb-6 flex flex-none items-start justify-between gap-8">
-        <div>
-          <div className="mb-2 text-xs font-medium uppercase tracking-[.14em] text-muted">New request</div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {workflow ? workflow.title : "Create new request"}
-          </h1>
-        </div>
-        <Link href="/portal" className="flex flex-none items-center gap-2.5 px-1 py-2.5 text-[14.5px] font-medium">
-          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden>
-            <path d="M11 3.5L5.5 9l5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          See other requests
-        </Link>
+      <Link
+        href="/portal"
+        className="mb-6 flex flex-none items-center gap-2.5 self-start text-[14.5px] font-medium text-muted transition-colors hover:text-ink"
+      >
+        <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden>
+          <path d="M11 3.5L5.5 9l5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        See other requests
+      </Link>
+
+      <div className="mb-6 flex-none">
+        <div className="mb-2 text-xs font-medium uppercase tracking-[.14em] text-muted">New request</div>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {workflow ? workflow.title : "Create new request"}
+        </h1>
       </div>
 
       <div className="flex min-h-0 flex-1 gap-[22px]">
