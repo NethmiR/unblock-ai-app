@@ -1,5 +1,5 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { draftsApi } from "@/lib/api/drafts";
@@ -8,6 +8,7 @@ import { deriveEditorState, ctaFor } from "@/lib/workflow/editorState";
 import { countWords } from "@/lib/utils/format";
 import { DraftEditor } from "./DraftEditor";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
 import { ApiError } from "@/lib/api/client";
 import type { ReviewStatus, Workflow } from "@/types/workflow";
 
@@ -61,10 +62,23 @@ export function TemplateEditor({
   const [isGenerating, startGenerating] = useTransition();
   const [isPublishing, startPublishing] = useTransition();
   const [isSaving, startSaving] = useTransition();
+  const [isSlowCompile, setIsSlowCompile] = useState(false);
+  const [lastAttempts, setLastAttempts] = useState<number | null>(null);
   const router = useRouter();
 
   const state = deriveEditorState({ text, hasCompiled: workflow !== null, compiledFromText });
   const cta = ctaFor(state);
+
+  // Distinguishes a slow compile from a hung one. A single timer keyed off
+  // the existing useTransition pending flag - no polling, no new requests.
+  useEffect(() => {
+    if (!isGenerating) {
+      setIsSlowCompile(false);
+      return;
+    }
+    const timer = setTimeout(() => setIsSlowCompile(true), 8000);
+    return () => clearTimeout(timer);
+  }, [isGenerating]);
 
   /**
    * Persists the prose WITHOUT compiling it. This is the escape hatch for a
@@ -88,6 +102,7 @@ export function TemplateEditor({
 
   async function generate() {
     setError(null);
+    setLastAttempts(null);
     startGenerating(async () => {
       try {
         // Save the draft first so the raw text survives even if extraction fails.
@@ -102,6 +117,7 @@ export function TemplateEditor({
         setCompiledFromText(text);
         setReviewStatus(result.review_status);
         setVersion(result.version);
+        setLastAttempts(result.attempts);
       } catch (err) {
         setError(
           err instanceof ApiError
@@ -196,10 +212,15 @@ export function TemplateEditor({
             </span>
             <span className="text-[11.5px] text-muted">
               {workflow ? `Read-only · ${workflow.steps.length} steps` : "Read-only"}
+              {!isGenerating && lastAttempts !== null && lastAttempts > 1 && (
+                <> · Compiled after {lastAttempts} attempts</>
+              )}
             </span>
           </header>
 
-          {workflow ? (
+          {isGenerating ? (
+            <CompilingPlaceholder isSlow={isSlowCompile} />
+          ) : workflow ? (
             <div className="flex flex-1 flex-col overflow-hidden">
               {state === "edited" && <StaleBanner />}
               <div className="flex-1">
@@ -253,6 +274,19 @@ function FlowchartSkeleton() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function CompilingPlaceholder({ isSlow }: { isSlow: boolean }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-[18px] bg-[repeating-linear-gradient(135deg,rgba(71,85,105,.035)_0_8px,transparent_8px_16px)]">
+      <Spinner />
+      <p className="max-w-[34ch] text-center text-[12.5px] text-muted">
+        {isSlow
+          ? "Still compiling — long workflows can take a little longer."
+          : "Compiling your workflow…"}
+      </p>
     </div>
   );
 }
