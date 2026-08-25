@@ -60,22 +60,79 @@ export interface JobRowTask extends TaskDto {
   workflow_title: string;
 }
 
-export function JobRow({ job }: { job: JobRowTask }) {
-  return (
-    <Link
-      href={`/portal/jobs/${job.id}`}
-      className="flex items-center gap-5 rounded-card border border-line bg-surface px-6 py-[22px] transition-all hover:border-slate-300 hover:shadow-[0_2px_10px_rgba(15,23,42,.06)]"
-    >
-      <StatusIcon status={job.status} />
+/**
+ * `DELETE /tasks/:id` only accepts these - the service 409s on anything else
+ * rather than orphaning approval links already sitting in approvers' inboxes.
+ * A request still collecting details, ready to send, or out for approval is
+ * therefore given no delete control at all, rather than one that fails.
+ */
+export const DELETABLE: TaskStatus[] = ["completed", "rejected", "cancelled"];
 
-      <div className="min-w-0 flex-1">
+/**
+ * One row of the requester's job list.
+ *
+ * The delete control is a SIBLING of the link, not a child: a button nested in
+ * an anchor is invalid HTML and gets the click semantics wrong. The link is
+ * stretched over the row with an inset overlay instead, so the whole row still
+ * navigates while the button keeps its own hit area - the same arrangement the
+ * admin's TemplateRow uses.
+ */
+export function JobRow({
+  job,
+  onDelete,
+}: {
+  job: JobRowTask;
+  /** Omitted where the list has nothing to do with a delete, e.g. a read-only view. */
+  onDelete?: (job: JobRowTask) => void;
+}) {
+  const canDelete = onDelete && DELETABLE.includes(job.status);
+
+  return (
+    <div className="relative flex items-center gap-5 rounded-card border border-line bg-surface px-6 py-[22px] transition-all hover:border-slate-300 hover:shadow-[0_2px_10px_rgba(15,23,42,.06)]">
+      <Link
+        href={`/portal/jobs/${job.id}`}
+        className="absolute inset-0 z-0 rounded-card"
+        aria-label={`Open ${job.workflow_title}`}
+      />
+
+      <div className="pointer-events-none relative">
+        <StatusIcon status={job.status} />
+      </div>
+
+      <div className="pointer-events-none relative min-w-0 flex-1">
         <div className="text-[16.5px] font-semibold tracking-tight">{job.workflow_title}</div>
         <div className="mt-[5px] text-sm leading-normal text-muted">{job.reference}</div>
       </div>
 
-      <Badge tone={STATUS_TONE[job.status]} className="flex-none">
+      <Badge tone={STATUS_TONE[job.status]} className="pointer-events-none relative flex-none">
         {STATUS_LABEL[job.status]}
       </Badge>
-    </Link>
+
+      {canDelete && (
+        <button
+          type="button"
+          onClick={() => onDelete(job)}
+          aria-label={`Delete ${job.reference}`}
+          title="Delete request"
+          className="relative z-10 flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-control text-muted transition-colors hover:bg-danger/10 hover:text-danger focus-visible:bg-danger/10 focus-visible:text-danger focus-visible:outline-none"
+        >
+          <TrashIcon />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M2.5 4h11M6.5 4V2.75A.75.75 0 0 1 7.25 2h1.5a.75.75 0 0 1 .75.75V4M12.5 4l-.6 8.4a1 1 0 0 1-1 .93H5.1a1 1 0 0 1-1-.93L3.5 4M6.6 6.8v4M9.4 6.8v4"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

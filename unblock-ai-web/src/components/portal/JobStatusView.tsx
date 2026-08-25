@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { TaskPlanPanel } from "@/components/portal/TaskPlanPanel";
 import { RequirementDialog } from "@/components/portal/RequirementDialog";
+import { DeleteRequestDialog } from "@/components/portal/DeleteRequestDialog";
 import { formatDateTime } from "@/lib/utils/format";
 import { tasksApi } from "@/lib/api/tasks";
 import { ApiError } from "@/lib/api/client";
-import { STATUS_LABEL, STATUS_TONE } from "@/components/portal/JobRow";
+import { DELETABLE, STATUS_LABEL, STATUS_TONE } from "@/components/portal/JobRow";
 import type { TaskStatusDto } from "@/types/approval";
 import type { NextRequirementDto, TaskDto, TaskStatus } from "@/types/task";
 import type { Workflow } from "@/types/workflow";
@@ -51,6 +51,8 @@ export function JobStatusView({
   const taskStatus = status.status as TaskStatus;
   const canCancel = !TERMINAL.includes(taskStatus);
   const isCompleted = taskStatus === "completed";
+  /** Same rule the list row uses - a live task cannot be deleted at all. */
+  const canDelete = DELETABLE.includes(taskStatus);
 
   /**
    * A completed request is finished business, so the page offers to clear it
@@ -307,7 +309,7 @@ export function JobStatusView({
             {isCancelling ? "Cancelling…" : "Cancel request"}
           </Button>
         )}
-        {isCompleted && (
+        {canDelete && (
           <Button
             variant="secondary"
             onClick={() => setPrompt("on-open")}
@@ -328,23 +330,17 @@ export function JobStatusView({
       )}
 
       {prompt && (
-        <ConfirmDialog
-          title="Delete this completed request?"
-          confirmLabel="Delete request"
-          busyLabel="Deleting…"
-          cancelLabel={prompt === "on-close" ? "No, just go back" : "No, keep it"}
-          tone="danger"
+        <DeleteRequestDialog
+          // Keyed so re-opening the prompt starts from its first stage again.
+          key={prompt}
+          reference={status.reference}
+          title={status.workflow_title}
+          status={taskStatus}
           busy={isDeleting}
           error={deleteError}
           onConfirm={deleteTask}
           onCancel={prompt === "on-close" ? declineAndLeave : declinePrompt}
-        >
-          <p>
-            <span className="font-semibold text-ink">{status.reference}</span> has been completed,
-            so nothing further will happen to it. Deleting removes it from your requests
-            permanently — the approval record is kept for the institution&apos;s audit trail.
-          </p>
-        </ConfirmDialog>
+        />
       )}
     </div>
   );

@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { JobRow, type JobRowTask } from "@/components/portal/JobRow";
+import { JobList } from "@/components/portal/JobList";
+import { EmptyJobs } from "@/components/portal/EmptyJobs";
+import type { JobRowTask } from "@/components/portal/JobRow";
 import { Button } from "@/components/ui/Button";
 import { tasksApi } from "@/lib/api/tasks";
 import { workflowsApi } from "@/lib/api/workflows";
@@ -42,25 +44,9 @@ export default async function JobsPage() {
       </div>
 
       {jobs.length === 0 ? (
-        <div className="flex flex-col items-center rounded-card border border-line bg-surface px-10 py-20 text-center">
-          <div className="mb-6 h-14 w-14 rounded-card border border-dashed border-slate-300" />
-          <div className="text-xl font-semibold tracking-tight">Nothing in progress yet</div>
-          <p className="mb-7 mt-2.5 max-w-[44ch] text-[15px] text-muted">
-            Start by describing what you need — overseas leave, a verification letter, a hall booking.
-            We&apos;ll work out who has to approve it.
-          </p>
-          <Link href="/portal/jobs/new">
-            <Button className="h-[50px] rounded-card px-[22px] text-[15px] font-medium">
-              New Request
-            </Button>
-          </Link>
-        </div>
+        <EmptyJobs />
       ) : (
-        <div className="flex flex-col gap-3.5">
-          {jobs.map((job) => (
-            <JobRow key={job.id} job={job} />
-          ))}
-        </div>
+        <JobList jobs={jobs} />
       )}
     </div>
   );
