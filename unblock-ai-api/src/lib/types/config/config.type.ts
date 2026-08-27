@@ -10,6 +10,12 @@ export interface DbConfig {
   serverSelectionTimeoutMs: number;
 }
 
+export interface PostgresConfig {
+  url: string;
+  poolMax: number;
+  connectionTimeoutMs: number;
+}
+
 export interface AzureOpenAIConfig {
   endpoint: string;
   apiKey: string;
@@ -50,6 +56,7 @@ export interface MailConfig {
 export interface AppConfig {
   server: ServerConfig;
   db: DbConfig;
+  postgres: PostgresConfig;
   azureOpenAI: AzureOpenAIConfig;
   azureEmbedding: AzureEmbeddingConfig;
   retrieval: RetrievalConfig;

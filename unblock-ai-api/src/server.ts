@@ -2,6 +2,7 @@ import { config } from "./config/index.config.js";
 import { createApp } from "./app.js";
 import { ensureIndexes } from "./db/index.definition.js";
 import { closeDb } from "./db/mongo.client.js";
+import { closePool } from "./db/postgres.client.js";
 import { logger } from "./utils/shared/logger.util.js";
 import { DraftModel } from "./models/draft.model.js";
 import { TemplateModel } from "./models/template.model.js";
@@ -109,6 +110,7 @@ async function main(): Promise<void> {
       logger.info("shutting down", { signal });
       server.close();
       await closeDb();
+      await closePool();
       process.exit(0);
     });
   }
