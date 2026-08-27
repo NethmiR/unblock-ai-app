@@ -1,7 +1,17 @@
 import type { ObjectId } from "mongodb";
 
-/** What was acted on. One entry per deletion; extend as more auditable actions appear. */
-export type AuditResource = "task" | "template";
+/**
+ * What was acted on. One entry per deletion; extend as more auditable actions
+ * appear.
+ *
+ * Template deletions moved to Postgres's `template_deletions` table as of the
+ * auth/deletion-tracking work (D-2) - they can join to `admin_users`, which a
+ * Mongo collection cannot. This type only permits `"task"` from that point
+ * forward; historical Mongo documents with `resource: "template"` still exist
+ * and remain readable (Mongo is schemaless, and `findByResource` takes a
+ * plain string) - don't be confused by seeing that value in old data.
+ */
+export type AuditResource = "task";
 
 export type AuditAction = "deleted";
 

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getSession } from "@/lib/auth/session";
 import { SignOutButton } from "./SignOutButton";
 
@@ -13,6 +14,14 @@ export async function TopBar() {
         <div className="text-[15.5px] font-bold tracking-tight">Unblock AI</div>
         <div className="h-5 w-px bg-line-admin" />
         <div className="text-[12.5px] text-muted">Workflow administration</div>
+        <nav className="ml-2 flex items-center gap-4 text-[12.5px]">
+          <Link href="/admin" className="text-muted hover:text-ink">
+            Templates
+          </Link>
+          <Link href="/admin/deletions" className="text-muted hover:text-ink">
+            Deletion log
+          </Link>
+        </nav>
       </div>
 
       <div className="flex items-center gap-[18px]">

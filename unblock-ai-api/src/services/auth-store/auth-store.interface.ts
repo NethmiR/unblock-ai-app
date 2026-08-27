@@ -1,4 +1,9 @@
-import type { AuthAudience, AuthUserRow } from "../../lib/types/auth/auth.type.js";
+import type {
+  AuthAudience,
+  AuthUserRow,
+  TemplateDeletionInput,
+  TemplateDeletionRecord,
+} from "../../lib/types/auth/auth.type.js";
 
 /**
  * D-5: auth data access behind an interface, same pattern as IVectorStore and
@@ -13,4 +18,10 @@ export interface IAuthStore {
 
   /** Failure path: atomically increment failed_attempt_count, stamp last_failed_attempt_at. */
   recordFailedAttempt(audience: AuthAudience, id: string, at: Date): Promise<number>;
+
+  /** Written BEFORE the Mongo delete - `versions_removed` starts at 0. */
+  recordTemplateDeletion(input: TemplateDeletionInput): Promise<TemplateDeletionRecord>;
+  /** Called once the Mongo delete has confirmed how many versions it removed. */
+  markDeletionCompleted(id: string, versionsRemoved: number): Promise<void>;
+  listTemplateDeletions(limit: number, workflowId?: string): Promise<TemplateDeletionRecord[]>;
 }

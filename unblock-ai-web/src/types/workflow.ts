@@ -249,3 +249,24 @@ export interface WorkflowRecord {
   /** The originating draft's prose, inlined by the API. `null` if unavailable. */
   draft_text?: string | null;
 }
+
+/**
+ * A row from GET /workflows/deletions (Postgres `template_deletions`, D-2).
+ * `versions_removed` reads 0 when the log landed but the Mongo delete did not
+ * confirm - see the ordering comment on `WorkflowService.delete` in the API.
+ */
+export interface TemplateDeletion {
+  id: string;
+  workflow_id: string;
+  template_title: string;
+  latest_version: number;
+  versions_removed: number;
+  institution_type: string | null;
+  review_status: string | null;
+  deleted_by_admin_id: string;
+  deleted_by_username: string;
+  reason: string | null;
+  request_id: string | null;
+  snapshot: Record<string, unknown>;
+  deleted_at: string;
+}

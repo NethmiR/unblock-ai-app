@@ -10,8 +10,9 @@ import { WorkflowService } from "../../src/services/workflow.service.js";
 import { ValidationService } from "../../src/services/validation.service.js";
 import { DraftService } from "../../src/services/draft.service.js";
 import { startTestServer, type TestServer } from "../helpers/test-server.helper.js";
-import { FakeAuditLogModel, FakeDraftModel, FakeTaskModel, FakeTemplateModel } from "../helpers/fake-model.helper.js";
-import { AuditService } from "../../src/services/audit.service.js";
+import { FakeDraftModel, FakeTaskModel, FakeTemplateModel } from "../helpers/fake-model.helper.js";
+import { DeletionLogService } from "../../src/services/deletion-log.service.js";
+import { InMemoryAuthStore } from "../../src/services/auth-store/in-memory.auth-store.js";
 import { loadExpectedFixture } from "../helpers/fixture.helper.js";
 import type { EmbeddingService } from "../../src/services/embedding.service.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
@@ -36,16 +37,13 @@ async function buildServer(): Promise<
 > {
   const templateModel = new FakeTemplateModel();
   const taskModel = new FakeTaskModel();
-  const auditLogModel = new FakeAuditLogModel();
   const draftModel = new FakeDraftModel();
   const workflowService = new WorkflowService({
     templateModel: templateModel as unknown as ConstructorParameters<typeof WorkflowService>[0]["templateModel"],
     embeddingService: fakeEmbeddingService(),
     validationService: new ValidationService(),
     taskModel: taskModel as unknown as ConstructorParameters<typeof WorkflowService>[0]["taskModel"],
-    auditService: new AuditService({
-      auditLogModel: auditLogModel as unknown as ConstructorParameters<typeof AuditService>[0]["auditLogModel"],
-    }),
+    deletionLog: new DeletionLogService({ authStore: new InMemoryAuthStore() }),
   });
   const validationService = new ValidationService();
   const draftService = new DraftService({

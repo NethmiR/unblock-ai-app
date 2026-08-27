@@ -11,6 +11,8 @@ export function createWorkflowRouter(controller: WorkflowController): Router {
   router.post("/workflows/extract", admin, asyncHandler(controller.extract));
   router.post("/workflows", admin, asyncHandler(controller.create));
   router.get("/workflows", auth, asyncHandler(controller.list));
+  // Must precede "/workflows/:id" - otherwise "deletions" is captured as :id.
+  router.get("/workflows/deletions", admin, asyncHandler(controller.listDeletions));
   router.get("/workflows/:id", auth, asyncHandler(controller.getById));
   router.put("/workflows/:id", admin, asyncHandler(controller.update));
   router.post("/workflows/:id/validate", admin, asyncHandler(controller.validate));

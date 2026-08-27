@@ -9,15 +9,25 @@ const { WorkflowService } = await import("../../../src/services/workflow.service
 const { TemplateModel } = await import("../../../src/models/template.model.js");
 const { ValidationService } = await import("../../../src/services/validation.service.js");
 const { TaskModel } = await import("../../../src/models/task.model.js");
-const { AuditService } = await import("../../../src/services/audit.service.js");
-const { AuditLogModel } = await import("../../../src/models/audit-log.model.js");
+const { DeletionLogService } = await import("../../../src/services/deletion-log.service.js");
+const { InMemoryAuthStore } = await import("../../../src/services/auth-store/in-memory.auth-store.js");
 const { getDb, closeDb } = await import("../../../src/db/mongo.client.js");
 const { REVIEW_STATUS } = await import("../../../src/data/constants/status.constant.js");
 const { ConflictError } = await import("../../../src/errors/conflict.error.js");
 const { NotFoundError } = await import("../../../src/errors/not-found.error.js");
+type AuthUser = import("../../../src/lib/types/auth/auth.type.js").AuthUser;
 
-/** No login yet, so an unauthenticated delete still has to be representable. */
-const ANONYMOUS_ACTOR = { id: null, email: null, role: null };
+/** Route guards already require `requireRole("admin")` by the time delete() is reached. */
+const ADMIN_ACTOR: AuthUser = {
+  id: "a-1",
+  audience: "admin",
+  username: "admin",
+  email: "admin@uni.edu",
+  full_name: "Admin User",
+  department: null,
+  organisation: null,
+  faculty: null,
+};
 
 const fixture = loadExpectedFixture("it_faculty_overseas_leave.json");
 
@@ -38,13 +48,13 @@ function fakeEmbeddingService(): InstanceType<typeof import("../../../src/servic
   } as unknown as InstanceType<typeof import("../../../src/services/embedding.service.js").EmbeddingService>;
 }
 
-function newService(): InstanceType<typeof WorkflowService> {
+function newService(deletionLog = new DeletionLogService({ authStore: new InMemoryAuthStore() })): InstanceType<typeof WorkflowService> {
   return new WorkflowService({
     templateModel: new TemplateModel(),
     embeddingService: fakeEmbeddingService(),
     validationService: new ValidationService(),
     taskModel: new TaskModel(),
-    auditService: new AuditService({ auditLogModel: new AuditLogModel() }),
+    deletionLog,
   });
 }
 
@@ -162,7 +172,7 @@ test("delete removes every version, not just the latest", async () => {
   await service.save(fixture);
   await service.save({ ...fixture, title: "Updated title" });
 
-  await service.delete(fixture.workflow_id, ANONYMOUS_ACTOR);
+  await service.delete(fixture.workflow_id, ADMIN_ACTOR);
 
   const db = await getDb();
   const remaining = await db.collection("templates").countDocuments({ workflow_id: fixture.workflow_id });
@@ -170,29 +180,32 @@ test("delete removes every version, not just the latest", async () => {
 });
 
 test("delete records who did it, with the title the row no longer carries", async () => {
-  const service = newService();
+  const deletionLog = new DeletionLogService({ authStore: new InMemoryAuthStore() });
+  const service = newService(deletionLog);
   await service.save(fixture);
 
-  await service.delete(fixture.workflow_id, { id: "a-1", email: "admin@uni.edu", role: "admin" }, "req-4");
+  await service.delete(fixture.workflow_id, ADMIN_ACTOR, "req-4");
 
-  const db = await getDb();
-  const entries = await db.collection("audit_logs").find({ resource: "template" }).toArray();
+  const entries = await deletionLog.list(10);
   assert.equal(entries.length, 1);
   const entry = entries[0]!;
-  assert.equal(entry.resource_id, fixture.workflow_id);
-  assert.equal(entry.action, "deleted");
-  assert.equal(entry.actor.email, "admin@uni.edu");
+  assert.equal(entry.workflow_id, fixture.workflow_id);
+  assert.equal(entry.deleted_by_admin_id, ADMIN_ACTOR.id);
+  assert.equal(entry.deleted_by_username, ADMIN_ACTOR.username);
   assert.equal(entry.request_id, "req-4");
-  assert.equal(entry.snapshot.title, fixture.title);
+  assert.equal(entry.template_title, fixture.title);
+  // Confirmed AFTER the Mongo delete returns - see the ordering comment on delete().
+  assert.equal(entry.versions_removed, 1);
 });
 
 test("delete is refused while a task is still in progress on the workflow", async () => {
-  const service = newService();
+  const deletionLog = new DeletionLogService({ authStore: new InMemoryAuthStore() });
+  const service = newService(deletionLog);
   await service.save(fixture);
   await seedTask(fixture.workflow_id, "in_progress");
 
   await assert.rejects(
-    () => service.delete(fixture.workflow_id, ANONYMOUS_ACTOR),
+    () => service.delete(fixture.workflow_id, ADMIN_ACTOR),
     (err: unknown) => {
       assert.ok(err instanceof ConflictError);
       assert.match(err.message, /still in progress/);
@@ -200,10 +213,10 @@ test("delete is refused while a task is still in progress on the workflow", asyn
     },
   );
 
-  // Refused means untouched - both the template and the audit log.
+  // Refused means untouched - both the template and the deletion log.
   const db = await getDb();
   assert.equal(await db.collection("templates").countDocuments({ workflow_id: fixture.workflow_id }), 1);
-  assert.equal(await db.collection("audit_logs").countDocuments({}), 0);
+  assert.equal((await deletionLog.list(10)).length, 0);
 });
 
 test("finished tasks do not block a delete", async () => {
@@ -212,7 +225,7 @@ test("finished tasks do not block a delete", async () => {
   await seedTask(fixture.workflow_id, "completed");
   await seedTask(fixture.workflow_id, "cancelled");
 
-  await service.delete(fixture.workflow_id, ANONYMOUS_ACTOR);
+  await service.delete(fixture.workflow_id, ADMIN_ACTOR);
 
   const db = await getDb();
   assert.equal(await db.collection("templates").countDocuments({ workflow_id: fixture.workflow_id }), 0);
@@ -220,5 +233,5 @@ test("finished tasks do not block a delete", async () => {
 
 test("delete of an unknown workflow throws NotFoundError", async () => {
   const service = newService();
-  await assert.rejects(() => service.delete("does_not_exist", ANONYMOUS_ACTOR), NotFoundError);
+  await assert.rejects(() => service.delete("does_not_exist", ADMIN_ACTOR), NotFoundError);
 });

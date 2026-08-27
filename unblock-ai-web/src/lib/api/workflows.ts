@@ -1,5 +1,12 @@
 import { apiRequest } from "./client";
-import type { InstitutionType, Workflow, WorkflowSummary, WorkflowRecord, ReviewStatus } from "@/types/workflow";
+import type {
+  InstitutionType,
+  Workflow,
+  WorkflowSummary,
+  WorkflowRecord,
+  ReviewStatus,
+  TemplateDeletion,
+} from "@/types/workflow";
 
 /** `POST /workflows/extract` - compiles text WITHOUT persisting anything. */
 export interface WorkflowExtractResult {
@@ -74,4 +81,8 @@ export const workflowsApi = {
    */
   validate: (id: string, workflow: Workflow) =>
     apiRequest<ValidationResult>(`/workflows/${id}/validate`, { method: "POST", body: { workflow } }),
+
+  /** `GET /workflows/deletions` (admin-only) - the template deletion log, newest first. */
+  listDeletions: (limit?: number) =>
+    apiRequest<TemplateDeletion[]>(`/workflows/deletions${limit ? `?limit=${limit}` : ""}`),
 };

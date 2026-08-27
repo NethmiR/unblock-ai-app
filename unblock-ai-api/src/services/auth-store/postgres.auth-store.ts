@@ -1,6 +1,15 @@
 import { query } from "../../db/postgres.client.js";
 import type { IAuthStore } from "./auth-store.interface.js";
-import type { AuthAudience, AuthUserRow } from "../../lib/types/auth/auth.type.js";
+import type {
+  AuthAudience,
+  AuthUserRow,
+  TemplateDeletionInput,
+  TemplateDeletionRecord,
+} from "../../lib/types/auth/auth.type.js";
+
+const DELETION_COLUMNS = `id, workflow_id, template_title, latest_version, versions_removed,
+          institution_type, review_status, deleted_by_admin_id, deleted_by_username,
+          reason, request_id, snapshot, deleted_at`;
 
 // Frozen lookup, never string interpolation of caller input - `audience` is a
 // validated union at the type level, so this only ever resolves to one of two
@@ -52,5 +61,45 @@ export class PostgresAuthStore implements IAuthStore {
       [id, at],
     );
     return rows[0]?.failed_attempt_count ?? 0;
+  }
+
+  async recordTemplateDeletion(input: TemplateDeletionInput): Promise<TemplateDeletionRecord> {
+    const rows = await query<TemplateDeletionRecord>(
+      `INSERT INTO template_deletions
+         (workflow_id, template_title, latest_version, institution_type, review_status,
+          deleted_by_admin_id, deleted_by_username, reason, request_id, snapshot)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING ${DELETION_COLUMNS}`,
+      [
+        input.workflow_id,
+        input.template_title,
+        input.latest_version,
+        input.institution_type,
+        input.review_status,
+        input.admin_id,
+        input.admin_username,
+        input.reason,
+        input.request_id,
+        JSON.stringify(input.snapshot),
+      ],
+    );
+    return rows[0]!;
+  }
+
+  async markDeletionCompleted(id: string, versionsRemoved: number): Promise<void> {
+    await query(`UPDATE template_deletions SET versions_removed = $2 WHERE id = $1`, [id, versionsRemoved]);
+  }
+
+  async listTemplateDeletions(limit: number, workflowId?: string): Promise<TemplateDeletionRecord[]> {
+    if (workflowId) {
+      return query<TemplateDeletionRecord>(
+        `SELECT ${DELETION_COLUMNS} FROM template_deletions WHERE workflow_id = $1 ORDER BY deleted_at DESC LIMIT $2`,
+        [workflowId, limit],
+      );
+    }
+    return query<TemplateDeletionRecord>(
+      `SELECT ${DELETION_COLUMNS} FROM template_deletions ORDER BY deleted_at DESC LIMIT $1`,
+      [limit],
+    );
   }
 }

@@ -15,6 +15,7 @@ import { ExtractionService } from "./services/extraction.service.js";
 import { DraftService } from "./services/draft.service.js";
 import { WorkflowService } from "./services/workflow.service.js";
 import { AuditService } from "./services/audit.service.js";
+import { DeletionLogService } from "./services/deletion-log.service.js";
 import { createVectorStore } from "./services/vector-store/index.vector-store.js";
 import { RetrievalService } from "./services/retrieval.service.js";
 import { SelectorService } from "./services/selector.service.js";
@@ -47,12 +48,17 @@ async function main(): Promise<void> {
   const validationService = new ValidationService();
   const extractionService = new ExtractionService({ validationService });
   const draftService = new DraftService({ draftModel });
+
+  const authStore = createAuthStore(config.auth.storeBackend);
+  const authService = new AuthService({ authStore, config });
+  const deletionLogService = new DeletionLogService({ authStore });
+
   const workflowService = new WorkflowService({
     templateModel,
     embeddingService,
     validationService,
     taskModel,
-    auditService,
+    deletionLog: deletionLogService,
   });
 
   const vectorStore = createVectorStore(config.retrieval.vectorBackend, {
@@ -91,9 +97,6 @@ async function main(): Promise<void> {
     taskService,
     config,
   });
-
-  const authStore = createAuthStore(config.auth.storeBackend);
-  const authService = new AuthService({ authStore, config });
 
   const controllers = {
     healthController: new HealthController(),
