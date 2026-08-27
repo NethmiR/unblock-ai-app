@@ -5,6 +5,7 @@ import { DraftController } from "../../src/controllers/draft.controller.js";
 import { SelectionController } from "../../src/controllers/selection.controller.js";
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { ApprovalController } from "../../src/controllers/approval.controller.js";
+import type { AuthController } from "../../src/controllers/auth.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { NotFoundError } from "../../src/errors/not-found.error.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
@@ -87,6 +88,7 @@ async function buildServer(approvalService: ApprovalService): Promise<TestServer
     selectionController: new SelectionController({ selectionService: {} as SelectionService }),
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: new ApprovalController({ approvalService }),
+    authController: {} as AuthController,
   };
 
   return startTestServer(controllers);

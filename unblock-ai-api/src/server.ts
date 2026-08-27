@@ -25,12 +25,15 @@ import { NotificationService } from "./services/notification.service.js";
 import { ApprovalService } from "./services/approval.service.js";
 import { createMailer } from "./services/mailer/index.mailer.js";
 import { TaskService } from "./services/task.service.js";
+import { createAuthStore } from "./services/auth-store/index.auth-store.js";
+import { AuthService } from "./services/auth.service.js";
 import { WorkflowController } from "./controllers/workflow.controller.js";
 import { DraftController } from "./controllers/draft.controller.js";
 import { SelectionController } from "./controllers/selection.controller.js";
 import { TaskController } from "./controllers/task.controller.js";
 import { ApprovalController } from "./controllers/approval.controller.js";
 import { HealthController } from "./controllers/health.controller.js";
+import { AuthController } from "./controllers/auth.controller.js";
 
 async function main(): Promise<void> {
   const draftModel = new DraftModel();
@@ -89,6 +92,9 @@ async function main(): Promise<void> {
     config,
   });
 
+  const authStore = createAuthStore(config.auth.storeBackend);
+  const authService = new AuthService({ authStore, config });
+
   const controllers = {
     healthController: new HealthController(),
     workflowController: new WorkflowController({ workflowService, extractionService, validationService, draftService }),
@@ -96,6 +102,7 @@ async function main(): Promise<void> {
     selectionController: new SelectionController({ selectionService }),
     taskController: new TaskController({ taskService }),
     approvalController: new ApprovalController({ approvalService }),
+    authController: new AuthController({ authService }),
   };
 
   await ensureIndexes();

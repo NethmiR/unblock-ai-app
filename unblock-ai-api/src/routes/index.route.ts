@@ -5,12 +5,14 @@ import { createDraftRouter } from "./draft.route.js";
 import { createSelectionRouter } from "./selection.route.js";
 import { createTaskRouter } from "./task.route.js";
 import { createApprovalRouter } from "./approval.route.js";
+import { createAuthRouter } from "./auth.route.js";
 import type { HealthController } from "../controllers/health.controller.js";
 import type { WorkflowController } from "../controllers/workflow.controller.js";
 import type { DraftController } from "../controllers/draft.controller.js";
 import type { SelectionController } from "../controllers/selection.controller.js";
 import type { TaskController } from "../controllers/task.controller.js";
 import type { ApprovalController } from "../controllers/approval.controller.js";
+import type { AuthController } from "../controllers/auth.controller.js";
 
 export interface ApiControllers {
   healthController: HealthController;
@@ -19,12 +21,14 @@ export interface ApiControllers {
   selectionController: SelectionController;
   taskController: TaskController;
   approvalController: ApprovalController;
+  authController: AuthController;
 }
 
 export function createApiRouter(controllers: ApiControllers): Router {
   const router = Router();
 
   router.use(createHealthRouter(controllers.healthController));
+  router.use(createAuthRouter(controllers.authController));
   router.use(createWorkflowRouter(controllers.workflowController));
   router.use(createDraftRouter(controllers.draftController));
   router.use(createSelectionRouter(controllers.selectionController));

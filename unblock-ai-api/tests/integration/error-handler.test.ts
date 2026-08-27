@@ -13,6 +13,7 @@ import type { DraftService } from "../../src/services/draft.service.js";
 import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { ApprovalController } from "../../src/controllers/approval.controller.js";
+import type { AuthController } from "../../src/controllers/auth.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 async function buildServer(selectionService: SelectionService): Promise<TestServer> {
@@ -32,6 +33,7 @@ async function buildServer(selectionService: SelectionService): Promise<TestServ
     selectionController: new SelectionController({ selectionService }),
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: {} as ApprovalController,
+    authController: {} as AuthController,
   };
 
   return startTestServer(controllers);

@@ -53,6 +53,13 @@ export interface MailConfig {
   tokenTtlDays: number;
 }
 
+export interface AuthConfig {
+  sessionTokenSecret: string;
+  sessionTtlHours: number;
+  maxFailedAttempts: number;
+  storeBackend: "postgres" | "memory";
+}
+
 export interface AppConfig {
   server: ServerConfig;
   db: DbConfig;
@@ -61,4 +68,5 @@ export interface AppConfig {
   azureEmbedding: AzureEmbeddingConfig;
   retrieval: RetrievalConfig;
   mail: MailConfig;
+  auth: AuthConfig;
 }

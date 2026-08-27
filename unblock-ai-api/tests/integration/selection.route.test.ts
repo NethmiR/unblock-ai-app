@@ -15,6 +15,7 @@ import type { TaskService } from "../../src/services/task.service.js";
 import type { SelectionResponseDto } from "../../src/lib/types/selection/session.type.js";
 import type { WorkflowDefinition } from "../../src/lib/types/workflow/workflow.type.js";
 import type { ApprovalController } from "../../src/controllers/approval.controller.js";
+import type { AuthController } from "../../src/controllers/auth.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 interface FakeSelectionServiceOptions {
@@ -67,6 +68,7 @@ async function buildServer(selectionService: SelectionService): Promise<TestServ
     selectionController: new SelectionController({ selectionService }),
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: {} as ApprovalController,
+    authController: {} as AuthController,
   };
 
   return startTestServer(controllers);

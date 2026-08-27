@@ -7,3 +7,5 @@ export { SelectionError } from "./selection.error.js";
 export { EmbeddingError } from "./embedding.error.js";
 export { DatabaseError } from "./database.error.js";
 export { ConfigurationError } from "./configuration.error.js";
+export { UnauthorizedError } from "./unauthorized.error.js";
+export { ForbiddenError } from "./forbidden.error.js";

@@ -18,6 +18,7 @@ import type { ExtractionService } from "../../src/services/extraction.service.js
 import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { ApprovalController } from "../../src/controllers/approval.controller.js";
+import type { AuthController } from "../../src/controllers/auth.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 const fixture = loadExpectedFixture("it_faculty_overseas_leave.json");
@@ -67,6 +68,7 @@ async function buildServer(): Promise<
     selectionController: new SelectionController({ selectionService: {} as SelectionService }),
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: {} as ApprovalController,
+    authController: {} as AuthController,
   };
 
   const server = await startTestServer(controllers);

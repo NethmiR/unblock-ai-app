@@ -8,3 +8,4 @@ export * from "./http/index.type.js";
 export * from "./task/index.type.js";
 export * from "./approval/index.type.js";
 export * from "./audit/index.type.js";
+export * from "./auth/index.type.js";

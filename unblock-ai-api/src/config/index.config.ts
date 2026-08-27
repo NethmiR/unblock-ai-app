@@ -5,6 +5,7 @@ import { azureOpenAI } from "./azure-openai.config.js";
 import { azureEmbedding } from "./azure-embedding.config.js";
 import { retrieval } from "./retrieval.config.js";
 import { mail } from "./mail.config.js";
+import { auth } from "./auth.config.js";
 import type { AppConfig } from "../lib/types/config/config.type.js";
 
 export const config: AppConfig = Object.freeze({
@@ -15,4 +16,5 @@ export const config: AppConfig = Object.freeze({
   azureEmbedding,
   retrieval,
   mail,
+  auth,
 });
