@@ -2,7 +2,6 @@
 import { useCallback, useState } from "react";
 import { selectionApi } from "@/lib/api/selection";
 import { tasksApi } from "@/lib/api/tasks";
-import { getRequesterContext, getSession } from "@/lib/auth/session";
 import { ApiError } from "@/lib/api/client";
 import type { SelectionResponse } from "@/types/selection";
 import type { Workflow } from "@/types/workflow";
@@ -20,8 +19,14 @@ export interface ChatMessage {
  * Single source of truth for: the message list, the session id, the current
  * decision, and the matched workflow. Components render this state and call
  * `send`; they never talk to the API themselves.
+ *
+ * `requesterContext` is read from the session cookie server-side and handed
+ * down as a prop from the page - `getSession()`/`getRequesterContext()` are
+ * Server Component-only (they call `next/headers` `cookies()`), so this
+ * client hook cannot call them itself. See Finding 0.4 in
+ * docs/auth-and-deletion-tracking-phase-plan.md.
  */
-export function useSelectionSession() {
+export function useSelectionSession(requesterContext?: Record<string, unknown>) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [decision, setDecision] = useState<SelectionResponse | null>(null);
@@ -108,7 +113,7 @@ export function useSelectionSession() {
       try {
         const response = sessionId
           ? await selectionApi.answer(sessionId, text)
-          : await selectionApi.start(text, getRequesterContext(getSession("requester")));
+          : await selectionApi.start(text, requesterContext);
         await handleDecision(response);
       } catch (err) {
         push({
@@ -121,7 +126,7 @@ export function useSelectionSession() {
         setIsBusy(false);
       }
     },
-    [sessionId, workflow, push, handleDecision],
+    [sessionId, workflow, push, handleDecision, requesterContext],
   );
 
   /**
