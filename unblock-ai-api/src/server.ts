@@ -107,7 +107,7 @@ async function main(): Promise<void> {
 
   await ensureIndexes();
 
-  const app = createApp(controllers);
+  const app = createApp(controllers, { authService });
   const server = app.listen(config.server.port, () => {
     logger.info(`Server listening on port ${config.server.port}`);
   });

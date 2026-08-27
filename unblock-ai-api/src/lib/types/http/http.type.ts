@@ -1,9 +1,12 @@
 import type { ReviewStatus, WorkflowDefinition } from "../workflow/workflow.type.js";
+import type { AuthUser } from "../auth/auth.type.js";
 
 declare global {
   namespace Express {
     interface Request {
       requestId: string;
+      /** Set by `authenticate` when a valid bearer token is present. */
+      user?: AuthUser;
     }
   }
 }

@@ -5,3 +5,5 @@ export { requestLogger } from "./request-logger.middleware.js";
 export { asyncHandler } from "./async-handler.middleware.js";
 export { notFound } from "./not-found.middleware.js";
 export { errorHandler } from "./error-handler.middleware.js";
+export { createAuthenticateMiddleware } from "./authenticate.middleware.js";
+export { requireAuth, requireRole } from "./require-auth.middleware.js";
