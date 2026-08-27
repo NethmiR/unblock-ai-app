@@ -28,6 +28,11 @@ export default async function AdminTemplatesPage({
   const templates = await workflowsApi.list(parseInstitutionType(institution_type));
   const isEmpty = templates.length === 0;
 
+  // Stamped once here and handed to the client tree so the relative timestamps
+  // hydrate to the same strings the server sent. `dynamic = "force-dynamic"`
+  // means this is genuinely the request time, not a build-time constant.
+  const renderedAt = new Date().toISOString();
+
   return (
     <div className="mx-auto max-w-[1100px] px-8 pb-[120px] pt-10">
       <div className="mb-7 flex items-start justify-between gap-8">
@@ -70,7 +75,7 @@ export default async function AdminTemplatesPage({
           }
         />
       ) : (
-        <TemplateFilters templates={templates} />
+        <TemplateFilters templates={templates} renderedAt={renderedAt} />
       )}
     </div>
   );

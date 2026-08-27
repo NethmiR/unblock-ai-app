@@ -31,9 +31,18 @@ export function countWords(text: string): number {
   return trimmed === "" ? 0 : trimmed.split(/\s+/).length;
 }
 
-/** "4 Aug 2026, 09:12" */
-export function formatDateTime(iso: string): string {
+/**
+ * "4 Aug 2026, 09:12".
+ *
+ * `timeZone` is REQUIRED rather than defaulted to the ambient zone. The
+ * ambient zone is UTC on the server and the viewer's zone in the browser, so
+ * letting it default silently made the output differ between the two render
+ * passes and broke hydration. Callers should use `<DateTime>`, which supplies
+ * a zone that is stable across hydration.
+ */
+export function formatDateTime(iso: string, timeZone: string): string {
   return new Date(iso).toLocaleString("en-GB", {
+    timeZone,
     day: "numeric", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });

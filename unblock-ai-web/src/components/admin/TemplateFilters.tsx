@@ -20,8 +20,16 @@ type Segment = (typeof SEGMENTS)[number];
  * keystroke would buy nothing. If the list ever outgrows the 50-row cap this
  * has to become a server query.
  */
-export function TemplateFilters({ templates }: { templates: WorkflowSummary[] }) {
+export function TemplateFilters({
+  templates,
+  renderedAt,
+}: {
+  templates: WorkflowSummary[];
+  /** ISO instant the server rendered this page - see `TemplateRow` for why. */
+  renderedAt: string;
+}) {
   const router = useRouter();
+  const now = useMemo(() => new Date(renderedAt), [renderedAt]);
   const [query, setQuery] = useState("");
   const [segment, setSegment] = useState<Segment>("All");
 
@@ -126,7 +134,12 @@ export function TemplateFilters({ templates }: { templates: WorkflowSummary[] })
           </div>
         ) : (
           visible.map((t) => (
-            <TemplateRow key={t.workflow_id} template={t} onDelete={setPendingDelete} />
+            <TemplateRow
+              key={t.workflow_id}
+              template={t}
+              now={now}
+              onDelete={setPendingDelete}
+            />
           ))
         )}
       </div>

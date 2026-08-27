@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { TaskPlanPanel } from "@/components/portal/TaskPlanPanel";
 import { RequirementDialog } from "@/components/portal/RequirementDialog";
 import { DeleteRequestDialog } from "@/components/portal/DeleteRequestDialog";
-import { formatDateTime } from "@/lib/utils/format";
+import { DateTime } from "@/components/ui/DateTime";
 import { tasksApi } from "@/lib/api/tasks";
 import { ApiError } from "@/lib/api/client";
 import { DELETABLE, STATUS_LABEL, STATUS_TONE } from "@/components/portal/JobRow";
@@ -272,7 +272,9 @@ export function JobStatusView({
                   {entry.outcome && <span className="text-muted"> — {entry.outcome}</span>}
                   {entry.reason && <p className="mt-1 text-[13px] text-muted">{entry.reason}</p>}
                 </div>
-                <div className="flex-none text-[12.5px] text-faint">{formatDateTime(entry.at)}</div>
+                <div className="flex-none text-[12.5px] text-faint">
+                  <DateTime iso={entry.at} />
+                </div>
               </div>
             ))}
           </div>

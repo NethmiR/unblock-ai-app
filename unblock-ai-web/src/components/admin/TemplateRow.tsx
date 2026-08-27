@@ -13,12 +13,22 @@ import type { WorkflowSummary } from "@/types/workflow";
  * an anchor is invalid HTML and gets the click semantics wrong. The link is
  * stretched over the row with an inset overlay instead, so the whole row still
  * navigates while the button keeps its own hit area.
+ *
+ * `now` is a PROP, not a `new Date()` read inside this component. This is a
+ * client component, so it renders twice - once on the server into the HTML,
+ * once again during hydration - and React requires the two to produce identical
+ * text. Reading the clock in each render makes the output drift between them,
+ * which flips a row sitting near a bucket edge from "1 week ago" to "2 weeks
+ * ago" and throws a hydration error. Threading one server-render timestamp
+ * through makes both passes agree.
  */
 export function TemplateRow({
   template,
+  now,
   onDelete,
 }: {
   template: WorkflowSummary;
+  now: Date;
   onDelete: (template: WorkflowSummary) => void;
 }) {
   const isDraft = template.review_status !== "confirmed";
@@ -43,7 +53,7 @@ export function TemplateRow({
           the workflow's scope rather than inventing a column. */}
       <div className="pointer-events-none relative text-xs text-muted">—</div>
       <div className="pointer-events-none relative text-right text-xs text-muted">
-        {relativeTime(template.updated_at)}
+        {relativeTime(template.updated_at, now)}
       </div>
       <div className="pointer-events-none relative text-right text-sm text-muted">→</div>
 

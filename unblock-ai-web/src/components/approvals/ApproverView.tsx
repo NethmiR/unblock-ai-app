@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ApproverList } from "@/components/approvals/ApproverList";
 import { ReasonDialog } from "@/components/approvals/ReasonDialog";
-import { formatDateTime } from "@/lib/utils/format";
+import { DateTime } from "@/components/ui/DateTime";
 import { approvalsApi } from "@/lib/api/approvals";
 import { classifySubmitError } from "@/lib/utils/submit-error";
 import type { ApproverViewDto } from "@/types/approval";
@@ -137,9 +137,15 @@ export function ApproverView({ token, initialView: view }: { token: string; init
                 </Badge>
               )}
               <p className="text-[14.5px] text-ink">
-                {result
-                  ? "Your decision has been recorded."
-                  : `This step was already decided${view.decided_at ? ` on ${formatDateTime(view.decided_at)}` : ""}.`}
+                {result ? (
+                  "Your decision has been recorded."
+                ) : view.decided_at ? (
+                  <>
+                    This step was already decided on <DateTime iso={view.decided_at} />.
+                  </>
+                ) : (
+                  "This step was already decided."
+                )}
               </p>
               {result && (result.completed || result.terminated) && (
                 <p className="mt-2 text-[13.5px] text-muted">
