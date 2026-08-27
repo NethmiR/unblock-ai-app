@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const ASSET_DIRS: readonly string[] = ["src/data/samples"];
+const ASSET_DIRS: readonly string[] = ["src/data/samples", "src/db/migrations"];
 
 function copyAssetDir(relativeDir: string): void {
   const source = path.join(projectRoot, relativeDir);

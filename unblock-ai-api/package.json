@@ -15,6 +15,8 @@
     "test": "node --import tsx --test \"tests/unit/**/*.test.ts\" \"tests/integration/**/*.test.ts\"",
     "test:live": "node --import tsx --test \"tests/live/**/*.test.ts\"",
     "init-db": "tsx scripts/init-db.script.ts",
+    "migrate:pg": "tsx scripts/migrate-postgres.script.ts",
+    "seed:auth": "tsx scripts/seed-auth.script.ts",
     "backfill:summaries": "tsx scripts/backfill-summaries.script.ts",
     "evaluate:selection": "tsx scripts/evaluate-selection.script.ts",
     "smoke-test:azure": "tsx scripts/smoke-test-azure.script.ts",
