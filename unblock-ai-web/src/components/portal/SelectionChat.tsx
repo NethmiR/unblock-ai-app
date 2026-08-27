@@ -16,7 +16,7 @@ interface Props {
 }
 
 /**
- * The 40%-width chat pane.
+ * The full-width chat pane.
  *
  * Presentational only - all conversational state lives in useSelectionSession.
  * The one piece of judgment this component makes: a quick-reply click on a
@@ -58,7 +58,7 @@ export function SelectionChat({
   const isLastMessage = (i: number) => i === messages.length - 1;
 
   return (
-    <div className="flex min-w-0 flex-[0_0_40%] flex-col overflow-hidden rounded-card border border-line bg-surface shadow-sm">
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface shadow-sm">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-[26px] py-7">
         {!hasStarted ? (
           <div className="flex h-full flex-col items-center justify-center px-3 text-center">

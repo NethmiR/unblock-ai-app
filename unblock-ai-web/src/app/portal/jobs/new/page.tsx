@@ -2,7 +2,6 @@
 import { useRouter } from "next/navigation";
 import { useSelectionSession } from "@/lib/hooks/useSelectionSession";
 import { SelectionChat } from "@/components/portal/SelectionChat";
-import { PlanPanel } from "@/components/portal/PlanPanel";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import Link from "next/link";
 
@@ -57,7 +56,7 @@ export default function NewJobPage() {
         </h1>
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-[22px]">
+      <div className="flex min-h-0 flex-1">
         <SelectionChat
           messages={messages}
           decision={decision}
@@ -67,13 +66,6 @@ export default function NewJobPage() {
           onSend={send}
           onChoose={choose}
         />
-        {/*
-          The panel stays empty for the whole of this page's life - confirming
-          navigates away rather than compiling a plan here. It is kept as the
-          right-hand half of the layout, explaining what will be mapped out
-          once a process is found.
-        */}
-        <PlanPanel />
       </div>
 
       {/*

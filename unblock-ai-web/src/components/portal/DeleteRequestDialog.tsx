@@ -6,14 +6,16 @@ import type { TaskStatus } from "@/types/task";
 /**
  * The requester's counterpart to the admin's DeleteTemplateDialog.
  *
- * Two stages, but the first one is CONDITIONAL: a request that ran to
- * completion is finished business and needs no extra warning, while one that
- * was rejected or cancelled never finished, so it gets an explicit "this was
- * never completed" question before the typing gate. Both paths end at the same
- * type-to-confirm step - the word, and only the word, per the portal's simpler
- * bar than the admin's word-plus-title.
+ * Two stages. The first one always asks the plain yes/no question - nobody
+ * should meet a type-to-confirm box before they have said they want to delete
+ * anything at all, least of all on a page that opens the prompt by itself. Its
+ * WORDING is what varies: an approved request is finished business being
+ * cleared away, while a rejected or cancelled one never finished, so each is
+ * named for what it is. Both paths end at the same type-to-confirm step - the
+ * word, and only the word, per the portal's simpler bar than the admin's
+ * word-plus-title.
  */
-type Stage = "warn-incomplete" | "type-to-confirm";
+type Stage = "confirm-intent" | "type-to-confirm";
 
 /** Case- and whitespace-insensitive, mirroring the admin dialog's comparison. */
 const normalise = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
@@ -31,7 +33,7 @@ export function DeleteRequestDialog({
   reference: string;
   /** The template this request was raised from. */
   title: string;
-  /** Only terminal statuses reach here; `completed` skips the warning stage. */
+  /** Only terminal statuses reach here; each gets its own first-stage wording. */
   status: TaskStatus;
   busy: boolean;
   error: string | null;
@@ -39,7 +41,7 @@ export function DeleteRequestDialog({
   onCancel: () => void;
 }) {
   const isCompleted = status === "completed";
-  const [stage, setStage] = useState<Stage>(isCompleted ? "type-to-confirm" : "warn-incomplete");
+  const [stage, setStage] = useState<Stage>("confirm-intent");
   const [word, setWord] = useState("");
   const wordRef = useRef<HTMLInputElement>(null);
 
@@ -47,10 +49,10 @@ export function DeleteRequestDialog({
     if (stage === "type-to-confirm") wordRef.current?.focus();
   }, [stage]);
 
-  if (stage === "warn-incomplete") {
+  if (stage === "confirm-intent") {
     return (
       <ConfirmDialog
-        title="This request was never completed"
+        title={isCompleted ? "This request is already approved" : "This request was never completed"}
         confirmLabel="Yes, delete it"
         cancelLabel="No, keep it"
         tone="danger"
@@ -58,9 +60,10 @@ export function DeleteRequestDialog({
         onCancel={onCancel}
       >
         <p>
-          <span className="font-semibold text-ink">{reference}</span> ({title}) was{" "}
-          {status === "rejected" ? "rejected" : "cancelled"} rather than completed. Are you sure you
-          want to delete it?
+          <span className="font-semibold text-ink">{reference}</span> ({title}){" "}
+          {isCompleted
+            ? "was approved and completed. Do you want to delete it from your requests?"
+            : `was ${status === "rejected" ? "rejected" : "cancelled"} rather than completed. Are you sure you want to delete it?`}
         </p>
       </ConfirmDialog>
     );
