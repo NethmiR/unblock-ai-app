@@ -18,6 +18,7 @@ export function createWorkflowRouter(controller: WorkflowController): Router {
   router.post("/workflows/:id/validate", admin, asyncHandler(controller.validate));
   router.get("/workflows/:id/record", auth, asyncHandler(controller.getRecord));
   router.patch("/workflows/:id/review", admin, asyncHandler(controller.setReviewStatus));
+  router.patch("/workflows/:id/title", admin, asyncHandler(controller.rename));
   router.delete("/workflows/:id", admin, asyncHandler(controller.remove));
 
   return router;

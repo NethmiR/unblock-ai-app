@@ -10,10 +10,14 @@ import { logger } from "../utils/shared/logger.util.js";
 import { REVIEW_STATUS, TASK_STATUS } from "../data/constants/status.constant.js";
 import { NotFoundError } from "../errors/not-found.error.js";
 import { ConflictError } from "../errors/conflict.error.js";
+import { ValidationError } from "../errors/validation.error.js";
 import type { ReviewStatus, WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
 import type { SaveResult, TemplateDocument, TemplateSummary } from "../lib/types/template/template.type.js";
 import type { AuthUser, TemplateDeletionRecord } from "../lib/types/auth/auth.type.js";
 import type { TaskStatus } from "../lib/types/task/task.type.js";
+
+/** Long enough for a real institutional process name, short enough to stay a title. */
+export const MAX_TITLE_LENGTH = 200;
 
 export interface WorkflowServiceOptions {
   templateModel: TemplateModel;
@@ -93,6 +97,56 @@ export class WorkflowService {
 
   update(workflowId: string, workflow: WorkflowDefinition, options: SaveOptions = {}): Promise<SaveResult> {
     return this.save({ ...workflow, workflow_id: workflowId }, options);
+  }
+
+  /**
+   * Renames a template WITHOUT recompiling it.
+   *
+   * No re-extraction is needed: `title` is a leaf field of the compiled
+   * document, so every step, condition, and actor the last compilation produced
+   * is still exactly right. Two things do have to happen, and neither is
+   * optional:
+   *
+   * - **Re-embed.** `renderForEmbedding` opens the embedded text with the
+   *   title, so the stored vector goes stale the instant the title moves. Skip
+   *   this and retrieval keeps matching requesters against the old name.
+   * - **Stay on the same version.** Versions record compilations of the prose;
+   *   forking one for a rename would make the version number stop meaning that.
+   *
+   * `workflow_id` is deliberately left alone. Tasks reference it, so a rename
+   * must never orphan a request that is already in flight.
+   *
+   * What this canNOT fix is the rest of the retrieval summary: `aliases` and
+   * `keywords` were written by the model from the draft prose and may still
+   * name the old process. Renaming to something genuinely different is a cue to
+   * edit the prose and regenerate - the admin editor says so after a rename.
+   */
+  async rename(workflowId: string, title: string, version?: number): Promise<TemplateSummary> {
+    const record = await this.getRecord(workflowId, version);
+
+    // A title is one line wherever it is shown - the editor heading, the list,
+    // the delete confirmation. Normalise here too so a direct API call cannot
+    // store a newline that only that one caller knows about.
+    const next = title.trim().replace(/\s+/g, " ");
+    if (!next) throw new ValidationError("Template title cannot be empty");
+    if (next.length > MAX_TITLE_LENGTH) {
+      throw new ValidationError(`Template title must be ${MAX_TITLE_LENGTH} characters or fewer`);
+    }
+    if (next === record.title) return serializeTemplateSummary(record);
+
+    const document = { ...record.document, title: next };
+    const text = renderForEmbedding(document);
+    const embedding = await this.embeddingService.embedDocument(text);
+
+    const updated = await this.templateModel.updateTitle(workflowId, record.version, next, {
+      text,
+      embedding,
+      ...this.embeddingService.metadata(),
+    });
+    if (!updated) throw NotFoundError.of("Workflow", workflowId);
+
+    logger.info("template renamed", { workflowId, version: record.version, title: next });
+    return serializeTemplateSummary(updated);
   }
 
   async getDocument(workflowId: string, version?: number): Promise<WorkflowDefinition> {

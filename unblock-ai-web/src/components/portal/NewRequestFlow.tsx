@@ -48,7 +48,7 @@ export function NewRequestFlow({ requesterContext }: Props) {
   }
 
   return (
-    <div className="mx-auto flex h-screen max-w-[1440px] flex-col px-16 pb-7 pt-9">
+    <div className="mx-auto flex h-[calc(100vh-60px)] max-w-[1440px] flex-col px-16 pb-7 pt-9">
       <Link
         href="/portal"
         className="mb-6 flex flex-none items-center gap-2.5 self-start text-[14.5px] font-medium text-muted transition-colors hover:text-ink"

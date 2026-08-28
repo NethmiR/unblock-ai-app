@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth/session";
-import { SignOutButton } from "./SignOutButton";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 
 export async function TopBar() {
   const session = await getSession();
@@ -35,7 +35,7 @@ export async function TopBar() {
             <span className="text-[10.5px] text-muted">{session?.user.department ?? ""} · Admin</span>
           </div>
         </div>
-        <SignOutButton />
+        <SignOutButton redirectTo="/login" />
       </div>
     </header>
   );

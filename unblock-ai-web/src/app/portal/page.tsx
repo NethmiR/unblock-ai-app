@@ -28,9 +28,6 @@ export default async function JobsPage() {
     <div className="mx-auto max-w-[1440px] px-16 pb-[120px] pt-14">
       <div className="mb-10 flex items-start justify-between gap-8">
         <div>
-          <div className="mb-2.5 text-xs font-medium uppercase tracking-[.14em] text-muted">
-            Unblock AI
-          </div>
           <h1 className="text-3xl font-semibold tracking-tight">My Requests</h1>
           <p className="mt-2 max-w-[52ch] text-[15px] text-muted">
             View and track all your requests.

@@ -112,6 +112,21 @@ export class FakeTemplateModel {
     return Promise.resolve(match);
   }
 
+  updateTitle(
+    workflowId: string,
+    version: number,
+    title: string,
+    retrieval: { text: string; embedding: number[]; model: string; dim: number; embedded_at: string },
+  ): Promise<TemplateDocument | null> {
+    const match = this.templates.find((t) => t.workflow_id === workflowId && t.version === Number(version));
+    if (!match) return Promise.resolve(null);
+    match.title = title;
+    match.document = { ...match.document, title };
+    match.retrieval = { ...match.retrieval, ...retrieval };
+    match.updated_at = new Date();
+    return Promise.resolve(match);
+  }
+
   deleteAllVersions(workflowId: string): Promise<number> {
     let removed = 0;
     for (let i = this.templates.length - 1; i >= 0; i -= 1) {

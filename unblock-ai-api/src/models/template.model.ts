@@ -4,7 +4,7 @@ import { COLLECTIONS } from "../data/constants/collection.constant.js";
 import { REVIEW_STATUS } from "../data/constants/status.constant.js";
 import { DatabaseError } from "../errors/database.error.js";
 import type { ReviewStatus } from "../lib/types/workflow/workflow.type.js";
-import type { RetrievalProjection, TemplateDocument } from "../lib/types/template/template.type.js";
+import type { RetrievalProjection, TemplateDocument, TemplateRetrieval } from "../lib/types/template/template.type.js";
 
 export interface AtlasSearchRow {
   workflow_id: string;
@@ -112,6 +112,46 @@ export class TemplateModel {
       );
     } catch (err) {
       throw new DatabaseError("Failed to update template review status", { cause: err });
+    }
+  }
+
+  /**
+   * Renames one version of a template IN PLACE, re-writing the embedded
+   * retrieval text in the same update.
+   *
+   * A rename is not a new version - see `WorkflowService.rename` for why - so
+   * this deliberately does not go through insert-and-demote. The title lives in
+   * three places (`title`, `document.title`, and the head of `retrieval.text`),
+   * and one `$set` is the only way to move all three without ever leaving a row
+   * whose vector matches a name it no longer has. `workflow_id` is untouched:
+   * tasks reference it.
+   */
+  async updateTitle(
+    workflowId: string,
+    version: number,
+    title: string,
+    retrieval: Omit<TemplateRetrieval, "aliases_lower">,
+  ): Promise<TemplateDocument | null> {
+    try {
+      const templates = await this.collection();
+      return await templates.findOneAndUpdate(
+        { workflow_id: workflowId, version: Number(version) },
+        {
+          $set: {
+            title,
+            "document.title": title,
+            "retrieval.text": retrieval.text,
+            "retrieval.embedding": retrieval.embedding,
+            "retrieval.model": retrieval.model,
+            "retrieval.dim": retrieval.dim,
+            "retrieval.embedded_at": retrieval.embedded_at,
+            updated_at: new Date(),
+          },
+        },
+        { returnDocument: "after" },
+      );
+    } catch (err) {
+      throw new DatabaseError("Failed to rename template", { cause: err });
     }
   }
 

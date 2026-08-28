@@ -40,6 +40,17 @@ export const workflowsApi = {
   getRecord: (id: string, version?: number) =>
     apiRequest<WorkflowRecord>(`/workflows/${id}/record${version !== undefined ? `?version=${version}` : ""}`),
 
+  /**
+   * Renames a template IN PLACE - no new version, and `workflow_id` never
+   * moves. The API re-embeds the row so retrieval follows the new name; see
+   * `WorkflowService.rename` in the API for what a rename does not fix.
+   */
+  rename: (id: string, title: string, version?: number) =>
+    apiRequest<WorkflowSummary>(`/workflows/${id}/title`, {
+      method: "PATCH",
+      body: { title, version },
+    }),
+
   setReviewStatus: (id: string, reviewStatus: ReviewStatus, version?: number) =>
     apiRequest<WorkflowSummary>(`/workflows/${id}/review`, {
       method: "PATCH",

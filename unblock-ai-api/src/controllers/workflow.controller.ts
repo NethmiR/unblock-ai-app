@@ -70,6 +70,21 @@ export class WorkflowController {
     res.json(result);
   };
 
+  /**
+   * `PATCH /workflows/:id/title` - renames a template in place.
+   *
+   * Deliberately not `PUT /workflows/:id`: that saves a whole NEW version from
+   * a client-supplied document, which is the wrong shape for a one-field edit
+   * that changes nothing about how the workflow runs. See
+   * `WorkflowService.rename` for what a rename does and does not touch.
+   */
+  rename = async (req: Request, res: Response): Promise<void> => {
+    const title = requireNonEmptyString(req.body, "title");
+    const version = optionalPositiveInt(req.body.version, "version");
+    const summary = await this.workflowService.rename(req.params.id as string, title, version);
+    res.json(summary);
+  };
+
   validate = async (req: Request, res: Response): Promise<void> => {
     const workflow = requireObject<WorkflowDefinition>(req.body, "workflow");
     const errors = this.validationService.validate(workflow);

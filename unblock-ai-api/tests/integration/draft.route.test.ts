@@ -16,7 +16,12 @@ import type { ApprovalController } from "../../src/controllers/approval.controll
 import type { AuthController } from "../../src/controllers/auth.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
-async function buildServer(): Promise<TestServer> {
+interface BuildOptions {
+  extractionService?: ExtractionService;
+  workflowService?: WorkflowService;
+}
+
+async function buildServer(options: BuildOptions = {}): Promise<TestServer> {
   const draftModel = new FakeDraftModel();
   const draftService = new DraftService({
     draftModel: draftModel as unknown as ConstructorParameters<typeof DraftService>[0]["draftModel"],
@@ -32,8 +37,8 @@ async function buildServer(): Promise<TestServer> {
     }),
     draftController: new DraftController({
       draftService,
-      extractionService: {} as ExtractionService,
-      workflowService: {} as WorkflowService,
+      extractionService: options.extractionService ?? ({} as ExtractionService),
+      workflowService: options.workflowService ?? ({} as WorkflowService),
     }),
     selectionController: new SelectionController({ selectionService: {} as SelectionService }),
     taskController: new TaskController({ taskService: {} as TaskService }),
@@ -88,6 +93,91 @@ test("GET /api/drafts/:id returns 404 for an unknown draft", async () => {
       headers: adminAuthHeader(),
     });
     assert.equal(res.status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+/**
+ * The rename guard: an admin who renamed a template through
+ * `PATCH /workflows/:id/title` then edits the prose and regenerates. Without
+ * the override the model's freshly-invented title wins and the rename is gone,
+ * with nothing on screen to say it happened.
+ */
+test("POST /api/drafts/:id/extract applies the caller's title over the extracted one", async () => {
+  const extracted = {
+    workflow_id: "overseas_leave",
+    title: "Title The Model Invented",
+    metadata: { review_status: "confirmed" },
+  };
+  const saved: Array<{ title: string }> = [];
+
+  const server = await buildServer({
+    extractionService: {
+      extract: () => Promise.resolve({ workflow: structuredClone(extracted), attempts: 1 }),
+    } as unknown as ExtractionService,
+    workflowService: {
+      save: (workflow: { title: string }) => {
+        saved.push({ title: workflow.title });
+        return Promise.resolve({ id: "overseas_leave", version: 2 });
+      },
+    } as unknown as WorkflowService,
+  });
+
+  try {
+    const createRes = await fetch(`${server.baseUrl}/api/drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ text: "Staff must obtain approval before travelling abroad." }),
+    });
+    const created = (await createRes.json()) as { id: string };
+
+    const res = await fetch(`${server.baseUrl}/api/drafts/${created.id}/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ title: "  Overseas Leave (IT Faculty)  " }),
+    });
+    assert.equal(res.status, 201);
+
+    const body = (await res.json()) as { workflow: { title: string } };
+    assert.equal(body.workflow.title, "Overseas Leave (IT Faculty)");
+    assert.deepEqual(saved, [{ title: "Overseas Leave (IT Faculty)" }]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/drafts/:id/extract keeps the model's title when none is supplied", async () => {
+  const server = await buildServer({
+    extractionService: {
+      extract: () =>
+        Promise.resolve({
+          workflow: { workflow_id: "overseas_leave", title: "Title The Model Invented", metadata: {} },
+          attempts: 1,
+        }),
+    } as unknown as ExtractionService,
+    workflowService: {
+      save: () => Promise.resolve({ id: "overseas_leave", version: 1 }),
+    } as unknown as WorkflowService,
+  });
+
+  try {
+    const createRes = await fetch(`${server.baseUrl}/api/drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ text: "Staff must obtain approval before travelling abroad." }),
+    });
+    const created = (await createRes.json()) as { id: string };
+
+    const res = await fetch(`${server.baseUrl}/api/drafts/${created.id}/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 201);
+
+    const body = (await res.json()) as { workflow: { title: string } };
+    assert.equal(body.workflow.title, "Title The Model Invented");
   } finally {
     await server.close();
   }

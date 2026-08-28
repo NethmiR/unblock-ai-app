@@ -45,11 +45,23 @@ export class DraftController {
     res.json(serializeDraft(draft));
   };
 
+  /**
+   * `POST /drafts/:id/extract` - compile the draft's prose into a workflow.
+   *
+   * An optional `title` in the body overrides the one the model infers. The
+   * admin editor always sends the title currently on screen, because without it
+   * every regeneration re-invents a title from the prose and silently reverts a
+   * rename the admin made through `PATCH /workflows/:id/title`. The override is
+   * applied after extraction and after validation: `title` is a free-form
+   * string in the schema, so substituting it cannot invalidate the document.
+   */
   extractFromDraft = async (req: Request, res: Response): Promise<void> => {
     const draft = await this.draftService.getById(req.params.id as string);
+    const titleOverride = optionalString(req.body, "title")?.trim();
 
     try {
-      const { workflow, attempts } = await this.extractionService.extract(draft.raw_text);
+      const { workflow: extracted, attempts } = await this.extractionService.extract(draft.raw_text);
+      const workflow = titleOverride ? { ...extracted, title: titleOverride } : extracted;
       const saved = await this.workflowService.save(workflow, { draftId: draft._id });
       await this.draftService.markExtracted(draft._id, workflow.workflow_id);
 

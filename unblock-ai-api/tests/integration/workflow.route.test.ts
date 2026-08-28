@@ -347,6 +347,76 @@ test("GET /api/workflows/:id/record still opens when draft_id points at a delete
   }
 });
 
+test("PATCH /api/workflows/:id/title renames in place without forking a version", async () => {
+  const server = await buildServer();
+  try {
+    await fetch(`${server.baseUrl}/api/workflows`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ workflow: fixture }),
+    });
+
+    const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/title`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ title: "  Overseas Leave (IT Faculty)  " }),
+    });
+    assert.equal(res.status, 200);
+
+    const body = (await res.json()) as { title: string; version: number; workflow_id: string };
+    assert.equal(body.title, "Overseas Leave (IT Faculty)");
+    assert.equal(body.workflow_id, fixture.workflow_id, "renaming must never move the workflow_id");
+    assert.equal(body.version, 1, "a rename is not a new compilation");
+    assert.equal(server.templateModel.templates.length, 1);
+
+    // The title lives in three places; all three must move together, or search
+    // keeps matching requesters against the name the admin just removed.
+    const stored = server.templateModel.templates[0]!;
+    assert.equal(stored.title, "Overseas Leave (IT Faculty)");
+    assert.equal(stored.document.title, "Overseas Leave (IT Faculty)");
+    assert.ok(
+      stored.retrieval.text.startsWith("Overseas Leave (IT Faculty)"),
+      "retrieval text must be re-rendered from the new title",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("PATCH /api/workflows/:id/title rejects a blank title", async () => {
+  const server = await buildServer();
+  try {
+    await fetch(`${server.baseUrl}/api/workflows`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ workflow: fixture }),
+    });
+
+    const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/title`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ title: "   " }),
+    });
+    assert.equal(res.status, 400);
+  } finally {
+    await server.close();
+  }
+});
+
+test("PATCH /api/workflows/:id/title returns 404 for an unknown workflow", async () => {
+  const server = await buildServer();
+  try {
+    const res = await fetch(`${server.baseUrl}/api/workflows/does_not_exist/title`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ title: "Anything" }),
+    });
+    assert.equal(res.status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
 test("PATCH /api/workflows/:id/review rejects an invalid review_status", async () => {
   const server = await buildServer();
   try {
