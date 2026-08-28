@@ -1,6 +1,7 @@
 import type { ObjectId } from "mongodb";
 import type { PersonValue, RequirementValue, TaskRequirement } from "./requirement.type.js";
 import type { StepDependency } from "../workflow/step.type.js";
+import type { CompletionDocumentRecord } from "../document/document.type.js";
 
 export type TaskStatus =
   | "collecting"
@@ -54,6 +55,7 @@ export interface TaskDocument {
   values: Record<string, RequirementValue>;
   steps: TaskStepState[];
   audit: TaskAuditEntry[];
+  completion_document: CompletionDocumentRecord | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -69,6 +71,7 @@ export interface TaskDto {
   values: Record<string, RequirementValue>;
   steps: TaskStepState[];
   audit: TaskAuditEntry[];
+  completion_document: CompletionDocumentRecord | null;
   created_at: Date;
   updated_at: Date;
 }

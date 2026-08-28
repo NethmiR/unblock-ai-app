@@ -42,6 +42,7 @@ function baseTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
     values: {},
     steps: [],
     audit: [],
+    completion_document: null,
     created_at: now,
     updated_at: now,
     ...overrides,

@@ -66,6 +66,7 @@ function finalizedTask(workflow: WorkflowDefinition, overrides: Partial<TaskDocu
     values: {},
     steps: seeded,
     audit: [],
+    completion_document: null,
     created_at: now,
     updated_at: now,
     ...overrides,

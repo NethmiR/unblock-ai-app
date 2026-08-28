@@ -29,6 +29,17 @@ export function parseNumber(
   return parsed;
 }
 
+export function parseBoolean(
+  name: string,
+  raw: string | undefined,
+  fallback: boolean,
+): boolean {
+  if (raw === undefined || raw === "") return fallback;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new ConfigurationError(`Environment variable ${name} must be "true" or "false", got: ${raw}`);
+}
+
 export function parseEnum<T extends string>(
   name: string,
   raw: string | undefined,

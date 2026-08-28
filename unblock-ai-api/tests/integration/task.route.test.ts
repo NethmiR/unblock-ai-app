@@ -31,6 +31,7 @@ function fakeTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
     values: {},
     steps: [],
     audit: [],
+    completion_document: null,
     created_at: new Date(),
     updated_at: new Date(),
     ...overrides,

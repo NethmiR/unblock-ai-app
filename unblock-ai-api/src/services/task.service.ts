@@ -81,6 +81,7 @@ export class TaskService {
       values: {},
       steps,
       audit: [{ type: "task_created", detail: null, created_at: now }],
+      completion_document: null,
       created_at: now,
       updated_at: now,
     });
