@@ -117,16 +117,17 @@ only affects browsers; Postman ignores it.
 | 29 | `PATCH` | `/api/tasks/:id/status`                | Cancel a task | `requireAuth()` |
 | 30 | `POST`  | `/api/tasks/:id/start`                 | Start the approval chain — dispatches the first step(s) and sends email | `requireAuth()` |
 | 31 | `GET`   | `/api/tasks/:id/status`                | Requester-facing status timeline | `requireAuth()` |
-| 32 | `GET`   | `/api/approvals/:token`                | Approver view — the decision page's data | none — the approval token IS the auth |
-| 33 | `POST`  | `/api/approvals/:token/decision`       | Submit an approve / reject / request-more-info decision | none — the approval token IS the auth |
+| 32 | `GET`   | `/api/tasks/:id/document`              | Download the completion-document PDF record (§7.10) | `requireAuth()` |
+| 33 | `GET`   | `/api/approvals/:token`                | Approver view — the decision page's data | none — the approval token IS the auth |
+| 34 | `POST`  | `/api/approvals/:token/decision`       | Submit an approve / reject / request-more-info decision | none — the approval token IS the auth |
 
-33 total route bindings. `admin` means `requireRole("admin")` — a `portal`
+34 total route bindings. `admin` means `requireRole("admin")` — a `portal`
 token gets `403`, no token gets `401`. `requireAuth()` accepts either
 audience. See §1 for what each guard means in practice.
 
-> `GET /api/tasks/:id/status` is registered **before** the bare `GET
-> /api/tasks/:id` pattern in `task.route.ts`, so `status` is never swallowed as an
-> `:id` value.
+> `GET /api/tasks/:id/status` and `GET /api/tasks/:id/document` are both
+> registered **before** the bare `GET /api/tasks/:id` pattern in
+> `task.route.ts`, so neither suffix is ever swallowed as an `:id` value.
 
 ---
 
@@ -1363,6 +1364,54 @@ their request, **where**, and **why**. On any other status they are all `null`.
 
 ---
 
+### 7.10 `GET /api/tasks/:id/document`
+
+Downloads a PDF record of the whole completed request — every value the requester
+supplied, in the order the workflow template declares it, followed by the approval
+trail (who approved each step, their designation, and their email address). The same
+record is emailed as an attachment on the completion notice sent when the last
+required step is approved (§8.2); this endpoint exists so a lost or never-sent
+attachment is not a lost document.
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `id`      | path | yes      | Task id |
+
+**200 OK** — binary body, not JSON:
+
+```
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="TASK-2026-00042-record.pdf"
+Content-Length: 48213
+```
+
+The task is **immutable** once completed and its workflow is **version-pinned**
+(`task.workflow_id` + `task.version`), so the document is regenerated on every
+request rather than stored — this route is a pure function of data that already
+exists. A task that completed before this feature existed, or whose generation
+failed at completion time, has `completion_document: null`; this route generates
+one on the fly and backfills it rather than erroring. If a fresh render's hash
+differs from a previously stored one (a code change to the builder or layout since
+the record was issued), the drift is logged as a warning and the fresh copy is
+served anyway — the stored `sha256` exists to make that drift visible, not to block
+the download.
+
+**Errors**
+
+| Status | Cause |
+| ------ | ----- |
+| `404`  | Unknown task id — same shape as §7.2 |
+| `409`  | `{ "error": "A record is only issued once every step is approved", "code": "CONFLICT", "details": null }` — task status is not `completed` |
+| `409`  | `{ "error": "Task '<id>' has no record available for download", "code": "CONFLICT", "details": null }` — `DOCUMENT_ENABLED=false`, or rendering failed both at completion time and again on this request |
+
+> **Feature flags.** `DOCUMENT_ENABLED` (default `true`) gates generation
+> entirely; `DOCUMENT_ATTACH_TO_EMAIL` (default `true`) controls only whether the
+> completion email carries the PDF as an attachment — this download route is
+> unaffected by it. See [../guides/configuration.md](../guides/configuration.md)
+> for the full `DOCUMENT_*` list.
+
+---
+
 ## 8. Approval endpoints (approver decision path)
 
 Token-authenticated, not session-authenticated — a different mechanism from the rest
@@ -1508,7 +1557,7 @@ hierarchy) instead of maintaining a separate status lookup table:
 | `502`  | `{ "error", "code": "SELECTION_ERROR" \| "EMBEDDING_ERROR", "details": <cause\|null> }` | `SelectionError`, `EmbeddingError` — upstream Azure failure |
 
 `ConflictError` also covers the task status-machine rejections in §7 (§7.1, §7.5,
-§7.6, §7.7) alongside the §6.4 unmatched-session case.
+§7.6, §7.7, §7.10) alongside the §6.4 unmatched-session case.
 
 A `401`/`403` from a guarded route (see §1 and §2's Auth column) is thrown by
 the route guard itself, before the controller ever runs — so it carries no
@@ -1591,6 +1640,7 @@ Collection Runner pass needs no manual variable entry.
 | Approvals | `GET /approvals/{{approvalToken}}` | confirm `already_decided: false` and `allowed_outcomes` |
 | Approvals | `POST /approvals/{{approvalToken}}/decision` with `{"outcome":"approved"}` | confirm `status`; repeat the start→copy→get→decide loop for each subsequent step until `completed: true` |
 | Tasks | `GET /tasks/{{taskId}}/status` | confirm the timeline reflects every decision made |
+| Tasks | `GET /tasks/{{taskId}}/document` | 200, `Content-Type: application/pdf`, body starts with `%PDF-` — only once `status` is `completed` |
 | Tasks | `GET /tasks?session_id={{sessionId}}` | the task appears in the list |
 | Tasks | `PATCH /tasks/{{taskId}}/status` with `{"status":"cancelled"}` | only on a scratch task **before** `start` — this is terminal |
 | Error cases | one request per error class (400, 404, 409, 422) | asserts `{ error, code, details }` |
@@ -1710,6 +1760,13 @@ JSON) when you want a specific answer rather than a placeholder.
   `status` returns to `collecting` and a `followup:<step_id>:<n>` requirement is
   appended, answered through the existing `POST /tasks/:id/values` (§7.5). Reopens
   on the same step are capped at 3 (`reopen_count`); a 4th is a 409.
+- **The completion-document PDF is regenerated, never stored.** `GET
+  /tasks/:id/document` (§7.10) re-renders it from the task and its version-pinned
+  workflow on every call — only a small metadata record (`filename`, `byte_size`,
+  `sha256`, `emailed_to`/`emailed_at`) is persisted on the task. It 409s until
+  `status` is `completed`. The same PDF is attached to the completion email
+  (`DOCUMENT_ATTACH_TO_EMAIL`, default `true`), so this endpoint is the fallback
+  when that email or its attachment never arrived.
 
 ---
 

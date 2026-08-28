@@ -21,7 +21,8 @@
     "evaluate:selection": "tsx scripts/evaluate-selection.script.ts",
     "smoke-test:azure": "tsx scripts/smoke-test-azure.script.ts",
     "smoke-test:embeddings": "tsx scripts/smoke-test-embeddings.script.ts",
-    "smoke-test:mail": "tsx scripts/smoke-test-mail.script.ts"
+    "smoke-test:mail": "tsx scripts/smoke-test-mail.script.ts",
+    "smoke-test:document": "tsx scripts/smoke-test-document.script.ts"
   },
   "keywords": [],
   "author": "",

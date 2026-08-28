@@ -1340,6 +1340,44 @@
           ]
         },
         {
+          "name": "Get task document (PDF record)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/document",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "document"
+              ]
+            },
+            "description": "Downloads the completion-document PDF record — a re-render of every value the requester supplied plus the approval trail, regenerated on each call rather than stored. Only available once the task status is completed; run this after the approval loop below has driven the task to completed: true, or expect a 409."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 409\", function () { pm.expect([200, 409]).to.include(pm.response.code); });",
+                  "if (pm.response.code === 200) {",
+                  "    var contentType = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "    pm.test(\"content-type is a document type\", function () { pm.expect(contentType.indexOf(\"application/pdf\") === 0 || contentType.indexOf(\"text/plain\") === 0).to.be.true; });",
+                  "    pm.test(\"content-disposition names an attachment\", function () { pm.expect(pm.response.headers.get(\"Content-Disposition\")).to.include(\"attachment\"); });",
+                  "} else {",
+                  "    var json = pm.response.json();",
+                  "    pm.test(\"409 body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json.code).to.eql(\"CONFLICT\"); });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "List tasks",
           "request": {
             "method": "GET",
