@@ -6,7 +6,7 @@ import { SelectionController } from "../../src/controllers/selection.controller.
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { DraftService } from "../../src/services/draft.service.js";
-import { startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import { adminAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
 import { FakeDraftModel } from "../helpers/fake-model.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
@@ -49,7 +49,7 @@ test("POST /api/drafts rejects an empty text body", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/drafts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
       body: JSON.stringify({ text: "  " }),
     });
     assert.equal(res.status, 400);
@@ -63,7 +63,7 @@ test("POST /api/drafts creates a draft and GET /api/drafts lists it", async () =
   try {
     const createRes = await fetch(`${server.baseUrl}/api/drafts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
       body: JSON.stringify({ text: "Staff must obtain approval before travelling abroad." }),
     });
     assert.equal(createRes.status, 201);
@@ -71,7 +71,7 @@ test("POST /api/drafts creates a draft and GET /api/drafts lists it", async () =
     assert.equal(created.status, "pending");
     assert.ok(created.id);
 
-    const listRes = await fetch(`${server.baseUrl}/api/drafts`);
+    const listRes = await fetch(`${server.baseUrl}/api/drafts`, { headers: adminAuthHeader() });
     assert.equal(listRes.status, 200);
     const list = (await listRes.json()) as Array<{ id: string }>;
     assert.equal(list.length, 1);
@@ -84,7 +84,9 @@ test("POST /api/drafts creates a draft and GET /api/drafts lists it", async () =
 test("GET /api/drafts/:id returns 404 for an unknown draft", async () => {
   const server = await buildServer();
   try {
-    const res = await fetch(`${server.baseUrl}/api/drafts/64b64b64b64b64b64b64b64b`);
+    const res = await fetch(`${server.baseUrl}/api/drafts/64b64b64b64b64b64b64b64b`, {
+      headers: adminAuthHeader(),
+    });
     assert.equal(res.status, 404);
   } finally {
     await server.close();

@@ -6,7 +6,7 @@ import { SelectionController } from "../../src/controllers/selection.controller.
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
-import { startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import { portalAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { DraftService } from "../../src/services/draft.service.js";
@@ -49,7 +49,7 @@ test("a BaseError subclass responds with its own statusCode and toJSON body", as
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
       body: JSON.stringify({ query: "anything" }),
     });
     assert.equal(res.status, 400);
@@ -72,7 +72,7 @@ test("an unknown error responds 500 with a generic body and does not leak the or
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
       body: JSON.stringify({ query: "anything" }),
     });
     assert.equal(res.status, 500);

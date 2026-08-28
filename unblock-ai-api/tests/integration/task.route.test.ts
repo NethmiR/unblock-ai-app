@@ -8,7 +8,7 @@ import { HealthController } from "../../src/controllers/health.controller.js";
 import { ConflictError } from "../../src/errors/conflict.error.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
 import { TASK_STATUS, REQUIREMENT_STATUS } from "../../src/data/constants/status.constant.js";
-import { startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import { portalAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { DraftService } from "../../src/services/draft.service.js";
@@ -102,7 +102,7 @@ test("POST /api/tasks rejects a missing session_id", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 400);
@@ -118,7 +118,7 @@ test("POST /api/tasks on an unmatched session returns 409", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
       body: JSON.stringify({ session_id: "s1" }),
     });
     assert.equal(res.status, 409);
@@ -132,7 +132,7 @@ test("POST /api/tasks happy path returns 201 with id, reference, and status", as
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
       body: JSON.stringify({ session_id: "s1" }),
     });
     assert.equal(res.status, 201);
@@ -160,7 +160,9 @@ test("GET /api/tasks/:id/next returns 200 with a requirement", async () => {
   };
   const server = await buildServer(fakeTaskService({ nextResult: { requirement, complete: false } }));
   try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/next`);
+    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/next`, {
+      headers: portalAuthHeader(),
+    });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { requirement: { key: string } | null; complete: boolean };
     assert.equal(body.requirement?.key, "departure_date");
@@ -175,7 +177,7 @@ test("POST /api/tasks/:id/values rejects a missing key", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/values`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
       body: JSON.stringify({ value: "2026-09-01" }),
     });
     assert.equal(res.status, 400);
@@ -193,6 +195,7 @@ test("POST /api/tasks/:id/finalize with unfilled requirements returns 400", asyn
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/finalize`, {
       method: "POST",
+      headers: portalAuthHeader(),
     });
     assert.equal(res.status, 400);
   } finally {
@@ -205,7 +208,7 @@ test("PATCH /api/tasks/:id/status rejects a bad status", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/status`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
       body: JSON.stringify({ status: "completed" }),
     });
     assert.equal(res.status, 400);

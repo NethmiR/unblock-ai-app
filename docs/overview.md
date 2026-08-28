@@ -15,10 +15,35 @@ This document exists so future implementation work can quickly understand what a
 
 ## 1. Main functions we handle
 
-There are **seven** functional areas. Two write paths (admin), three end-user paths
-(selection, task planning, approval execution), plus supporting infrastructure.
+There are **eight** functional areas. Two write paths (admin), three end-user paths
+(selection, task planning, approval execution), plus auth and supporting infrastructure.
 
-### A. Draft management (admin write path, step 1)
+### A. Authentication & template-deletion tracking
+`src/services/auth.service.ts` · `src/services/auth-store/` · `src/middlewares/authenticate.middleware.ts`
+
+- Real login for both surfaces, backed by **PostgreSQL** — `admin_users` and `portal_users`
+  are separate tables (different privilege domains, different columns), not one table with
+  a `role` column. One seeded admin, two seeded portal users; no self-registration.
+- Sessions are **stateless HMAC-signed bearer tokens** (`src/utils/auth/session-token.util.ts`),
+  mirroring the existing approval-token pattern — no `sessions` table, no revocation.
+  `authenticate` middleware populates `req.user` on every request but never rejects by
+  itself; `requireAuth()` / `requireRole("admin")` do the actual gating per-route, which is
+  what lets `/api/approvals/*` (a *different*, token-based auth mechanism) keep working
+  for an approver with no session.
+- Passwords are hashed with **`node:crypto` scrypt** (D-1 in the phase plan) — no
+  `bcrypt`/`argon2` native-build dependency. Repeated wrong-password attempts against a
+  known username are counted and timestamped (`failed_attempt_count`,
+  `last_failed_attempt_at`); lockout enforcement is off by default
+  (`AUTH_MAX_FAILED_ATTEMPTS=0`) and opt-in.
+- **Template deletions** write an auditable `template_deletions` row (Postgres) naming
+  which admin deleted which template and when, via `DELETE /api/workflows/:id`
+  (`GET /api/workflows/:id/deletions` — see `unblock-ai-api/docs/api/api-documentation.md`
+  §4.7–§4.8 — reads it back). The row is written **before** the Mongo delete runs, so a
+  failed delete still leaves a visible trail rather than a silent gap. Task deletions stay
+  on the pre-existing Mongo `audit_logs` collection — no dual write.
+- Full design and phase-by-phase build log: [auth-and-deletion-tracking-phase-plan.md](auth-and-deletion-tracking-phase-plan.md).
+
+### B. Draft management (admin write path, step 1)
 `src/services/draft.service.ts` · `src/models/draft.model.ts`
 
 - Stores raw admin prose in the `drafts` collection.
@@ -26,7 +51,7 @@ There are **seven** functional areas. Two write paths (admin), three end-user pa
 - Tracks lifecycle status: `pending` → `extracted` / `failed` / `rejected`.
 - On a failed extraction, the draft is updated with `failure_reason` as a side effect before the error returns — so prose is never lost.
 
-### B. LLM extraction — prose → workflow JSON
+### C. LLM extraction — prose → workflow JSON
 `src/services/extraction.service.ts`
 
 The centrepiece. Four stages:
@@ -38,7 +63,7 @@ The centrepiece. Four stages:
 
 **Non-workflow guard:** if the model itself flags the input as not a process (`metadata.review_status === "rejected"`), that's rejected as a 422 rather than a hallucinated workflow.
 
-### C. Validation (standalone capability)
+### D. Validation (standalone capability)
 `src/services/validation.service.ts`
 
 Deliberately separated from extraction, so hand-edited workflows can be re-validated too.
@@ -57,14 +82,14 @@ Deliberately separated from extraction, so hand-edited workflows can be re-valid
 | `checkCompletionRequiredSteps` | `completion.required_steps` → unknown step |
 | `checkNamespacePaths` | dangling `inputs.*`/`computed.*`/`steps.*` references |
 
-### D. Versioned template storage + embeddings
+### E. Versioned template storage + embeddings
 `src/services/workflow.service.ts` · `src/services/embedding.service.ts`
 
 - **Never updates in place** — every save creates a new version, auto-incrementing per `workflow_id` and demoting the previous `is_latest`.
 - Each save generates a retrieval embedding.
 - **`review_status` is the publish gate**: `pending_admin_review` → `confirmed` via `PATCH /workflows/:id/review`. Retrieval only sees `confirmed` + `is_latest` templates. Nothing is findable until published.
 
-### E. Retrieval + Selector Agent (end-user read path)
+### F. Retrieval + Selector Agent (end-user read path)
 `src/services/retrieval.service.ts` · `selector.service.ts` · `selection.service.ts`
 
 A multi-round conversation mapping a plain-language request onto one template:
@@ -81,10 +106,10 @@ A multi-round conversation mapping a plain-language request onto one template:
 
 **Key design decision** (`selection.service.ts`): retrieval runs **only once**, in round 1. The candidate set is deliberately frozen so it can't drift under an in-progress clarifying conversation. Round cap is `SELECTION_MAX_ROUNDS` (default 2).
 
-### F. Task planning (end-user requirement collection)
+### G. Task planning (end-user requirement collection)
 `src/services/task.service.ts` · `src/services/planner.service.ts` · `src/models/task.model.ts`
 
-Turns a matched workflow (from E) into a task that walks the requester through supplying
+Turns a matched workflow (from F) into a task that walks the requester through supplying
 every value the workflow needs, then hands off a runnable plan:
 
 1. **Create** (`POST /tasks`) — pulls the matched, version-pinned workflow off a
@@ -109,18 +134,18 @@ every value the workflow needs, then hands off a runnable plan:
 states (`ready` / `blocked`) — nothing progresses a step, resolves a `dynamic` approver
 against a real directory, sends a notification, or issues an approval token yet.
 `steps[].approval_token` and `steps[].reason` stay `null` until `POST /tasks/:id/start`
-(area G below) actually dispatches the entry step(s).
+(area H below) actually dispatches the entry step(s).
 
 **Approver email is requester-supplied and untrusted** — for an `actor:*` requirement,
 the requester types in their own approver's name and email; there is no directory
 lookup here, so this is a trust boundary worth remembering before building anything
 that emails that address automatically.
 
-### G. Approval execution (end-user approval path)
+### H. Approval execution (end-user approval path)
 `src/services/execution.service.ts` · `src/services/approval.service.ts` ·
 `src/services/notification.service.ts` · `src/services/mailer/` · `src/utils/approval/`
 
-Turns a finalized task (from F) into a running approval chain. Split into a pure
+Turns a finalized task (from G) into a running approval chain. Split into a pure
 engine and an I/O shell around it, deliberately — the engine is provably correct
 without a database or a network:
 
@@ -164,7 +189,7 @@ without a database or a network:
 pending steps, and — critically — for a `rejected` task, **who** rejected it, **at
 which step**, and **why**, lifted straight from the terminating step's `reason`.
 
-### H. Frontend — two distinct UIs
+### I. Frontend — two distinct UIs
 
 **Admin** (`src/app/admin/`) — the authoring surface:
 - Template list with institution-type filtering
@@ -190,9 +215,11 @@ which step**, and **why**, lifted straight from the terminating step's `reason`.
 | LLM | **Azure OpenAI** via official `openai` SDK's `AzureOpenAI` client | gpt-4o default |
 | Embeddings | **Azure AI Foundry**, `text-embedding-3-small`, 1536-dim | Separate resource from chat, own endpoint/key |
 | Schema validation | **AJV 8** (draft 2020-12) + `ajv-formats` | |
-| Database | **MongoDB 7** — official driver, no ODM | |
+| Database | **MongoDB 7** — official driver, no ODM | Workflows, drafts, tasks, selection sessions, task-deletion audit |
+| Database (auth) | **PostgreSQL 17** via `pg` — official driver, no ORM | `admin_users`, `portal_users`, `template_deletions`; polyglot-persistence by design, see area A |
 | Vector search | **Pluggable**: `memory` \| `atlas` | `createVectorStore` factory behind `IVectorStore` |
 | Mailer | **Pluggable**: `console` \| `smtp` (`nodemailer`) | `createMailer` factory behind `IMailer`, mirrors `IVectorStore`'s shape |
+| Auth store | **Pluggable**: `postgres` \| `memory` | `createAuthStore` factory behind `IAuthStore`; `memory` backs `npm test` with no live Postgres |
 | Config | **dotenv**, validated once at startup | `env.config.ts` is the *only* place reading `process.env` |
 | Testing | **`node:test`** (built-in) via **tsx** + `mongodb-memory-server` | No Jest/Vitest |
 | Dev runner | **tsx watch** | |
@@ -221,7 +248,7 @@ which step**, and **why**, lifted straight from the terminating step's `reason`.
 - **Single API chokepoint** — `client.ts` is the only place calling `fetch`; feature modules (`workflows.ts`, `drafts.ts`, `selection.ts`, `health.ts`) build on it. `ApiError` carries `status`, `code`, `details`.
 - **Hand-mirrored types** in `src/types/` — narrowed to match backend unions exactly, to avoid loose `string`/`Record<string, unknown>` fields that would absorb schema drift silently.
 - **Pure transform layer** — `toFlowGraph.ts` (workflow → React Flow nodes/edges), `toPlanNodes.ts` (workflow → portal plan list), `editorState.ts` (editor state machine).
-- **Auth is a mock seam** — `session.ts` returns hardcoded sessions, explicitly marked *"REPLACE BEFORE ANY DEPLOYMENT"*. Every component reads identity through `getSession()` so swapping in NextAuth touches one file.
+- **Auth is a real, stateless session** — `session.ts` reads an httpOnly `ua_session` cookie set by this app's own `POST /api/auth/login` Route Handler (never by the API directly, so the flow survives the API moving to another domain — see area A). `proxy.ts` (the current Next convention for what used to be `middleware.ts`) verifies the cookie's HMAC signature and expiry before letting a request reach `/admin*` or `/portal*`, redirecting to the matching login page otherwise. `getRequesterContext()`'s `{ faculty, department, actor_type }` shape is unchanged from the old mock, since the selector agent depends on those exact keys.
 
 ---
 
@@ -238,13 +265,19 @@ which step**, and **why**, lifted straight from the terminating step's `reason`.
 **The two worked fixtures serve three roles at once** — few-shot prompt examples, validation test fixtures, *and* live extraction-accuracy gold data. Any schema or prompt change must keep all three consistent.
 
 **Not built yet** (explicitly out of scope):
-- **No authentication** on any `/tasks/*` or admin/selection HTTP route (`req.user` is
-  always undefined; `submitted_by` is always `null`). `/approvals/*` is
-  token-authenticated, which is a different mechanism and does not imply session auth
-  exists anywhere else.
+- **No self-registration, password reset, or password change** — three seeded users (one
+  admin, two portal), changed by re-running `npm run seed:auth --force`. See area A.
+- **No session revocation** ("log out everywhere") — sessions are stateless bearer tokens
+  with no `sessions` table to delete a row from; would need one to add revocation.
+- **No rate limiting by IP** on login — only per-account failed-attempt counting, and even
+  that is off by default (`AUTH_MAX_FAILED_ATTEMPTS=0`).
+- **`req.user` is populated but mostly unused past the auth/deletion-log routes** —
+  `submitted_by` on a draft or task is still always `null`; nothing yet uses the now-real
+  identity to scope a requester's own job list. This is a small, contained follow-on now
+  that every route has a real `req.user` (unlike the pre-auth state, where nothing did).
 - **No directory/identity service** integration — task planning's `actor:*` requirements
   are filled with requester-supplied name/email, not a directory lookup. Approval
-  execution (G) inherits this: the approval authority emailed for a decision is
+  execution (H) inherits this: the approval authority emailed for a decision is
   whatever address the requester typed in, unverified. Every workflow now also collects a
   `requester_email` input the same self-asserted way (see
   [requester-contact-gap.md](requester-contact-gap.md), resolved) — closing this gap
@@ -253,16 +286,17 @@ which step**, and **why**, lifted straight from the terminating step's `reason`.
   and `condition` exist in the schema and stay unread by the execution engine.
 - **No LLM assistance in the approval flow** — question phrasing, context summarising,
   and reject-vs-more-info suggestion are all left as plain data for a caller to render.
-- **No `DELETE` endpoint** anywhere.
+- **The only `DELETE` endpoint is `DELETE /api/workflows/:id`** (admin-only, typed
+  confirmation, logs the deleting admin — area A). Tasks still have no delete route.
 - **No frontend for approval execution** — the approver page and requester status view
-  are JSON APIs only (G); no UI consumes them yet.
+  are JSON APIs only (H); no UI consumes them yet.
 - Portal job list is **placeholder fixtures**, not real data.
 
 **Known rough edge:** malformed ObjectIds on `/drafts/:id*`, `/selection/sessions/:id*`, and `/tasks/:id*` fail inside the Mongo driver and surface as **500 `DATABASE_ERROR`**, not 400/404. The frontend already works around this at `admin/templates/[id]/page.tsx`.
 
 **Documentation locations** (per-subproject, unusually good and current — check these before implementing anything new):
 - `unblock-ai-api/docs/architecture/project-overview.md` — the best single entry point for the backend
-- `unblock-ai-api/docs/api/api-documentation.md` — all 29 endpoints with request/response bodies
+- `unblock-ai-api/docs/api/api-documentation.md` — all 33 endpoints with request/response bodies and per-route auth requirements
 - `unblock-ai-api/docs/architecture/rag-implementation-guide.md` — retrieval design
 - `unblock-ai-api/docs/postman/` — runnable collection that chains ids automatically
 - `unblock-ai-web/docs/fe-api-migration-plan.md` — FE/API contract history (mostly resolved; see below)
@@ -275,13 +309,16 @@ which step**, and **why**, lifted straight from the terminating step's `reason`.
 
 Full detail in `unblock-ai-api/docs/api/api-documentation.md`. Base URL: `http://localhost:3000/api`.
 
-| Area | Endpoints |
-|---|---|
-| Health | `GET /health` |
-| Workflows | `POST /workflows/extract` (preview) · `POST /workflows` · `GET /workflows` · `GET /workflows/:id` · `PUT /workflows/:id` · `POST /workflows/:id/validate` · `GET /workflows/:id/record` · `PATCH /workflows/:id/review` |
-| Drafts | `POST /drafts` · `GET /drafts` · `GET /drafts/:id` · `POST /drafts/:id/extract` |
-| Selection | `POST /selection/sessions` · `POST /selection/sessions/:id/answer` · `POST /selection/sessions/:id/choose` · `GET /selection/sessions/:id/workflow` |
-| Tasks | `POST /tasks` · `GET /tasks` · `GET /tasks/:id` · `GET /tasks/:id/next` · `POST /tasks/:id/values` · `POST /tasks/:id/finalize` · `PATCH /tasks/:id/status` · `POST /tasks/:id/start` · `GET /tasks/:id/status` |
-| Approvals | `GET /approvals/:token` · `POST /approvals/:token/decision` |
+| Area | Endpoints | Auth |
+|---|---|---|
+| Health | `GET /health` | none |
+| Auth | `POST /auth/login` · `GET /auth/me` · `POST /auth/logout` | none / `requireAuth()` / none |
+| Workflows | `POST /workflows/extract` (preview) · `POST /workflows` · `GET /workflows` · `GET /workflows/:id` · `PUT /workflows/:id` · `POST /workflows/:id/validate` · `DELETE /workflows/:id` · `GET /workflows/deletions` · `GET /workflows/:id/record` · `PATCH /workflows/:id/review` | mostly `admin`; `GET` routes are `requireAuth()` |
+| Drafts | `POST /drafts` · `GET /drafts` · `GET /drafts/:id` · `POST /drafts/:id/extract` | `admin` |
+| Selection | `POST /selection/sessions` · `POST /selection/sessions/:id/answer` · `POST /selection/sessions/:id/choose` · `GET /selection/sessions/:id/workflow` | `requireAuth()` |
+| Tasks | `POST /tasks` · `GET /tasks` · `GET /tasks/:id` · `GET /tasks/:id/next` · `POST /tasks/:id/values` · `POST /tasks/:id/finalize` · `PATCH /tasks/:id/status` · `POST /tasks/:id/start` · `GET /tasks/:id/status` | `requireAuth()` |
+| Approvals | `GET /approvals/:token` · `POST /approvals/:token/decision` | none — the approval token IS the auth |
 
-No `DELETE` route exists anywhere in the API.
+`admin` means `requireRole("admin")`: a `portal` token gets `403`, no token gets `401`.
+`requireAuth()` accepts either audience. `DELETE /workflows/:id` is the only `DELETE`
+route in the API.

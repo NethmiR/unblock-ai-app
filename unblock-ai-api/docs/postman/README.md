@@ -2,17 +2,35 @@
 
 Two files:
 
-- `unblock-ai.postman_collection.json` — requests across 6 folders, run in order:
-  **Health → Drafts → Workflows → Selection → Tasks → Error cases**.
-- `unblock-ai.postman_environment.json` — just `baseUrl`. `draftId`, `workflowId`,
-  `sessionId`, `templateVersion`, `selectionDecision`, `taskId`, `requirementKey`,
-  `requirementType`, `requirementLabel`, and `requirementValue`
-  live only as **collection** variables (declared on the collection itself, visible
-  under the collection's *Variables* tab) so that `pm.collectionVariables.set(...)` in
-  each request's test script is never shadowed by an empty same-named environment
-  variable — Postman resolves environment variables first, so if these also existed in
-  the environment with an empty value, the ids the tests capture would never be seen by
-  later requests.
+- `unblock-ai.postman_collection.json` — requests across 8 folders, run in order:
+  **Health → Auth → Drafts → Workflows → Selection → Tasks → Approvals → Error cases**.
+- `unblock-ai.postman_environment.json` — just `baseUrl`. `adminToken`, `portalToken`,
+  `draftId`, `workflowId`, `sessionId`, `templateVersion`, `selectionDecision`, `taskId`,
+  `requirementKey`, `requirementType`, `requirementLabel`, `requirementValue`, and
+  `approvalToken` live only as **collection** variables (declared on the collection
+  itself, visible under the collection's *Variables* tab) so that
+  `pm.collectionVariables.set(...)` in each request's test script is never shadowed by an
+  empty same-named environment variable — Postman resolves environment variables first,
+  so if these also existed in the environment with an empty value, the ids the tests
+  capture would never be seen by later requests.
+
+## Auth
+
+Every request in the collection inherits a **collection-level bearer auth** that reads
+`{{adminToken}}`. Run **Auth → Login (admin)** first — its test script captures the
+returned token into `{{adminToken}}` automatically, and every later request in every
+other folder then authenticates with no manual header entry. **Auth → Login (portal)**
+does the same into `{{portalToken}}`, for the handful of requests you want to run as the
+requester audience instead (Selection and Tasks accept either; override a single
+request's auth to Bearer `{{portalToken}}` from its *Authorization* tab to exercise that
+path). The two login requests themselves are set to `noauth` — login obviously can't
+require the token it's about to issue.
+
+The seeded login credentials in **Login (admin)** / **Login (portal)** match
+`SEED_ADMIN_USERNAME` / `SEED_ADMIN_PASSWORD` / `SEED_USER1_USERNAME` /
+`SEED_USER1_PASSWORD` from `.env` (`npm run seed:auth`) — edit the request bodies if your
+seed data differs. See `docs/api/api-documentation.md` §12 for the full endpoint
+reference and §1 for what each route's guard requires.
 
 ## Import
 
@@ -40,10 +58,15 @@ request timeout: **Settings → General → Request timeout in ms** — set it t
 ## Running the whole collection
 
 Use the **Collection Runner** (or `newman run unblock-ai.postman_collection.json -e
-unblock-ai.postman_environment.json`) and select all 6 folders in their listed order.
-No manual variable entry is required — every id (`draftId`, `workflowId`, `sessionId`,
-`templateVersion`, `taskId`) is written into a collection variable by a `pm.test` script
-in an earlier request and read by a later one.
+unblock-ai.postman_environment.json`) and select all 8 folders in their listed order.
+No manual variable entry is required — every id (`adminToken`, `portalToken`, `draftId`,
+`workflowId`, `sessionId`, `templateVersion`, `taskId`) is written into a collection
+variable by a `pm.test` script in an earlier request and read by a later one.
+
+**`Delete workflow (admin)`** (in the Workflows folder) is **not** meant to run as part
+of a routine full-collection pass — it permanently deletes `{{workflowId}}`, which every
+later folder (Selection, Tasks) depends on. Leave it unchecked in the Collection Runner
+and only run it by hand, against a scratch template you created for that purpose.
 
 Two requests carry conditional logic in a pre-request script and call
 `postman.setNextRequest(...)` to skip a step that does not apply to the current session:

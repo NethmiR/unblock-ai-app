@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b6f0a1c2-3e6a-4b1a-9b7a-9f6d1c2a5e01",
     "name": "UNBLOCK-AI API",
-    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Drafts, Workflows, Selection, Tasks, Approvals, Error cases. The Approvals folder needs a token copied by hand out of the console mailer's stdout log after 'Start task (dispatch approval chain)' -- it cannot be fully automated by the Collection Runner.",
+    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Auth, Drafts, Workflows, Selection, Tasks, Approvals, Error cases. Most requests need a bearer token - the collection-level auth reads it from {{adminToken}}, captured by the 'Login (admin)' request in the Auth folder, so running Auth first is what makes everything after it authenticate automatically. The Approvals folder needs a token copied by hand out of the console mailer's stdout log after 'Start task (dispatch approval chain)' -- it cannot be fully automated by the Collection Runner.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -53,6 +53,14 @@
     {
       "key": "requirementValue",
       "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "portalToken",
+      "value": ""
     }
   ],
   "item": [
@@ -83,6 +91,168 @@
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
                   "pm.test(\"status is ok\", function () { pm.expect(pm.response.json()).to.have.property(\"status\", \"ok\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (admin)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"audience\": \"admin\",\n  \"username\": \"admin\",\n  \"password\": \"Admin@12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Logs in as the seeded admin user. Edit the username/password in this request body to match your own seed:auth run."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has a token\", function () { pm.expect(pm.response.json()).to.have.property(\"token\"); });",
+                  "pm.collectionVariables.set(\"adminToken\", pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (portal)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"audience\": \"portal\",\n  \"username\": \"chathura\",\n  \"password\": \"User@12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Logs in as the seeded portal user. Edit the username/password in this request body to match your own seed:auth run."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has a token\", function () { pm.expect(pm.response.json()).to.have.property(\"token\"); });",
+                  "pm.collectionVariables.set(\"portalToken\", pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get current session",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Confirms {{adminToken}} is valid and round-trips to the logged-in admin."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has user\", function () { pm.expect(pm.response.json()).to.have.property(\"user\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Stateless session (D-3) - always 204, nothing to invalidate server-side."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", function () { pm.response.to.have.status(204); });"
                 ]
               }
             }
@@ -567,6 +737,85 @@
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
                   "pm.test(\"review_status is confirmed\", function () { pm.expect(pm.response.json()).to.have.property(\"review_status\", \"confirmed\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get deletion log (admin)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/deletions?limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "deletions"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "The template deletion log, newest first. admin only - see docs/api/api-documentation.md §4.8."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete workflow (admin)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"confirmation\": \"delete\",\n  \"confirm_title\": \"REPLACE WITH THE TEMPLATE'S EXACT TITLE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Permanent. Requires the typed confirmation word plus the template's exact title (case/whitespace-insensitive) - see docs/api/api-documentation.md §4.7. Not run as part of the standard Collection Runner pass, since it would delete {{workflowId}} out from under the later folders; run it manually against a scratch template."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", function () { pm.response.to.have.status(204); });"
                 ]
               }
             }
@@ -1660,5 +1909,15 @@
         }
       ]
     }
-  ]
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{adminToken}}",
+        "type": "string"
+      }
+    ]
+  }
 }
