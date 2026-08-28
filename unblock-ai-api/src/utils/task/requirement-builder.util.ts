@@ -2,7 +2,7 @@ import type { WorkflowDefinition } from "../../lib/types/workflow/workflow.type.
 import type { TaskRequirement } from "../../lib/types/task/requirement.type.js";
 import { topologicalStepOrder } from "../workflow/graph-validator.util.js";
 
-function titleCaseRole(role: string): string {
+export function titleCaseRole(role: string): string {
   return role
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
