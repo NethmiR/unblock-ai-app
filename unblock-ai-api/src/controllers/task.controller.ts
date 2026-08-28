@@ -62,8 +62,10 @@ export class TaskController {
   };
 
   /**
-   * `DELETE /tasks/:id` - permanent. Only finished tasks qualify; the service
-   * 409s on a live one rather than orphaning approval links already in inboxes.
+   * `DELETE /tasks/:id` - permanent. Finished tasks qualify, and so does one
+   * still collecting details that has never been sent to an approver; the
+   * service 409s on anything else rather than orphaning approval links already
+   * sitting in inboxes.
    */
   deleteTask = async (req: Request, res: Response): Promise<void> => {
     await this.taskService.delete(req.params.id as string, actorFromRequest(req), req.requestId);

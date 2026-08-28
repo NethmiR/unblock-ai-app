@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { Spinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
-import type { TaskDto, TaskStatus } from "@/types/task";
+import type { TaskDto, TaskStatus, TaskStepState } from "@/types/task";
 
 /** Status copy and badge tone as data, not as an if/else chain. */
 export const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -60,13 +60,32 @@ export interface JobRowTask extends TaskDto {
   workflow_title: string;
 }
 
+/** Finished business, whichever way it finished - `DELETE /tasks/:id` takes all three. */
+const TERMINAL: TaskStatus[] = ["completed", "rejected", "cancelled"];
+
 /**
- * `DELETE /tasks/:id` only accepts these - the service 409s on anything else
- * rather than orphaning approval links already sitting in approvers' inboxes.
- * A request still collecting details, ready to send, or out for approval is
- * therefore given no delete control at all, rather than one that fails.
+ * Mirrors `TaskService.isDeletable` on the API - keep the two in step.
+ *
+ * What the endpoint refuses is a request whose approval links are already in
+ * approvers' inboxes, since deleting it turns those links into 404s. A terminal
+ * request is past that. So is one still collecting details that has never
+ * dispatched a step: nothing was sent, so there is nothing to orphan, and there
+ * is no reason to make the requester cancel a request they never started.
+ *
+ * The second half tests DISPATCH, not status: a request reopened by an
+ * approver's "more info" question is `collecting` again while that approver
+ * still holds a live link, and the step signals are what catch it. Anything
+ * else - ready to send, or out for approval - gets no delete control at all,
+ * rather than one that fails.
  */
-export const DELETABLE: TaskStatus[] = ["completed", "rejected", "cancelled"];
+export function isDeletable(status: TaskStatus, steps: TaskStepState[]): boolean {
+  if (TERMINAL.includes(status)) return true;
+
+  return (
+    status === "collecting" &&
+    !steps.some((s) => s.approval_token !== null || s.notified_at !== null || s.outcome !== null)
+  );
+}
 
 /**
  * One row of the requester's job list.
@@ -85,7 +104,7 @@ export function JobRow({
   /** Omitted where the list has nothing to do with a delete, e.g. a read-only view. */
   onDelete?: (job: JobRowTask) => void;
 }) {
-  const canDelete = onDelete && DELETABLE.includes(job.status);
+  const canDelete = onDelete && isDeletable(job.status, job.steps);
 
   return (
     <div className="relative flex items-center gap-5 rounded-card border border-line bg-surface px-6 py-[22px] transition-all hover:border-slate-300 hover:shadow-[0_2px_10px_rgba(15,23,42,.06)]">

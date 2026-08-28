@@ -285,12 +285,66 @@ test("re-finalize after a reopen dispatches only the reopened step, leaving appr
   assert.equal(byId.get("dean_review")?.state, "blocked");
 });
 
-test("delete() on a live task throws ConflictError and removes nothing", async () => {
+test("delete() on a task out for approval throws ConflictError and removes nothing", async () => {
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
   const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
 
+  await assert.rejects(() => service.delete(task._id, ANONYMOUS_ACTOR), ConflictError);
+  assert.ok(await taskModel.findById(task._id));
+});
+
+test("delete() on a ready-to-send task throws ConflictError", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+
+  await assert.rejects(() => service.delete(task._id, ANONYMOUS_ACTOR), ConflictError);
+  assert.ok(await taskModel.findById(task._id));
+});
+
+test("delete() removes a still-collecting task that was never sent to an approver", async () => {
+  const taskModel = new FakeTaskModel();
+  const auditLogModel = new FakeAuditLogModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW, auditLogModel });
+
+  // Straight from create(): steps are compiled but none has a token, a
+  // notification, or an outcome, so nothing is out in anybody's inbox.
+  const task = await service.create("session-1");
+
+  await service.delete(task._id, ANONYMOUS_ACTOR);
+
+  assert.equal(await taskModel.findById(task._id), null);
+
+  const entries = await auditLogModel.findByResource("task", String(task._id));
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]!.snapshot.status, "collecting");
+});
+
+test("delete() on a task reopened for more info throws ConflictError despite collecting", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
+  const reopened = await service.reopenForMoreInfo(
+    task._id,
+    "advisor_review",
+    "Please attach your travel itinerary.",
+  );
+
+  // Back to `collecting`, but the advisor still holds a live approval link -
+  // the dispatch check, not the status, is what has to catch this.
+  assert.equal(reopened.status, "collecting");
   await assert.rejects(() => service.delete(task._id, ANONYMOUS_ACTOR), ConflictError);
   assert.ok(await taskModel.findById(task._id));
 });
@@ -322,7 +376,13 @@ test("delete() is allowed once a live task has been cancelled", async () => {
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
+  // Taken all the way out for approval first, so `cancel` is what makes this
+  // deletable - a task left `collecting` would have qualified on its own.
   const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
+
   await service.cancel(task._id);
   await service.delete(task._id, ANONYMOUS_ACTOR);
 

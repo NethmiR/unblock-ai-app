@@ -300,13 +300,20 @@ export class TaskService {
   }
 
   /**
-   * Hard-deletes a finished task, leaving an audit entry behind.
+   * Hard-deletes a task nobody is waiting on, leaving an audit entry behind.
    *
-   * Restricted to terminal statuses on purpose: a live task holds unexpired
-   * approval tokens that approvers may already be holding in their inbox, and
-   * deleting it turns those links into 404s with no explanation. A requester
-   * who wants rid of a live request cancels it first - `cancel` then makes it
-   * terminal and this becomes available.
+   * What actually disqualifies a task is an approval link already sitting in
+   * someone's inbox: deleting the task turns that link into a 404 with no
+   * explanation. Two shapes are therefore safe to remove. A terminal task -
+   * completed, rejected, cancelled - is finished business, and any link it left
+   * behind is spent. A task still `collecting` that has never dispatched a step
+   * is the other: nothing was ever sent, so there is nothing to orphan.
+   *
+   * The second rule is about DISPATCH, not status. A task reopened by
+   * `request_more_info` is `collecting` again while its approvers still hold
+   * live links, so `hasDispatchedStep` keeps it out. A requester who wants rid
+   * of a request that is genuinely out for approval cancels it first - `cancel`
+   * then makes it terminal and this becomes available.
    *
    * The audit entry is written BEFORE the delete so a failed delete still
    * leaves a record of the attempt rather than a silent gap.
@@ -314,8 +321,7 @@ export class TaskService {
   async delete(id: string | ObjectId, actor: AuditActor, requestId?: string | null): Promise<void> {
     const task = await this.get(id);
 
-    const deletable: TaskStatus[] = [TASK_STATUS.COMPLETED, TASK_STATUS.REJECTED, TASK_STATUS.CANCELLED];
-    if (!deletable.includes(task.status)) {
+    if (!TaskService.isDeletable(task)) {
       throw new ConflictError(
         `Task '${String(id)}' is still active (${task.status}) - cancel it before deleting`,
       );
@@ -353,6 +359,33 @@ export class TaskService {
 
   list(filters: { session_id?: string; status?: TaskStatus }): Promise<TaskDocument[]> {
     return this.taskModel.findAll(filters);
+  }
+
+  /**
+   * Whether `delete` will accept this task - see that method for the reasoning.
+   *
+   * Static so the rule stays one expression that callers can read, rather than
+   * a status list they have to keep in step with the dispatch check.
+   */
+  static isDeletable(task: TaskDocument): boolean {
+    const terminal: TaskStatus[] = [TASK_STATUS.COMPLETED, TASK_STATUS.REJECTED, TASK_STATUS.CANCELLED];
+    if (terminal.includes(task.status)) return true;
+
+    return task.status === TASK_STATUS.COLLECTING && !TaskService.hasDispatchedStep(task);
+  }
+
+  /**
+   * Has any step left the building yet?
+   *
+   * All three signals are checked rather than just one: `approval_token` is the
+   * link itself, `notified_at` records that the mail went out, and `outcome`
+   * survives a step whose token has since been cleared. Any one of them means
+   * an approver has seen this request.
+   */
+  private static hasDispatchedStep(task: TaskDocument): boolean {
+    return task.steps.some(
+      (step) => step.approval_token !== null || step.notified_at !== null || step.outcome !== null,
+    );
   }
 
   private attachAssignees(task: TaskDocument): TaskStepState[] {

@@ -11,7 +11,7 @@ import { DeleteRequestDialog } from "@/components/portal/DeleteRequestDialog";
 import { DateTime } from "@/components/ui/DateTime";
 import { tasksApi } from "@/lib/api/tasks";
 import { ApiError } from "@/lib/api/client";
-import { DELETABLE, STATUS_LABEL, STATUS_TONE } from "@/components/portal/JobRow";
+import { isDeletable, STATUS_LABEL, STATUS_TONE } from "@/components/portal/JobRow";
 import type { TaskStatusDto } from "@/types/approval";
 import type { NextRequirementDto, TaskDto, TaskStatus } from "@/types/task";
 import type { Workflow } from "@/types/workflow";
@@ -51,8 +51,13 @@ export function JobStatusView({
   const taskStatus = status.status as TaskStatus;
   const canCancel = !TERMINAL.includes(taskStatus);
   const isCompleted = taskStatus === "completed";
-  /** Same rule the list row uses - a live task cannot be deleted at all. */
-  const canDelete = DELETABLE.includes(taskStatus);
+  /**
+   * Same rule the list row uses. `taskStatus` rather than `task.status` so a
+   * request cancelled a moment ago on this page offers its delete straight
+   * away; `task.steps` is safe to read from the server copy either way, since
+   * cancelling dispatches nothing.
+   */
+  const canDelete = isDeletable(taskStatus, task.steps);
 
   /**
    * A completed request is finished business, so the page offers to clear it
