@@ -127,6 +127,7 @@ function build(
         typeof AuditService
       >[0]["auditLogModel"],
     }),
+    completionDocumentService,
     config,
   });
   const service = new ApprovalService({

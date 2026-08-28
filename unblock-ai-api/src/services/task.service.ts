@@ -6,6 +6,7 @@ import { PlannerService } from "./planner.service.js";
 import { ExecutionService } from "./execution.service.js";
 import { NotificationService } from "./notification.service.js";
 import { AuditService } from "./audit.service.js";
+import { CompletionDocumentService } from "./completion-document.service.js";
 import { validateValue } from "../utils/task/value-validator.util.js";
 import { buildReference } from "../utils/task/reference.util.js";
 import { issueTokensForDispatched } from "../utils/approval/token.util.js";
@@ -20,6 +21,7 @@ import type { NextRequirementDto } from "../lib/types/task/task.type.js";
 import type { RequirementValue, TaskRequirement } from "../lib/types/task/requirement.type.js";
 import type { TaskStatusDto, TaskTimelineEntry } from "../lib/types/approval/approval.type.js";
 import type { AuditActor } from "../lib/types/audit/audit.type.js";
+import type { RenderedDocument } from "../lib/types/document/document.type.js";
 
 export interface TaskServiceOptions {
   taskModel: TaskModel;
@@ -29,6 +31,7 @@ export interface TaskServiceOptions {
   executionService: ExecutionService;
   notificationService: NotificationService;
   auditService: AuditService;
+  completionDocumentService: CompletionDocumentService;
   config: AppConfig;
 }
 
@@ -40,6 +43,7 @@ export class TaskService {
   private readonly executionService: ExecutionService;
   private readonly notificationService: NotificationService;
   private readonly auditService: AuditService;
+  private readonly completionDocumentService: CompletionDocumentService;
   private readonly config: AppConfig;
 
   constructor({
@@ -50,6 +54,7 @@ export class TaskService {
     executionService,
     notificationService,
     auditService,
+    completionDocumentService,
     config,
   }: TaskServiceOptions) {
     this.taskModel = taskModel;
@@ -59,6 +64,7 @@ export class TaskService {
     this.executionService = executionService;
     this.notificationService = notificationService;
     this.auditService = auditService;
+    this.completionDocumentService = completionDocumentService;
     this.config = config;
   }
 
@@ -256,6 +262,50 @@ export class TaskService {
       reason: rejectedStep?.reason ?? null,
       timeline,
     };
+  }
+
+  /**
+   * A completed task is immutable and its workflow is version-pinned, so the
+   * PDF is never stored - it is re-rendered here from the persisted metadata
+   * (D-4). A task that completed before `completion_document` existed, or
+   * whose generation failed at completion time, gets one generated now and
+   * backfilled. Drift between a fresh render and the stored hash is logged,
+   * not raised - the stored `sha256` exists to make that drift visible.
+   */
+  async getDocument(id: string | ObjectId): Promise<RenderedDocument> {
+    const task = await this.get(id);
+
+    if (task.status !== TASK_STATUS.COMPLETED) {
+      throw new ConflictError("A record is only issued once every step is approved");
+    }
+
+    const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+    const record = task.completion_document;
+    const completedAt = record ? record.generated_at : task.updated_at;
+
+    const document = await this.completionDocumentService.generate(task, workflow, completedAt);
+    if (!document) {
+      throw new ConflictError(`Task '${String(id)}' has no record available for download`);
+    }
+
+    if (!record) {
+      await this.taskModel.setCompletionDocument(task._id, {
+        generated_at: completedAt,
+        filename: document.filename,
+        byte_size: document.byteSize,
+        sha256: document.sha256,
+        emailed_to: null,
+        emailed_at: null,
+      });
+    } else if (record.sha256 !== document.sha256) {
+      logger.warn("completion document drift detected", {
+        taskId: String(task._id),
+        storedSha256: record.sha256,
+        freshSha256: document.sha256,
+      });
+    }
+
+    return document;
   }
 
   async reopenForMoreInfo(id: string | ObjectId, stepId: string, question: string): Promise<TaskDocument> {

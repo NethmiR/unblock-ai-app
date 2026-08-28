@@ -81,6 +81,8 @@ async function main(): Promise<void> {
   const mailer = createMailer(config.mail.transport, config.mail);
   const notificationService = new NotificationService({ mailer, config });
   const executionService = new ExecutionService();
+  const documentRenderer = createDocumentRenderer(config.document.format);
+  const completionDocumentService = new CompletionDocumentService({ renderer: documentRenderer, config });
   const taskService = new TaskService({
     taskModel,
     selectionService,
@@ -89,10 +91,9 @@ async function main(): Promise<void> {
     executionService,
     notificationService,
     auditService,
+    completionDocumentService,
     config,
   });
-  const documentRenderer = createDocumentRenderer(config.document.format);
-  const completionDocumentService = new CompletionDocumentService({ renderer: documentRenderer, config });
   const approvalService = new ApprovalService({
     taskModel,
     workflowService,
