@@ -3,6 +3,7 @@ import { WorkflowService } from "./workflow.service.js";
 import { ExecutionService } from "./execution.service.js";
 import { NotificationService } from "./notification.service.js";
 import { TaskService } from "./task.service.js";
+import { CompletionDocumentService } from "./completion-document.service.js";
 import { issueTokensForDispatched, verifyToken } from "../utils/approval/token.util.js";
 import { allowedOutcomes, resolveOutcomeAction } from "../utils/approval/outcome-resolver.util.js";
 import { formatRequirementValue } from "../utils/approval/answer-format.util.js";
@@ -10,7 +11,7 @@ import { evaluateComputed } from "../utils/workflow/computed-evaluator.util.js";
 import { NotFoundError } from "../errors/not-found.error.js";
 import { ConflictError } from "../errors/conflict.error.js";
 import { ValidationError } from "../errors/validation.error.js";
-import { STEP_STATE } from "../data/constants/status.constant.js";
+import { STEP_STATE, TASK_AUDIT_TYPE } from "../data/constants/status.constant.js";
 import type { AppConfig } from "../lib/types/config/config.type.js";
 import type { TaskDocument, TaskStepState, StepOutcomeResult } from "../lib/types/task/task.type.js";
 import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
@@ -22,6 +23,7 @@ export interface ApprovalServiceOptions {
   executionService: ExecutionService;
   notificationService: NotificationService;
   taskService: TaskService;
+  completionDocumentService: CompletionDocumentService;
   config: AppConfig;
 }
 
@@ -37,6 +39,7 @@ export class ApprovalService {
   private readonly executionService: ExecutionService;
   private readonly notificationService: NotificationService;
   private readonly taskService: TaskService;
+  private readonly completionDocumentService: CompletionDocumentService;
   private readonly config: AppConfig;
 
   constructor({
@@ -45,6 +48,7 @@ export class ApprovalService {
     executionService,
     notificationService,
     taskService,
+    completionDocumentService,
     config,
   }: ApprovalServiceOptions) {
     this.taskModel = taskModel;
@@ -52,6 +56,7 @@ export class ApprovalService {
     this.executionService = executionService;
     this.notificationService = notificationService;
     this.taskService = taskService;
+    this.completionDocumentService = completionDocumentService;
     this.config = config;
   }
 
@@ -213,7 +218,25 @@ export class ApprovalService {
     }
 
     if (result.completed) {
-      await this.notificationService.sendCompletionNotice(task, workflow);
+      const completedAt = new Date();
+      const document = await this.completionDocumentService.generate(task, workflow, completedAt);
+      const sent = await this.notificationService.sendCompletionNotice(task, workflow, document);
+
+      if (document) {
+        await this.taskModel.setCompletionDocument(task._id, {
+          generated_at: completedAt,
+          filename: document.filename,
+          byte_size: document.byteSize,
+          sha256: document.sha256,
+          emailed_to: sent ? this.notificationService.requesterEmailOf(task) : null,
+          emailed_at: sent ? new Date() : null,
+        });
+        await this.taskModel.appendAudit(task._id, {
+          type: TASK_AUDIT_TYPE.DOCUMENT_GENERATED,
+          detail: document.sha256,
+          created_at: completedAt,
+        });
+      }
     }
   }
 

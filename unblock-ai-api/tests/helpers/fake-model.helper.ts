@@ -15,6 +15,7 @@ import type {
 } from "../../src/lib/types/task/task.type.js";
 import type { RequirementValue, TaskRequirement } from "../../src/lib/types/task/requirement.type.js";
 import type { AuditLogDocument, AuditResource } from "../../src/lib/types/audit/audit.type.js";
+import type { CompletionDocumentRecord } from "../../src/lib/types/document/document.type.js";
 
 export class FakeDraftModel {
   readonly drafts = new Map<string, DraftDocument>();
@@ -260,6 +261,14 @@ export class FakeTaskModel {
     const task = this.tasks.get(String(id));
     if (!task) return Promise.resolve(null);
     task.status = status;
+    task.updated_at = new Date();
+    return Promise.resolve(task);
+  }
+
+  setCompletionDocument(id: string | ObjectId, record: CompletionDocumentRecord): Promise<TaskDocument | null> {
+    const task = this.tasks.get(String(id));
+    if (!task) return Promise.resolve(null);
+    task.completion_document = record;
     task.updated_at = new Date();
     return Promise.resolve(task);
   }

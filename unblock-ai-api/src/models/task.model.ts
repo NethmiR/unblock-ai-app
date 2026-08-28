@@ -11,6 +11,7 @@ import type {
   TaskStepState,
 } from "../lib/types/task/task.type.js";
 import type { RequirementValue, TaskRequirement } from "../lib/types/task/requirement.type.js";
+import type { CompletionDocumentRecord } from "../lib/types/document/document.type.js";
 
 interface CounterDocument extends Document {
   _id: string;
@@ -103,6 +104,22 @@ export class TaskModel {
       );
     } catch (err) {
       throw new DatabaseError("Failed to set task status", { cause: err });
+    }
+    return this.findById(id);
+  }
+
+  async setCompletionDocument(
+    id: string | ObjectId,
+    record: CompletionDocumentRecord,
+  ): Promise<TaskDocument | null> {
+    try {
+      const tasks = await this.collection();
+      await tasks.updateOne(
+        { _id: toObjectId(id) },
+        { $set: { completion_document: record, updated_at: new Date() } },
+      );
+    } catch (err) {
+      throw new DatabaseError("Failed to set task completion document", { cause: err });
     }
     return this.findById(id);
   }

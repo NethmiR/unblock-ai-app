@@ -7,6 +7,7 @@ import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
 import type { MailMessage, MailSendResult } from "../../../src/lib/types/approval/mail.type.js";
 import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
 import type { TaskDocument, TaskStepState } from "../../../src/lib/types/task/task.type.js";
+import type { RenderedDocument } from "../../../src/lib/types/document/document.type.js";
 
 const LEAVE_WORKFLOW = loadExpectedFixture("it_faculty_overseas_leave.json");
 
@@ -27,7 +28,21 @@ class FakeMailer implements IMailer {
   }
 }
 
-const FAKE_CONFIG = { mail: { appPublicUrl: "https://unblock.example" } } as unknown as AppConfig;
+const FAKE_CONFIG = {
+  mail: { appPublicUrl: "https://unblock.example" },
+  document: { attachToEmail: true, maxAttachmentBytes: 5_000_000 },
+} as unknown as AppConfig;
+
+function fakeRenderedDocument(overrides: Partial<RenderedDocument> = {}): RenderedDocument {
+  return {
+    buffer: Buffer.from("record"),
+    filename: "TASK-2026-00042-record.pdf",
+    contentType: "application/pdf",
+    byteSize: 6,
+    sha256: "deadbeef",
+    ...overrides,
+  };
+}
 
 function baseTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
   const now = new Date();
@@ -132,24 +147,24 @@ test("sendRejectionNotice contains the reason text verbatim", async () => {
   );
 });
 
-test("sendCompletionNotice does not mention an attachment or download link", async () => {
+const REQUESTER_EMAIL_REQUIREMENT = {
+  key: "requester_email",
+  source: "input" as const,
+  ref: "requester_email",
+  label: "Email",
+  description: null,
+  type: "email" as const,
+  required: true,
+  validation: null,
+  collection_hint: null,
+  status: "filled" as const,
+};
+
+test("sendCompletionNotice with no document carries the portal link but no attachment", async () => {
   const mailer = new FakeMailer();
   const service = new NotificationService({ mailer, config: FAKE_CONFIG });
   const task = baseTask({
-    requirements: [
-      {
-        key: "requester_email",
-        source: "input",
-        ref: "requester_email",
-        label: "Email",
-        description: null,
-        type: "email",
-        required: true,
-        validation: null,
-        collection_hint: null,
-        status: "filled",
-      },
-    ],
+    requirements: [REQUESTER_EMAIL_REQUIREMENT],
     values: { requester_email: "student@example.com" },
   });
 
@@ -158,7 +173,64 @@ test("sendCompletionNotice does not mention an attachment or download link", asy
   assert.equal(result, true);
   assert.equal(mailer.sent[0]!.to, "student@example.com");
   assert.equal(mailer.sent[0]!.attachments, undefined);
-  assert.doesNotMatch(mailer.sent[0]!.text, /attached|Download it here/);
+  assert.doesNotMatch(mailer.sent[0]!.text, /attached/);
+  assert.match(mailer.sent[0]!.text, /Download it here/);
+});
+
+test("sendCompletionNotice with a document attaches it and mentions the attachment", async () => {
+  const mailer = new FakeMailer();
+  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
+  const task = baseTask({
+    requirements: [REQUESTER_EMAIL_REQUIREMENT],
+    values: { requester_email: "student@example.com" },
+  });
+  const document = fakeRenderedDocument();
+
+  const result = await service.sendCompletionNotice(task, LEAVE_WORKFLOW, document);
+
+  assert.equal(result, true);
+  assert.equal(mailer.sent[0]!.attachments?.length, 1);
+  assert.equal(mailer.sent[0]!.attachments?.[0]!.filename, document.filename);
+  assert.match(mailer.sent[0]!.text, /attached/);
+});
+
+test("sendCompletionNotice drops the attachment when it exceeds the configured size limit", async () => {
+  const mailer = new FakeMailer();
+  const config = {
+    ...FAKE_CONFIG,
+    document: { attachToEmail: true, maxAttachmentBytes: 1 },
+  } as unknown as AppConfig;
+  const service = new NotificationService({ mailer, config });
+  const task = baseTask({
+    requirements: [REQUESTER_EMAIL_REQUIREMENT],
+    values: { requester_email: "student@example.com" },
+  });
+  const document = fakeRenderedDocument({ byteSize: 1000 });
+
+  const result = await service.sendCompletionNotice(task, LEAVE_WORKFLOW, document);
+
+  assert.equal(result, true);
+  assert.equal(mailer.sent[0]!.attachments, undefined);
+  assert.match(mailer.sent[0]!.text, /Download it here/);
+});
+
+test("sendCompletionNotice omits the attachment when DOCUMENT_ATTACH_TO_EMAIL is disabled", async () => {
+  const mailer = new FakeMailer();
+  const config = {
+    ...FAKE_CONFIG,
+    document: { attachToEmail: false, maxAttachmentBytes: 5_000_000 },
+  } as unknown as AppConfig;
+  const service = new NotificationService({ mailer, config });
+  const task = baseTask({
+    requirements: [REQUESTER_EMAIL_REQUIREMENT],
+    values: { requester_email: "student@example.com" },
+  });
+  const document = fakeRenderedDocument();
+
+  const result = await service.sendCompletionNotice(task, LEAVE_WORKFLOW, document);
+
+  assert.equal(result, true);
+  assert.equal(mailer.sent[0]!.attachments, undefined);
 });
 
 test("requester-facing notices no-op when no email-typed requirement is filled", async () => {
