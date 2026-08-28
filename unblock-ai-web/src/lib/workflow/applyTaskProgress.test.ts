@@ -70,6 +70,7 @@ function task(status: TaskStatus, steps: TaskStepState[], requirements: TaskRequ
     values: {},
     steps,
     audit: [],
+    completion_document: null,
     created_at: "2026-08-01T00:00:00.000Z",
     updated_at: "2026-08-02T00:00:00.000Z",
   };

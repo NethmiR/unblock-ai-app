@@ -69,6 +69,9 @@ export function JobStatusView({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
   /**
    * Requirement collection, opened over this page instead of on a route of its
    * own. `null` is closed; the value is the `GET /tasks/:id/next` response the
@@ -127,6 +130,33 @@ export function JobStatusView({
         err instanceof ApiError ? err.message : "Something went wrong cancelling this request. Please try again.",
       );
       setIsCancelling(false);
+    }
+  }
+
+  /**
+   * Fetches the completion-document PDF and hands it to the browser as a
+   * download - an object URL and a throwaway anchor, since a plain link
+   * would need the bearer token the browser can't attach itself.
+   */
+  async function downloadDocument() {
+    setIsDownloading(true);
+    setDownloadError(null);
+    try {
+      const { blob, filename } = await tasksApi.document(taskId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError(
+        err instanceof ApiError
+          ? err.message
+          : "Something went wrong downloading the record. Please try again.",
+      );
+    } finally {
+      setIsDownloading(false);
     }
   }
 
@@ -227,7 +257,7 @@ export function JobStatusView({
             <LockIcon />
             <span className="text-[15px] font-semibold tracking-tight">This request is closed</span>
           </div>
-          <p className="text-[14px] leading-relaxed text-muted">
+          <p className="mb-4 text-[14px] leading-relaxed text-muted">
             Every step has been approved, so the assistant is no longer available for this request.
             The full plan below stays available to view. Need something else?{" "}
             <Link href="/portal/jobs/new" className="font-medium text-accent">
@@ -235,6 +265,16 @@ export function JobStatusView({
             </Link>
             .
           </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={isDownloading}
+            onClick={downloadDocument}
+            className="rounded-control"
+          >
+            {isDownloading ? "Preparing download…" : "Download record (PDF)"}
+          </Button>
+          {downloadError && <p className="mt-3 text-[13px] text-danger">{downloadError}</p>}
         </Card>
       )}
 

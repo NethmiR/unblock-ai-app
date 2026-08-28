@@ -47,10 +47,18 @@ async function forward(request: Request, context: RouteContext): Promise<Respons
     return new NextResponse(null, { status: upstream.status });
   }
 
-  const responseBody = await upstream.text();
-  return new NextResponse(responseBody, {
+  // Streamed through rather than `.text()`d - stringifying would mangle a
+  // binary body like the completion-document PDF. This covers text and
+  // binary alike, so JSON responses ride through unchanged too.
+  const responseHeaders = new Headers({
+    "content-type": upstream.headers.get("content-type") ?? "application/json",
+  });
+  const disposition = upstream.headers.get("content-disposition");
+  if (disposition) responseHeaders.set("content-disposition", disposition);
+
+  return new NextResponse(upstream.body, {
     status: upstream.status,
-    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+    headers: responseHeaders,
   });
 }
 

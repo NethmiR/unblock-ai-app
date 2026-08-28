@@ -1,4 +1,4 @@
-import { apiRequest } from "./client";
+import { apiBlob, apiRequest } from "./client";
 import type { NextRequirementDto, RequirementValue, TaskDto, TaskStatus } from "@/types/task";
 import type { TaskStatusDto } from "@/types/approval";
 
@@ -41,4 +41,7 @@ export const tasksApi = {
       method: "PATCH",
       body: { status: "cancelled" },
     }),
+
+  /** Only meaningful for a completed task - the API 409s otherwise. */
+  document: (id: string) => apiBlob(`/tasks/${id}/document`),
 };

@@ -46,7 +46,8 @@ const INTENT_TITLE: Record<Kind, string> = {
  * it, so it is built at the call site rather than frozen here.
  */
 const INTENT_BODY: Record<"approved" | "unsent", string> = {
-  approved: "was approved and completed. Do you want to delete it from your requests?",
+  approved:
+    "was approved and completed. A PDF record was emailed to you when it completed - that copy is yours to keep, so deleting it here only removes the download from your requests. Do you want to delete it?",
   unsent:
     "has not gone to anyone for approval yet. Deleting it now discards the details you have entered so far. Are you sure?",
 };
