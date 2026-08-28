@@ -188,6 +188,25 @@ test("getApproverView on a used token returns already_decided true", async () =>
   assert.equal(view.decided_outcome, "approved");
 });
 
+test("getApproverView evaluates the workflow's computed values from the requester's answers", async () => {
+  const taskModel = new FakeTaskModel();
+  const base = finalizedTask(LEAVE_WORKFLOW, {
+    values: { departure_date: "2026-03-01", return_date: "2026-03-10" },
+  });
+  const inserted = await taskModel.insert(base);
+  const dispatched = dispatchAdvisorStep(inserted);
+  await taskModel.updateStepAndStatus(dispatched._id, dispatched.steps, TASK_STATUS.IN_PROGRESS);
+  const task = (await taskModel.findById(dispatched._id))!;
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const view = await service.getApproverView(token);
+
+  assert.deepEqual(view.computed, [
+    { label: "Total days between departure and return, inclusive.", value: "10" },
+  ]);
+});
+
 test("allowed_outcomes reflects only the outcomes the step declares", async () => {
   const taskModel = new FakeTaskModel();
   const task = await seedDispatchedTask(taskModel);

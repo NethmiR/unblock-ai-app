@@ -6,6 +6,7 @@ import { TaskService } from "./task.service.js";
 import { issueTokensForDispatched, verifyToken } from "../utils/approval/token.util.js";
 import { allowedOutcomes, resolveOutcomeAction } from "../utils/approval/outcome-resolver.util.js";
 import { formatRequirementValue } from "../utils/approval/answer-format.util.js";
+import { evaluateComputed } from "../utils/workflow/computed-evaluator.util.js";
 import { NotFoundError } from "../errors/not-found.error.js";
 import { ConflictError } from "../errors/conflict.error.js";
 import { ValidationError } from "../errors/validation.error.js";
@@ -110,7 +111,7 @@ export class ApprovalService {
       },
       approver: step.assignee,
       requester_answers: requesterAnswers,
-      computed: [],
+      computed: evaluateComputed(workflow, task.values),
       prior_decisions: priorDecisions,
       approvers,
       allowed_outcomes: allowedOutcomes(workflowStep),
