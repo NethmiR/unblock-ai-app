@@ -132,6 +132,35 @@ test("sendRejectionNotice contains the reason text verbatim", async () => {
   );
 });
 
+test("sendCompletionNotice does not mention an attachment or download link", async () => {
+  const mailer = new FakeMailer();
+  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
+  const task = baseTask({
+    requirements: [
+      {
+        key: "requester_email",
+        source: "input",
+        ref: "requester_email",
+        label: "Email",
+        description: null,
+        type: "email",
+        required: true,
+        validation: null,
+        collection_hint: null,
+        status: "filled",
+      },
+    ],
+    values: { requester_email: "student@example.com" },
+  });
+
+  const result = await service.sendCompletionNotice(task, LEAVE_WORKFLOW);
+
+  assert.equal(result, true);
+  assert.equal(mailer.sent[0]!.to, "student@example.com");
+  assert.equal(mailer.sent[0]!.attachments, undefined);
+  assert.doesNotMatch(mailer.sent[0]!.text, /attached|Download it here/);
+});
+
 test("requester-facing notices no-op when no email-typed requirement is filled", async () => {
   const mailer = new FakeMailer();
   const service = new NotificationService({ mailer, config: FAKE_CONFIG });

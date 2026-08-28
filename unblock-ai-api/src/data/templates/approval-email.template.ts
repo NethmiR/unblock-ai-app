@@ -16,6 +16,8 @@ export interface RejectionNoticeContext {
 export interface CompletionNoticeContext {
   taskReference: string;
   workflowTitle: string;
+  documentUrl: string | null;
+  hasAttachment: boolean;
 }
 
 export interface MoreInfoNoticeContext {
@@ -72,11 +74,25 @@ export function rejectionNoticeEmail(ctx: RejectionNoticeContext): RenderedEmail
 
 export function completionNoticeEmail(ctx: CompletionNoticeContext): RenderedEmail {
   const subject = `Request approved: ${ctx.workflowTitle} (${ctx.taskReference})`;
-  const text = `Your request for ${ctx.workflowTitle} (${ctx.taskReference}) has been approved and completed.`;
-  const html = wrap(
-    "Request approved",
+
+  const textLines = [
+    `Your request for ${ctx.workflowTitle} (${ctx.taskReference}) has been approved and completed.`,
+  ];
+  const htmlLines = [
     `<p>Your request for ${ctx.workflowTitle} (${ctx.taskReference}) has been approved and completed.</p>`,
-  );
+  ];
+
+  if (ctx.hasAttachment) {
+    textLines.push("A PDF record of this request is attached.");
+    htmlLines.push("<p>A PDF record of this request is attached.</p>");
+  }
+  if (ctx.documentUrl) {
+    textLines.push(`Download it here: ${ctx.documentUrl}`);
+    htmlLines.push(`<p><a href="${ctx.documentUrl}">Download the record</a></p>`);
+  }
+
+  const text = textLines.join("\n\n");
+  const html = wrap("Request approved", htmlLines.join("\n"));
   return { subject, text, html };
 }
 

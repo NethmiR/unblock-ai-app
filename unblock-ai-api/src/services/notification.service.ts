@@ -63,6 +63,8 @@ export class NotificationService {
     const email = completionNoticeEmail({
       taskReference: task.reference,
       workflowTitle: workflow.title,
+      documentUrl: null,
+      hasAttachment: false,
     });
 
     return this.dispatch(requesterEmail, email);
