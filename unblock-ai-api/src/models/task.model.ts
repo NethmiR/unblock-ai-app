@@ -46,10 +46,15 @@ export class TaskModel {
     }
   }
 
-  async findAll(filters: { session_id?: string; status?: TaskStatus }): Promise<TaskDocument[]> {
+  async findAll(filters: {
+    created_by?: string;
+    session_id?: string;
+    status?: TaskStatus;
+  }): Promise<TaskDocument[]> {
     try {
       const tasks = await this.collection();
       const query: Record<string, unknown> = {};
+      if (filters.created_by) query.created_by = filters.created_by;
       if (filters.session_id) query.session_id = filters.session_id;
       if (filters.status) query.status = filters.status;
       return await tasks.find(query).sort({ created_at: -1 }).toArray();

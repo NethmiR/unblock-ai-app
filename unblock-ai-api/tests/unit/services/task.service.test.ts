@@ -100,14 +100,14 @@ test("create() from an unmatched session throws ConflictError", async () => {
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW, matched: false });
 
-  await assert.rejects(() => service.create("session-1"), ConflictError);
+  await assert.rejects(() => service.create("session-1", "user-1"), ConflictError);
 });
 
 test("setValue() on a finalized task throws ConflictError", async () => {
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await taskModel.setStatus(task._id, "ready");
 
   await assert.rejects(
@@ -120,7 +120,7 @@ test("setValue() with an unknown key throws ValidationError", async () => {
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
 
   await assert.rejects(
     () => service.setValue(task._id, "not_a_real_key", "value"),
@@ -132,7 +132,7 @@ test("finalize() with a missing required requirement throws ValidationError nami
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
 
   await assert.rejects(() => service.finalize(task._id), (err: unknown) => {
     assert.ok(err instanceof ValidationError);
@@ -164,7 +164,7 @@ test("finalize() on the leave fixture: advisor_review is READY, the other two ar
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
 
   const finalized = await service.finalize(task._id);
@@ -182,7 +182,7 @@ test("finalize() attaches the collected advisor to advisor_review.assignee", asy
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
 
   const finalized = await service.finalize(task._id);
@@ -195,7 +195,7 @@ test("start() on a non-ready task throws ConflictError", async () => {
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
 
   await assert.rejects(() => service.start(task._id), ConflictError);
 });
@@ -204,7 +204,7 @@ test("start() dispatches advisor_review, issues a token, and moves the task to i
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
 
@@ -221,7 +221,7 @@ test("getStatus() surfaces the current pending step before any decision", async 
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -237,7 +237,7 @@ test("reopenForMoreInfo() appends exactly one pending requirement and returns st
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -263,7 +263,7 @@ test("re-finalize after a reopen dispatches only the reopened step, leaving appr
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -302,7 +302,7 @@ test("delete() on a task out for approval throws ConflictError and removes nothi
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -315,7 +315,7 @@ test("delete() on a ready-to-send task throws ConflictError", async () => {
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
 
@@ -330,7 +330,7 @@ test("delete() removes a still-collecting task that was never sent to an approve
 
   // Straight from create(): steps are compiled but none has a token, a
   // notification, or an outcome, so nothing is out in anybody's inbox.
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
 
   await service.delete(task._id, ANONYMOUS_ACTOR);
 
@@ -345,7 +345,7 @@ test("delete() on a task reopened for more info throws ConflictError despite col
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -367,7 +367,7 @@ test("delete() removes a completed task and records who did it", async () => {
   const auditLogModel = new FakeAuditLogModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW, auditLogModel });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await taskModel.setStatus(task._id, "completed");
 
   await service.delete(task._id, { id: "u-1", email: "dean@uni.edu", role: "requester" }, "req-9");
@@ -391,7 +391,7 @@ test("delete() is allowed once a live task has been cancelled", async () => {
 
   // Taken all the way out for approval first, so `cancel` is what makes this
   // deletable - a task left `collecting` would have qualified on its own.
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -416,7 +416,7 @@ test("getDocument() on a task still in progress throws ConflictError", async () 
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -435,7 +435,7 @@ test("getDocument() on a completed task with no stored record regenerates and pe
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -457,7 +457,7 @@ test("getDocument() on a completed task with a stored record re-renders using th
   const taskModel = new FakeTaskModel();
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
 
-  const task = await service.create("session-1");
+  const task = await service.create("session-1", "user-1");
   await fillAllRequirements(service, task._id);
   await service.finalize(task._id);
   await service.start(task._id);
@@ -467,4 +467,19 @@ test("getDocument() on a completed task with a stored record re-renders using th
   const second = await service.getDocument(task._id);
 
   assert.equal(second.sha256, first.sha256);
+});
+
+test("list() scoped to created_by only returns that user's tasks", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const own = await service.create("session-1", "user-1");
+  await service.create("session-2", "user-2");
+
+  const tasks = await service.list({ created_by: "user-1" });
+
+  assert.deepEqual(
+    tasks.map((t) => t._id.toString()),
+    [own._id.toString()],
+  );
 });

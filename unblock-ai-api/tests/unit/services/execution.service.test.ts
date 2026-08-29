@@ -27,6 +27,7 @@ function finalizedTask(workflow: WorkflowDefinition): TaskDocument {
     _id: new ObjectId(),
     reference: "REF-0001",
     session_id: "session-1",
+    created_by: "user-1",
     workflow_id: workflow.workflow_id,
     version: 1,
     status: TASK_STATUS.READY,

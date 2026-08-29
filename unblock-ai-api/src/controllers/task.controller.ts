@@ -3,6 +3,7 @@ import { TaskService } from "../services/task.service.js";
 import { optionalString, requireNonEmptyString, requireOneOf } from "../utils/http/request-validator.util.js";
 import { serializeTask, serializeTaskSummary } from "../utils/http/serializer.util.js";
 import { actorFromRequest } from "../utils/http/actor.util.js";
+import { UnauthorizedError } from "../errors/unauthorized.error.js";
 import { TASK_STATUS } from "../data/constants/status.constant.js";
 import type { TaskStatus } from "../lib/types/task/task.type.js";
 
@@ -19,7 +20,10 @@ export class TaskController {
 
   createTask = async (req: Request, res: Response): Promise<void> => {
     const sessionId = requireNonEmptyString(req.body, "session_id");
-    const task = await this.taskService.create(sessionId);
+
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+
+    const task = await this.taskService.create(sessionId, req.user.id);
     res.status(201).json(serializeTask(task));
   };
 
@@ -84,10 +88,18 @@ export class TaskController {
     res.status(204).send();
   };
 
+  /**
+   * `portal` callers only ever see their own requests - `created_by` is
+   * forced from the authenticated session, never from a client-supplied
+   * filter. `admin` is the one audience trusted to list across all requesters.
+   */
   listTasks = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+
     const sessionId = optionalString(req.query, "session_id");
     const status = optionalString(req.query, "status") as TaskStatus | null;
-    const filters: { session_id?: string; status?: TaskStatus } = {};
+    const filters: { created_by?: string; session_id?: string; status?: TaskStatus } = {};
+    if (req.user.audience === "portal") filters.created_by = req.user.id;
     if (sessionId) filters.session_id = sessionId;
     if (status && (Object.values(TASK_STATUS) as string[]).includes(status)) filters.status = status;
     const tasks = await this.taskService.list(filters);

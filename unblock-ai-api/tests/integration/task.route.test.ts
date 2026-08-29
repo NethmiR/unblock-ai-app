@@ -9,7 +9,13 @@ import { ConflictError } from "../../src/errors/conflict.error.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
 import { NotFoundError } from "../../src/errors/not-found.error.js";
 import { TASK_STATUS, REQUIREMENT_STATUS } from "../../src/data/constants/status.constant.js";
-import { portalAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import {
+  adminAuthHeader,
+  portalAuthHeader,
+  startTestServer,
+  TEST_PORTAL_ROW,
+  type TestServer,
+} from "../helpers/test-server.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { DraftService } from "../../src/services/draft.service.js";
@@ -26,6 +32,7 @@ function fakeTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
     _id: "64b64b64b64b64b64b64b64" as unknown as TaskDocument["_id"],
     reference: "TASK-2026-00001",
     session_id: "s1",
+    created_by: "user-1",
     workflow_id: "wf_1",
     version: 1,
     status: TASK_STATUS.COLLECTING,
@@ -48,6 +55,8 @@ interface FakeTaskServiceOptions {
   finalizeError?: Error;
   documentResult?: RenderedDocument;
   documentError?: Error;
+  listResult?: TaskDocument[];
+  onList?: (filters: { created_by?: string; session_id?: string; status?: string }) => void;
 }
 
 function fakeTaskService(options: FakeTaskServiceOptions = {}): TaskService {
@@ -73,8 +82,9 @@ function fakeTaskService(options: FakeTaskServiceOptions = {}): TaskService {
     cancel() {
       return Promise.resolve(fakeTask({ status: TASK_STATUS.CANCELLED }));
     },
-    list() {
-      return Promise.resolve([]);
+    list(filters: { created_by?: string; session_id?: string; status?: string }) {
+      options.onList?.(filters);
+      return Promise.resolve(options.listResult ?? []);
     },
     getDocument() {
       if (options.documentError) return Promise.reject(options.documentError);
@@ -157,6 +167,32 @@ test("POST /api/tasks happy path returns 201 with id, reference, and status", as
     assert.ok(body.id);
     assert.equal(body.reference, "TASK-2026-00001");
     assert.equal(body.status, "collecting");
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/tasks as a portal user forces created_by to their own id, ignoring any client-supplied value", async () => {
+  let receivedFilters: { created_by?: string; session_id?: string; status?: string } | undefined;
+  const server = await buildServer(fakeTaskService({ onList: (filters) => (receivedFilters = filters) }));
+  try {
+    const res = await fetch(`${server.baseUrl}/api/tasks?created_by=someone-else`, {
+      headers: portalAuthHeader(),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(receivedFilters?.created_by, TEST_PORTAL_ROW.id);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/tasks as an admin is not scoped to a single requester", async () => {
+  let receivedFilters: { created_by?: string; session_id?: string; status?: string } | undefined;
+  const server = await buildServer(fakeTaskService({ onList: (filters) => (receivedFilters = filters) }));
+  try {
+    const res = await fetch(`${server.baseUrl}/api/tasks`, { headers: adminAuthHeader() });
+    assert.equal(res.status, 200);
+    assert.equal(receivedFilters?.created_by, undefined);
   } finally {
     await server.close();
   }
