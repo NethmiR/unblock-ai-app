@@ -184,6 +184,22 @@ without a database or a network:
    `status` to `collecting`. Re-finalizing after a reopen re-dispatches only the
    reopened step — it must not re-seed the whole graph, which would silently wipe
    already-recorded approvals.
+6. **Completion documents** (`src/services/completion-document.service.ts` ·
+   `src/utils/document/` · `src/services/document/` — see
+   [completion-document-email-phase-plan.md](completion-document-email-phase-plan.md)) —
+   when the last required step reaches its outcome (`result.completed === true`), a
+   PDF record of the whole request is generated: every requester-supplied value in
+   the workflow template's declared order, calculated values, follow-up answers, and
+   an approval trail (step, designation, approver name/email, decision) built from
+   `task.steps` in workflow step order. It is attached to the completion email
+   (`DOCUMENT_ATTACH_TO_EMAIL`, default on) and independently downloadable from
+   `GET /tasks/:id/document`. Nothing is stored but a small metadata record
+   (`filename`, `byte_size`, `sha256`) — the task is immutable and its workflow
+   version-pinned once completed, so the PDF is re-rendered deterministically from
+   that metadata on every download rather than kept as a blob. Generation never
+   throws into the decision path (`DOCUMENT_ENABLED=false` or a renderer failure both
+   just skip it silently) — the same failure-isolation discipline as the rest of
+   notification dispatch.
 
 **`GET /tasks/:id/status`** is the requester-facing view built on top of this: current
 pending steps, and — critically — for a `rejected` task, **who** rejected it, **at
@@ -296,7 +312,7 @@ which step**, and **why**, lifted straight from the terminating step's `reason`.
 
 **Documentation locations** (per-subproject, unusually good and current — check these before implementing anything new):
 - `unblock-ai-api/docs/architecture/project-overview.md` — the best single entry point for the backend
-- `unblock-ai-api/docs/api/api-documentation.md` — all 33 endpoints with request/response bodies and per-route auth requirements
+- `unblock-ai-api/docs/api/api-documentation.md` — all 34 endpoints with request/response bodies and per-route auth requirements
 - `unblock-ai-api/docs/architecture/rag-implementation-guide.md` — retrieval design
 - `unblock-ai-api/docs/postman/` — runnable collection that chains ids automatically
 - `unblock-ai-web/docs/fe-api-migration-plan.md` — FE/API contract history (mostly resolved; see below)
@@ -316,7 +332,7 @@ Full detail in `unblock-ai-api/docs/api/api-documentation.md`. Base URL: `http:/
 | Workflows | `POST /workflows/extract` (preview) · `POST /workflows` · `GET /workflows` · `GET /workflows/:id` · `PUT /workflows/:id` · `POST /workflows/:id/validate` · `DELETE /workflows/:id` · `GET /workflows/deletions` · `GET /workflows/:id/record` · `PATCH /workflows/:id/review` | mostly `admin`; `GET` routes are `requireAuth()` |
 | Drafts | `POST /drafts` · `GET /drafts` · `GET /drafts/:id` · `POST /drafts/:id/extract` | `admin` |
 | Selection | `POST /selection/sessions` · `POST /selection/sessions/:id/answer` · `POST /selection/sessions/:id/choose` · `GET /selection/sessions/:id/workflow` | `requireAuth()` |
-| Tasks | `POST /tasks` · `GET /tasks` · `GET /tasks/:id` · `GET /tasks/:id/next` · `POST /tasks/:id/values` · `POST /tasks/:id/finalize` · `PATCH /tasks/:id/status` · `POST /tasks/:id/start` · `GET /tasks/:id/status` | `requireAuth()` |
+| Tasks | `POST /tasks` · `GET /tasks` · `GET /tasks/:id` · `GET /tasks/:id/next` · `POST /tasks/:id/values` · `POST /tasks/:id/finalize` · `PATCH /tasks/:id/status` · `POST /tasks/:id/start` · `GET /tasks/:id/status` · `GET /tasks/:id/document` | `requireAuth()` |
 | Approvals | `GET /approvals/:token` · `POST /approvals/:token/decision` | none — the approval token IS the auth |
 
 `admin` means `requireRole("admin")`: a `portal` token gets `403`, no token gets `401`.
