@@ -55,6 +55,18 @@ export class TaskController {
     res.json(status);
   };
 
+  /**
+   * The one endpoint in this controller that writes to `res` directly instead
+   * of going through a JSON serializer - the response body is the PDF itself.
+   */
+  getTaskDocument = async (req: Request, res: Response): Promise<void> => {
+    const document = await this.taskService.getDocument(req.params.id as string);
+    res.setHeader("Content-Type", document.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${document.filename}"`);
+    res.setHeader("Content-Length", String(document.byteSize));
+    res.send(document.buffer);
+  };
+
   updateStatus = async (req: Request, res: Response): Promise<void> => {
     requireOneOf(req.body, "status", ["cancelled"] as const);
     const task = await this.taskService.cancel(req.params.id as string);

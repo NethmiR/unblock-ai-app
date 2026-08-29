@@ -184,12 +184,54 @@ deliberately two separate middleware layers, not one.
 
 **Error handling**: a single error-handling middleware ([src/middlewares/error-handler.middleware.ts](../../src/middlewares/error-handler.middleware.ts)) reads `statusCode` and `toJSON()` off any `BaseError` subclass and responds accordingly; anything else is logged with its stack and answered with a generic `500`. See [error-handling.md](./error-handling.md) for the full hierarchy. All route handlers are wrapped in [src/middlewares/async-handler.middleware.ts](../../src/middlewares/async-handler.middleware.ts) so rejected promises reach this middleware instead of crashing the process.
 
-## 10. Supporting pieces
+## 10. Completion documents (PDF record on approval)
+
+When a task's last required approval step is decided, `ApprovalService.sendDecisionNotifications`
+generates a durable record of the whole request and emails it alongside the existing
+completion notice. See [../../../docs/completion-document-email-phase-plan.md](../../../docs/completion-document-email-phase-plan.md)
+for the full design rationale; summary of what exists in code:
+
+- **Pure builder** ([src/utils/document/completion-document.util.ts](../../src/utils/document/completion-document.util.ts)) —
+  `buildCompletionDocument()` assembles a `CompletionDocument` (header, request-detail
+  fields in `workflow.inputs` declaration order, calculated values, follow-up answers
+  from the request-more-info loop, and one `ApprovalRow` per approval step in workflow
+  order) with no I/O at all, mirroring `ExecutionService`/`PlannerService`.
+- **Computed-value evaluator** ([src/utils/workflow/computed-evaluator.util.ts](../../src/utils/workflow/computed-evaluator.util.ts)) —
+  evaluates `workflow.computed` (`date_diff_days`, `sum`, `difference`, `multiply`,
+  `count`, `lookup`, `constant`) against the task's collected values; never throws,
+  resolving anything malformed or forward-referenced to `null` and omitting it.
+- **Renderer, pluggable** ([src/services/document/](../../src/services/document/)) — `IDocumentRenderer`
+  behind `createDocumentRenderer(format)`, mirroring `services/mailer/`: `PdfDocumentRenderer`
+  (`pdfkit`, Standard-14 fonts, no headless browser) for real output, `TextDocumentRenderer`
+  for tests and console runs. The PDF's `CreationDate` is stamped from the task's
+  `completion_document.generated_at`, not `new Date()`, so re-rendering the same document
+  is byte-for-byte deterministic — verified by comparing `sha256` hashes.
+- **`CompletionDocumentService`** ([src/services/completion-document.service.ts](../../src/services/completion-document.service.ts)) —
+  composes the builder, evaluator, and renderer behind one `generate()` call that never
+  throws (`config.document.enabled === false` or any internal failure both return `null`),
+  the same failure-isolation discipline as `NotificationService.dispatch()`. `ApprovalService`
+  calls it once, on the `result.completed === true` branch, before sending the completion
+  email; a successful render is attached to that email (when `DOCUMENT_ATTACH_TO_EMAIL` is
+  on and under `DOCUMENT_MAX_ATTACHMENT_BYTES`) and its metadata — not its bytes —
+  persisted onto the task as `completion_document` (`filename`, `byte_size`, `sha256`,
+  `emailed_to`, `emailed_at`).
+- **No bytes are stored.** A completed task is immutable and its workflow is
+  version-pinned, so `GET /api/tasks/:id/document` ([../api/api-documentation.md](../api/api-documentation.md) §7.10)
+  regenerates the PDF on every call from the persisted `generated_at` instead of reading
+  a blob store; a hash mismatch against the stored `sha256` is logged as drift, not raised.
+- **Config**: `document.config.ts` owns five `DOCUMENT_*` variables (`DOCUMENT_ENABLED`,
+  `DOCUMENT_ATTACH_TO_EMAIL`, `DOCUMENT_FORMAT`, `DOCUMENT_INSTITUTION_NAME`,
+  `DOCUMENT_MAX_ATTACHMENT_BYTES`) — see [../guides/configuration.md](../guides/configuration.md).
+- **Smoke test**: `npm run smoke-test:document -- <task-id> [out.pdf]`
+  ([scripts/smoke-test-document.script.ts](../../scripts/smoke-test-document.script.ts)) renders
+  a real task's record to a local file for eyeballing, independent of the completion path.
+
+## 11. Supporting pieces
 
 - **Logger** ([src/utils/shared/logger.util.ts](../../src/utils/shared/logger.util.ts)): structured JSON logger (`debug`/`info`/`warn`/`error`) writing single-line JSON to stdout/stderr with timestamps.
-- **Smoke test scripts** ([scripts/smoke-test-azure.script.ts](../../scripts/smoke-test-azure.script.ts), [scripts/smoke-test-embeddings.script.ts](../../scripts/smoke-test-embeddings.script.ts)): sanity-check Azure OpenAI chat and embeddings connectivity independent of the extraction pipeline.
+- **Smoke test scripts** ([scripts/smoke-test-azure.script.ts](../../scripts/smoke-test-azure.script.ts), [scripts/smoke-test-embeddings.script.ts](../../scripts/smoke-test-embeddings.script.ts), [scripts/smoke-test-document.script.ts](../../scripts/smoke-test-document.script.ts)): sanity-check Azure OpenAI chat/embeddings connectivity and completion-document rendering, each independent of the paths that normally trigger them.
 
-## 11. Test suite
+## 12. Test suite
 
 Three tiers, matching the test scripts in [package.json](../../package.json):
 
@@ -202,7 +244,7 @@ Three tiers, matching the test scripts in [package.json](../../package.json):
   - `extraction-accuracy.live.test.ts` — asserts the model correctly extracts *specific* structural details from the two worked examples (right step IDs, correct `depends_on` chains, correct condition operator/operands, correct loop-back/termination outcomes, correct `context_from_steps` bindings).
   - `generalisation.live.test.ts`, `consistency.live.test.ts`, `robustness.live.test.ts`, `selection-quality.live.test.ts` — extraction on an unseen fixture, repeatability across repeated calls, behavior on messy/edge-case/non-workflow input, and selector agent quality, respectively.
 
-## 12. Sample data (used as both few-shot examples and test gold data)
+## 13. Sample data (used as both few-shot examples and test gold data)
 
 | File | Institution scenario |
 |---|---|
@@ -212,7 +254,7 @@ Three tiers, matching the test scripts in [package.json](../../package.json):
 
 These live under [src/data/samples/](../../src/data/samples/) (`input/`, `expected/`, `selection/`, `demo-drafts/`). The same two fully-worked fixtures (`it_faculty_overseas_leave`, `departmental_event_workshop`) serve **three roles at once**: few-shot prompt examples, schema/graph validation test fixtures, and live extraction-accuracy assertions — meaning any change to the schema or prompt must keep these three consistent.
 
-## 13. What is explicitly out of scope / not yet built
+## 14. What is explicitly out of scope / not yet built
 
 - **No workflow execution engine** — nothing runs a saved workflow instance, resolves actors against a real directory, evaluates conditions against real data, or sends real notifications. The schema is designed to support this later, but none of it exists yet.
 - **No self-registration, password reset, or password change.** Three seeded users (one admin, two portal), changed by re-running `npm run seed:auth --force`.
@@ -220,7 +262,7 @@ These live under [src/data/samples/](../../src/data/samples/) (`input/`, `expect
 - **No rate limiting by IP** — only per-account failed-attempt counting (§8.1), and lockout enforcement itself is off by default (`AUTH_MAX_FAILED_ATTEMPTS=0`).
 - **No directory/identity service integration** (needed to actually resolve `dynamic`/`static` actors to real people/offices) — this is unrelated to and not fixed by the auth work in §8.1, which authenticates *who is calling the API*, not who a workflow's actors resolve to.
 
-## 14. Quick reference — how to run it
+## 15. Quick reference — how to run it
 
 See [../guides/running-the-app.md](../guides/running-the-app.md) for the full setup guide. Quick version:
 

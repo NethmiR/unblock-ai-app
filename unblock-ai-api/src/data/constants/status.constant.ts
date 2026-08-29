@@ -59,3 +59,7 @@ export const OUTCOME_ACTION = {
   TERMINATE_WORKFLOW: "terminate_workflow",
   REOPEN_INPUT: "reopen_input",
 } as const;
+
+export const TASK_AUDIT_TYPE = {
+  DOCUMENT_GENERATED: "completion_document_generated",
+} as const;

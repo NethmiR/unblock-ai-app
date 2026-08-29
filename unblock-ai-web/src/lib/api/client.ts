@@ -91,3 +91,49 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
 /** SWR's fetcher signature. Lets any component do `useSWR("/workflows", fetcher)`. */
 export const fetcher = <T,>(path: string) => apiRequest<T>(path);
+
+/** Pulled out of a `Content-Disposition: attachment; filename="X.pdf"` header. */
+function filenameFromDisposition(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return match ? match[1] : null;
+}
+
+/**
+ * `apiRequest`'s sibling for a binary response body (the completion-document
+ * PDF, so far) - kept as one more chokepoint rather than a second `fetch`
+ * call site, so it shares `apiRequest`'s two-branch URL logic and its single
+ * `ApiError` type.
+ */
+export async function apiBlob(path: string): Promise<{ blob: Blob; filename: string }> {
+  const headers: Record<string, string> = {};
+
+  let url: string;
+  if (typeof window === "undefined") {
+    const { cookies } = await import("next/headers");
+    const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    url = `${DIRECT_API_URL}${path}`;
+  } else {
+    url = `${PROXY_URL}${path}`;
+  }
+
+  const response = await fetch(url, {
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new ApiError(
+      payload?.error ?? `Request failed with status ${response.status}`,
+      response.status,
+      payload?.code,
+      payload?.details,
+    );
+  }
+
+  const blob = await response.blob();
+  const filename = filenameFromDisposition(response.headers.get("content-disposition")) ?? "document.pdf";
+  return { blob, filename };
+}

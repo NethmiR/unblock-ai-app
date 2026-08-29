@@ -9,6 +9,8 @@ import type { IMailer } from "./mailer/mailer.interface.js";
 import type { AppConfig } from "../lib/types/config/config.type.js";
 import type { TaskDocument, TaskStepState } from "../lib/types/task/task.type.js";
 import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
+import type { MailAttachment } from "../lib/types/approval/mail.type.js";
+import type { RenderedDocument } from "../lib/types/document/document.type.js";
 
 export interface NotificationServiceOptions {
   mailer: IMailer;
@@ -43,7 +45,7 @@ export class NotificationService {
   }
 
   async sendRejectionNotice(task: TaskDocument, workflow: WorkflowDefinition, step: TaskStepState): Promise<boolean> {
-    const requesterEmail = this.requesterEmail(task);
+    const requesterEmail = this.requesterEmailOf(task);
     if (!requesterEmail) return false;
 
     const email = rejectionNoticeEmail({
@@ -56,20 +58,35 @@ export class NotificationService {
     return this.dispatch(requesterEmail, email);
   }
 
-  async sendCompletionNotice(task: TaskDocument, workflow: WorkflowDefinition): Promise<boolean> {
-    const requesterEmail = this.requesterEmail(task);
+  async sendCompletionNotice(
+    task: TaskDocument,
+    workflow: WorkflowDefinition,
+    document: RenderedDocument | null = null,
+  ): Promise<boolean> {
+    const requesterEmail = this.requesterEmailOf(task);
     if (!requesterEmail) return false;
+
+    const attach =
+      document !== null &&
+      this.config.document.attachToEmail &&
+      document.byteSize <= this.config.document.maxAttachmentBytes;
 
     const email = completionNoticeEmail({
       taskReference: task.reference,
       workflowTitle: workflow.title,
+      documentUrl: `${this.config.mail.appPublicUrl}/portal/jobs/${task._id}`,
+      hasAttachment: attach,
     });
 
-    return this.dispatch(requesterEmail, email);
+    const attachments: MailAttachment[] | undefined = attach
+      ? [{ filename: document.filename, content: document.buffer, contentType: document.contentType }]
+      : undefined;
+
+    return this.dispatch(requesterEmail, email, attachments);
   }
 
   async sendMoreInfoNotice(task: TaskDocument, workflow: WorkflowDefinition, step: TaskStepState): Promise<boolean> {
-    const requesterEmail = this.requesterEmail(task);
+    const requesterEmail = this.requesterEmailOf(task);
     if (!requesterEmail) return false;
 
     const email = moreInfoNoticeEmail({
@@ -85,7 +102,7 @@ export class NotificationService {
   // No workflow currently declares an `email`-typed requester input (see
   // approval-execution-implementation-plan.md Phase 3 notes) — requester-facing sends
   // no-op via dispatch()'s caller checking this return value, same as any failed send.
-  private requesterEmail(task: TaskDocument): string | null {
+  requesterEmailOf(task: TaskDocument): string | null {
     for (const requirement of task.requirements) {
       if (requirement.source !== "input" || requirement.type !== "email") continue;
       const value = task.values[requirement.key];
@@ -94,9 +111,13 @@ export class NotificationService {
     return null;
   }
 
-  private async dispatch(to: string, email: { subject: string; text: string; html: string }): Promise<boolean> {
+  private async dispatch(
+    to: string,
+    email: { subject: string; text: string; html: string },
+    attachments?: MailAttachment[],
+  ): Promise<boolean> {
     try {
-      const result = await this.mailer.send({ to, ...email });
+      const result = await this.mailer.send({ to, ...email, attachments });
       if (!result.sent) {
         logger.error("mail send returned unsent", { to, subject: email.subject, error: result.error });
       }

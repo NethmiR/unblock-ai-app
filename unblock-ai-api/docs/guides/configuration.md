@@ -38,8 +38,13 @@ configs into a single frozen `config` object that every other module imports.
 | `APP_PUBLIC_URL` | no | `http://localhost:3001` | `src/config/mail.config.ts` | `config.mail.appPublicUrl` — base URL used to build `/approvals/:token` links in emails |
 | `APPROVAL_TOKEN_SECRET` | \*\* | `""` | `src/config/mail.config.ts` | `config.mail.tokenSecret` — HMAC-SHA256 signing key for approval tokens (`token.util.ts`); **required when `MAIL_TRANSPORT=smtp`**, throwing `ConfigurationError` at startup — an empty dev default is otherwise tolerated |
 | `APPROVAL_TOKEN_TTL_DAYS` | no | `14` | `src/config/mail.config.ts` | `config.mail.tokenTtlDays` — approval token lifetime, in days |
+| `DOCUMENT_ENABLED` | no | `true` | `src/config/document.config.ts` | `config.document.enabled` — generate a completion-document record at all; `false` reproduces pre-feature behaviour exactly |
+| `DOCUMENT_ATTACH_TO_EMAIL` | no | `true` | `src/config/document.config.ts` | `config.document.attachToEmail` — attach the rendered record to the completion email, in addition to the portal download |
+| `DOCUMENT_FORMAT` | no | `pdf` | `src/config/document.config.ts` | `config.document.format` — `pdf` \| `text`, selects `IDocumentRenderer` at composition root |
+| `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | `src/config/document.config.ts` | `config.document.institutionName` — printed in the record's footer |
+| `DOCUMENT_MAX_ATTACHMENT_BYTES` | no | `5000000` | `src/config/document.config.ts` | `config.document.maxAttachmentBytes` — above this size the record is download-only, dropped from the email attachment |
 
-31 variables total (\* = required, throws at startup if missing/empty; \*\* = only
+36 variables total (\* = required, throws at startup if missing/empty; \*\* = only
 `APPROVAL_TOKEN_SECRET` is conditionally required, when `MAIL_TRANSPORT=smtp` — see
 below. The four `SMTP_*` vars are not validated at startup at all; a misconfigured
 SMTP transport fails at send time instead, caught and logged by
@@ -52,7 +57,7 @@ see [../plans/restructure-implementation-plan.md](../plans/restructure-implement
 
 ## Parsing helpers
 
-`src/utils/shared/env-parse.util.ts` exports four pure functions used by every
+`src/utils/shared/env-parse.util.ts` exports five pure functions used by every
 config module above; none of them read `process.env` themselves — they take the raw
 value as an argument, which is why `env.config.ts` is the only file that touches
 `process.env` directly:
@@ -60,6 +65,7 @@ value as an argument, which is why `env.config.ts` is the only file that touches
 - `requireString(name, raw)` — throws `ConfigurationError` if empty/undefined.
 - `optionalString(name, raw, fallback)`
 - `parseNumber(name, raw, fallback)` — throws if present but non-numeric.
+- `parseBoolean(name, raw, fallback)` — throws if present but not `"true"`/`"false"`.
 - `parseEnum(name, raw, allowed, fallback)` — throws if present but not one of `allowed`.
 
 `mail.config.ts` adds one check of its own, outside these four helpers: after

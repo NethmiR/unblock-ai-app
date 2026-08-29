@@ -5,6 +5,8 @@ import { ApprovalService } from "../../../src/services/approval.service.js";
 import { ExecutionService } from "../../../src/services/execution.service.js";
 import { NotificationService } from "../../../src/services/notification.service.js";
 import { TaskService } from "../../../src/services/task.service.js";
+import { CompletionDocumentService } from "../../../src/services/completion-document.service.js";
+import { TextDocumentRenderer } from "../../../src/services/document/text.document.js";
 import { PlannerService } from "../../../src/services/planner.service.js";
 import { issueToken } from "../../../src/utils/approval/token.util.js";
 import { NotFoundError } from "../../../src/errors/not-found.error.js";
@@ -15,18 +17,33 @@ import { FakeAuditLogModel, FakeTaskModel } from "../../helpers/fake-model.helpe
 import { AuditService } from "../../../src/services/audit.service.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
 import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
+import type { IDocumentRenderer } from "../../../src/services/document/document.interface.js";
 import type { MailMessage, MailSendResult } from "../../../src/lib/types/approval/mail.type.js";
 import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
 import type { WorkflowService } from "../../../src/services/workflow.service.js";
 import type { TaskDocument, TaskStepState } from "../../../src/lib/types/task/task.type.js";
 import type { WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
+import type { CompletionDocument, RenderedDocument } from "../../../src/lib/types/document/document.type.js";
 
 const LEAVE_WORKFLOW = loadExpectedFixture("it_faculty_overseas_leave.json");
 const SECRET = "test-secret";
 
 const FAKE_CONFIG = {
   mail: { appPublicUrl: "https://unblock.example", tokenSecret: SECRET, tokenTtlDays: 14 },
+  document: {
+    enabled: true,
+    attachToEmail: true,
+    format: "text",
+    institutionName: "Unblock AI",
+    maxAttachmentBytes: 5_000_000,
+  },
 } as unknown as AppConfig;
+
+class ThrowingDocumentRenderer implements IDocumentRenderer {
+  render(_doc: CompletionDocument): Promise<RenderedDocument> {
+    return Promise.reject(new Error("renderer exploded"));
+  }
+}
 
 class FakeMailer implements IMailer {
   readonly sent: MailMessage[] = [];
@@ -66,6 +83,7 @@ function finalizedTask(workflow: WorkflowDefinition, overrides: Partial<TaskDocu
     values: {},
     steps: seeded,
     audit: [],
+    completion_document: null,
     created_at: now,
     updated_at: now,
     ...overrides,
@@ -84,10 +102,19 @@ function dispatchAdvisorStep(task: TaskDocument): TaskDocument {
   return { ...task, steps };
 }
 
-function build(taskModel: FakeTaskModel, workflow: WorkflowDefinition = LEAVE_WORKFLOW) {
+function build(
+  taskModel: FakeTaskModel,
+  workflow: WorkflowDefinition = LEAVE_WORKFLOW,
+  options: { config?: AppConfig; renderer?: IDocumentRenderer } = {},
+) {
+  const config = options.config ?? FAKE_CONFIG;
   const mailer = new FakeMailer();
-  const notificationService = new NotificationService({ mailer, config: FAKE_CONFIG });
+  const notificationService = new NotificationService({ mailer, config });
   const executionService = new ExecutionService();
+  const completionDocumentService = new CompletionDocumentService({
+    renderer: options.renderer ?? new TextDocumentRenderer(),
+    config,
+  });
   const taskService = new TaskService({
     taskModel: taskModel as unknown as ConstructorParameters<typeof TaskService>[0]["taskModel"],
     selectionService: {} as unknown as ConstructorParameters<typeof TaskService>[0]["selectionService"],
@@ -100,7 +127,8 @@ function build(taskModel: FakeTaskModel, workflow: WorkflowDefinition = LEAVE_WO
         typeof AuditService
       >[0]["auditLogModel"],
     }),
-    config: FAKE_CONFIG,
+    completionDocumentService,
+    config,
   });
   const service = new ApprovalService({
     taskModel: taskModel as unknown as ConstructorParameters<typeof ApprovalService>[0]["taskModel"],
@@ -108,7 +136,8 @@ function build(taskModel: FakeTaskModel, workflow: WorkflowDefinition = LEAVE_WO
     executionService,
     notificationService,
     taskService,
-    config: FAKE_CONFIG,
+    completionDocumentService,
+    config,
   });
   return { service, mailer };
 }
@@ -185,6 +214,25 @@ test("getApproverView on a used token returns already_decided true", async () =>
 
   assert.equal(view.already_decided, true);
   assert.equal(view.decided_outcome, "approved");
+});
+
+test("getApproverView evaluates the workflow's computed values from the requester's answers", async () => {
+  const taskModel = new FakeTaskModel();
+  const base = finalizedTask(LEAVE_WORKFLOW, {
+    values: { departure_date: "2026-03-01", return_date: "2026-03-10" },
+  });
+  const inserted = await taskModel.insert(base);
+  const dispatched = dispatchAdvisorStep(inserted);
+  await taskModel.updateStepAndStatus(dispatched._id, dispatched.steps, TASK_STATUS.IN_PROGRESS);
+  const task = (await taskModel.findById(dispatched._id))!;
+  const { service } = build(taskModel);
+  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+
+  const view = await service.getApproverView(token);
+
+  assert.deepEqual(view.computed, [
+    { label: "Total days between departure and return, inclusive.", value: "10" },
+  ]);
 });
 
 test("allowed_outcomes reflects only the outcomes the step declares", async () => {
@@ -373,4 +421,105 @@ test("requesting more info reopens the step, clears its token, and moves the tas
   const followup = updated!.requirements.find((r) => r.key === "followup:advisor_review:1");
   assert.ok(followup);
   assert.equal(followup?.label, "Please attach your travel itinerary.");
+});
+
+async function seedDispatchedTaskWithRequesterEmail(taskModel: FakeTaskModel): Promise<TaskDocument> {
+  const base = finalizedTask(LEAVE_WORKFLOW, { values: { requester_email: "student@example.com" } });
+  const inserted = await taskModel.insert(base);
+  const dispatched = dispatchAdvisorStep(inserted);
+  await taskModel.updateStepAndStatus(dispatched._id, dispatched.steps, TASK_STATUS.IN_PROGRESS);
+  return (await taskModel.findById(dispatched._id))!;
+}
+
+async function approveStep(
+  taskModel: FakeTaskModel,
+  service: ApprovalService,
+  taskId: TaskDocument["_id"],
+  stepId: string,
+) {
+  const task = (await taskModel.findById(taskId))!;
+  const token = task.steps.find((s) => s.step_id === stepId)!.approval_token!;
+  return service.submitDecision(token, "approved", null);
+}
+
+test("approving the final step generates a document, attaches it, and persists completion_document", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTaskWithRequesterEmail(taskModel);
+  const { service, mailer } = build(taskModel);
+
+  await approveStep(taskModel, service, task._id, "advisor_review");
+  await approveStep(taskModel, service, task._id, "hod_review");
+  const result = await approveStep(taskModel, service, task._id, "dean_review");
+
+  assert.equal(result.completed, true);
+
+  const completionMail = mailer.sent.find((m) => m.to === "student@example.com");
+  assert.ok(completionMail);
+  assert.equal(completionMail?.attachments?.length, 1);
+
+  const updated = await taskModel.findById(task._id);
+  assert.ok(updated!.completion_document);
+  assert.equal(updated!.completion_document?.emailed_to, "student@example.com");
+  assert.ok(updated!.completion_document?.sha256);
+
+  const auditEntry = updated!.audit.find((a) => a.type === "completion_document_generated");
+  assert.ok(auditEntry);
+});
+
+test("a renderer that throws still commits the decision, still sends the completion email, and leaves completion_document null", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTaskWithRequesterEmail(taskModel);
+  const { service, mailer } = build(taskModel, LEAVE_WORKFLOW, { renderer: new ThrowingDocumentRenderer() });
+
+  await approveStep(taskModel, service, task._id, "advisor_review");
+  await approveStep(taskModel, service, task._id, "hod_review");
+  const result = await approveStep(taskModel, service, task._id, "dean_review");
+
+  assert.equal(result.completed, true);
+
+  const updated = await taskModel.findById(task._id);
+  assert.equal(updated!.completion_document, null);
+  assert.equal(updated!.status, TASK_STATUS.COMPLETED);
+
+  const completionMail = mailer.sent.find((m) => m.to === "student@example.com");
+  assert.ok(completionMail);
+  assert.equal(completionMail?.attachments, undefined);
+});
+
+test("DOCUMENT_ENABLED=false reproduces today's behaviour exactly - no document, no attachment", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTaskWithRequesterEmail(taskModel);
+  const disabledConfig = {
+    ...FAKE_CONFIG,
+    document: { ...FAKE_CONFIG.document, enabled: false },
+  } as unknown as AppConfig;
+  const { service, mailer } = build(taskModel, LEAVE_WORKFLOW, { config: disabledConfig });
+
+  await approveStep(taskModel, service, task._id, "advisor_review");
+  await approveStep(taskModel, service, task._id, "hod_review");
+  const result = await approveStep(taskModel, service, task._id, "dean_review");
+
+  assert.equal(result.completed, true);
+
+  const updated = await taskModel.findById(task._id);
+  assert.equal(updated!.completion_document, null);
+
+  const completionMail = mailer.sent.find((m) => m.to === "student@example.com");
+  assert.ok(completionMail);
+  assert.equal(completionMail?.attachments, undefined);
+});
+
+test("a non-final approval generates no completion document", async () => {
+  const taskModel = new FakeTaskModel();
+  const task = await seedDispatchedTaskWithRequesterEmail(taskModel);
+  const { service } = build(taskModel);
+
+  await approveStep(taskModel, service, task._id, "advisor_review");
+
+  const updated = await taskModel.findById(task._id);
+  assert.equal(updated!.completion_document, null);
+  assert.equal(
+    updated!.audit.some((a) => a.type === "completion_document_generated"),
+    false,
+  );
 });

@@ -30,6 +30,7 @@ export class SmtpMailer implements IMailer {
         subject: message.subject,
         text: message.text,
         html: message.html,
+        attachments: message.attachments,
       });
       return { sent: true, error: null };
     } catch (err) {

@@ -60,6 +60,14 @@ export interface AuthConfig {
   storeBackend: "postgres" | "memory";
 }
 
+export interface DocumentConfig {
+  enabled: boolean;
+  attachToEmail: boolean;
+  format: "pdf" | "text";
+  institutionName: string;
+  maxAttachmentBytes: number;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   db: DbConfig;
@@ -69,4 +77,5 @@ export interface AppConfig {
   retrieval: RetrievalConfig;
   mail: MailConfig;
   auth: AuthConfig;
+  document: DocumentConfig;
 }

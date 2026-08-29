@@ -34,6 +34,7 @@ function finalizedTask(workflow: WorkflowDefinition): TaskDocument {
     values: {},
     steps: seeded,
     audit: [],
+    completion_document: null,
     created_at: now,
     updated_at: now,
   };

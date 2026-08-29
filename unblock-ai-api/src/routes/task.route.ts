@@ -10,6 +10,7 @@ export function createTaskRouter(controller: TaskController): Router {
   router.post("/tasks", auth, asyncHandler(controller.createTask));
   router.get("/tasks", auth, asyncHandler(controller.listTasks));
   router.get("/tasks/:id/status", auth, asyncHandler(controller.getTaskStatus));
+  router.get("/tasks/:id/document", auth, asyncHandler(controller.getTaskDocument));
   router.get("/tasks/:id", auth, asyncHandler(controller.getTask));
   router.get("/tasks/:id/next", auth, asyncHandler(controller.getNext));
   router.post("/tasks/:id/values", auth, asyncHandler(controller.setValue));

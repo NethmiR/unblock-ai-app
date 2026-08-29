@@ -10,6 +10,11 @@ export class ConsoleMailer implements IMailer {
       to: message.to,
       subject: message.subject,
       text: message.text,
+      attachments: message.attachments?.map((attachment) => ({
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        byteSize: attachment.content.length,
+      })),
     });
     return Promise.resolve({ sent: true, error: null });
   }

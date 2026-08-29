@@ -72,6 +72,16 @@ export interface TaskAuditEntry {
   created_at: string;
 }
 
+/** Metadata only - the bytes are fetched separately via `tasksApi.document`. */
+export interface CompletionDocumentRecord {
+  generated_at: string; // Date on the API, ISO string on the wire
+  filename: string;
+  byte_size: number;
+  sha256: string;
+  emailed_to: string | null;
+  emailed_at: string | null; // Date on the API, ISO string on the wire
+}
+
 export interface TaskDto {
   id: string;
   reference: string;
@@ -83,6 +93,7 @@ export interface TaskDto {
   values: Record<string, RequirementValue>;
   steps: TaskStepState[];
   audit: TaskAuditEntry[];
+  completion_document: CompletionDocumentRecord | null;
   created_at: string;
   updated_at: string;
 }

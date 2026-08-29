@@ -7,6 +7,7 @@ import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { ConflictError } from "../../src/errors/conflict.error.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
+import { NotFoundError } from "../../src/errors/not-found.error.js";
 import { TASK_STATUS, REQUIREMENT_STATUS } from "../../src/data/constants/status.constant.js";
 import { portalAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
@@ -18,6 +19,7 @@ import type { ApprovalController } from "../../src/controllers/approval.controll
 import type { AuthController } from "../../src/controllers/auth.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 import type { TaskDocument, NextRequirementDto } from "../../src/lib/types/task/task.type.js";
+import type { RenderedDocument } from "../../src/lib/types/document/document.type.js";
 
 function fakeTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
   return {
@@ -31,6 +33,7 @@ function fakeTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
     values: {},
     steps: [],
     audit: [],
+    completion_document: null,
     created_at: new Date(),
     updated_at: new Date(),
     ...overrides,
@@ -43,6 +46,8 @@ interface FakeTaskServiceOptions {
   nextResult?: NextRequirementDto;
   setValueError?: Error;
   finalizeError?: Error;
+  documentResult?: RenderedDocument;
+  documentError?: Error;
 }
 
 function fakeTaskService(options: FakeTaskServiceOptions = {}): TaskService {
@@ -70,6 +75,18 @@ function fakeTaskService(options: FakeTaskServiceOptions = {}): TaskService {
     },
     list() {
       return Promise.resolve([]);
+    },
+    getDocument() {
+      if (options.documentError) return Promise.reject(options.documentError);
+      return Promise.resolve(
+        options.documentResult ?? {
+          buffer: Buffer.from("%PDF-fake", "utf8"),
+          filename: "TASK-2026-00001-record.pdf",
+          contentType: "application/pdf",
+          byteSize: 9,
+          sha256: "fake-sha256",
+        },
+      );
     },
   } as unknown as TaskService;
 }
@@ -212,6 +229,62 @@ test("PATCH /api/tasks/:id/status rejects a bad status", async () => {
       body: JSON.stringify({ status: "completed" }),
     });
     assert.equal(res.status, 400);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/tasks/:id/document returns the PDF with the right headers", async () => {
+  const server = await buildServer(fakeTaskService());
+  try {
+    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
+      headers: portalAuthHeader(),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "application/pdf");
+    assert.match(res.headers.get("content-disposition") ?? "", /attachment; filename="TASK-2026-00001-record\.pdf"/);
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.match(body.toString("latin1"), /^%PDF-/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/tasks/:id/document on a task not yet completed returns 409", async () => {
+  const server = await buildServer(
+    fakeTaskService({
+      documentError: new ConflictError("A record is only issued once every step is approved"),
+    }),
+  );
+  try {
+    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
+      headers: portalAuthHeader(),
+    });
+    assert.equal(res.status, 409);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/tasks/:id/document for an unknown task returns 404", async () => {
+  const server = await buildServer(
+    fakeTaskService({ documentError: NotFoundError.of("Task", "64b64b64b64b64b64b64b64") }),
+  );
+  try {
+    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
+      headers: portalAuthHeader(),
+    });
+    assert.equal(res.status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/tasks/:id/document with no token returns 401", async () => {
+  const server = await buildServer(fakeTaskService());
+  try {
+    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`);
+    assert.equal(res.status, 401);
   } finally {
     await server.close();
   }

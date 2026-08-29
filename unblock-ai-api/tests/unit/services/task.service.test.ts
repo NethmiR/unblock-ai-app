@@ -5,6 +5,8 @@ import { TaskService } from "../../../src/services/task.service.js";
 import { PlannerService } from "../../../src/services/planner.service.js";
 import { ExecutionService } from "../../../src/services/execution.service.js";
 import { NotificationService } from "../../../src/services/notification.service.js";
+import { CompletionDocumentService } from "../../../src/services/completion-document.service.js";
+import { TextDocumentRenderer } from "../../../src/services/document/text.document.js";
 import { ConflictError } from "../../../src/errors/conflict.error.js";
 import { ValidationError } from "../../../src/errors/validation.error.js";
 import { NotFoundError } from "../../../src/errors/not-found.error.js";
@@ -43,6 +45,13 @@ function fakeWorkflowService(workflow: WorkflowDefinition): WorkflowService {
 
 const fakeConfig = {
   mail: { appPublicUrl: "http://localhost:3001", tokenSecret: "test-secret", tokenTtlDays: 14 },
+  document: {
+    enabled: true,
+    attachToEmail: true,
+    format: "text",
+    institutionName: "Unblock AI",
+    maxAttachmentBytes: 5_000_000,
+  },
 } as unknown as AppConfig;
 
 const fakeMailer: IMailer = { send: () => Promise.resolve({ sent: true, error: null }) };
@@ -74,6 +83,10 @@ function build({
     executionService: new ExecutionService(),
     notificationService: new NotificationService({ mailer: fakeMailer, config: fakeConfig }),
     auditService: fakeAuditService(auditLogModel),
+    completionDocumentService: new CompletionDocumentService({
+      renderer: new TextDocumentRenderer(),
+      config: fakeConfig,
+    }),
     config: fakeConfig,
   });
 }
@@ -397,4 +410,61 @@ test("delete() of an unknown task throws NotFoundError", async () => {
     () => service.delete(new ObjectId(), ANONYMOUS_ACTOR),
     NotFoundError,
   );
+});
+
+test("getDocument() on a task still in progress throws ConflictError", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
+
+  await assert.rejects(() => service.getDocument(task._id), ConflictError);
+});
+
+test("getDocument() of an unknown task throws NotFoundError", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  await assert.rejects(() => service.getDocument(new ObjectId()), NotFoundError);
+});
+
+test("getDocument() on a completed task with no stored record regenerates and persists one", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
+  await taskModel.setStatus(task._id, "completed");
+
+  assert.equal((await taskModel.findById(task._id))?.completion_document, null);
+
+  const document = await service.getDocument(task._id);
+
+  assert.ok(document.buffer.length > 0);
+  assert.equal(document.contentType, "text/plain");
+
+  const persisted = await taskModel.findById(task._id);
+  assert.equal(persisted?.completion_document?.sha256, document.sha256);
+  assert.equal(persisted?.completion_document?.emailed_to, null);
+});
+
+test("getDocument() on a completed task with a stored record re-renders using the persisted generated_at", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1");
+  await fillAllRequirements(service, task._id);
+  await service.finalize(task._id);
+  await service.start(task._id);
+  await taskModel.setStatus(task._id, "completed");
+
+  const first = await service.getDocument(task._id);
+  const second = await service.getDocument(task._id);
+
+  assert.equal(second.sha256, first.sha256);
 });

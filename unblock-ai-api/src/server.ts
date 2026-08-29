@@ -24,6 +24,8 @@ import { PlannerService } from "./services/planner.service.js";
 import { ExecutionService } from "./services/execution.service.js";
 import { NotificationService } from "./services/notification.service.js";
 import { ApprovalService } from "./services/approval.service.js";
+import { CompletionDocumentService } from "./services/completion-document.service.js";
+import { createDocumentRenderer } from "./services/document/index.document.js";
 import { createMailer } from "./services/mailer/index.mailer.js";
 import { TaskService } from "./services/task.service.js";
 import { createAuthStore } from "./services/auth-store/index.auth-store.js";
@@ -79,6 +81,8 @@ async function main(): Promise<void> {
   const mailer = createMailer(config.mail.transport, config.mail);
   const notificationService = new NotificationService({ mailer, config });
   const executionService = new ExecutionService();
+  const documentRenderer = createDocumentRenderer(config.document.format);
+  const completionDocumentService = new CompletionDocumentService({ renderer: documentRenderer, config });
   const taskService = new TaskService({
     taskModel,
     selectionService,
@@ -87,6 +91,7 @@ async function main(): Promise<void> {
     executionService,
     notificationService,
     auditService,
+    completionDocumentService,
     config,
   });
   const approvalService = new ApprovalService({
@@ -95,6 +100,7 @@ async function main(): Promise<void> {
     executionService,
     notificationService,
     taskService,
+    completionDocumentService,
     config,
   });
 

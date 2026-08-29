@@ -40,6 +40,7 @@ export function serializeTask(doc: TaskDocument): TaskDto {
     values: doc.values,
     steps: doc.steps,
     audit: doc.audit,
+    completion_document: doc.completion_document,
     created_at: doc.created_at,
     updated_at: doc.updated_at,
   };
