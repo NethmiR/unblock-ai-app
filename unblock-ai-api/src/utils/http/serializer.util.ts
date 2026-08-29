@@ -33,6 +33,7 @@ export function serializeTask(doc: TaskDocument): TaskDto {
     id: String(doc._id),
     reference: doc.reference,
     session_id: doc.session_id,
+    created_by: doc.created_by,
     workflow_id: doc.workflow_id,
     version: doc.version,
     status: doc.status,

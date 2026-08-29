@@ -224,8 +224,13 @@ export class FakeTaskModel {
     return Promise.resolve(this.tasks.get(String(id)) ?? null);
   }
 
-  findAll(filters: { session_id?: string; status?: TaskStatus }): Promise<TaskDocument[]> {
+  findAll(filters: {
+    created_by?: string;
+    session_id?: string;
+    status?: TaskStatus;
+  }): Promise<TaskDocument[]> {
     const matches = [...this.tasks.values()].filter((t) => {
+      if (filters.created_by && t.created_by !== filters.created_by) return false;
       if (filters.session_id && t.session_id !== filters.session_id) return false;
       if (filters.status && t.status !== filters.status) return false;
       return true;

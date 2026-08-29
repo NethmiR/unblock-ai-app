@@ -11,6 +11,7 @@ function buildTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
     _id: new ObjectId(),
     reference: "LEAVE-2026-00001",
     session_id: "session-1",
+    created_by: "user-1",
     workflow_id: "it_faculty_overseas_leave",
     version: 1,
     status: "completed",

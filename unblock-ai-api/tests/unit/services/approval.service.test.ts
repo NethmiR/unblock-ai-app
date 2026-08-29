@@ -76,6 +76,7 @@ function finalizedTask(workflow: WorkflowDefinition, overrides: Partial<TaskDocu
     _id: new ObjectId(),
     reference: "TASK-2026-00099",
     session_id: "session-1",
+    created_by: "user-1",
     workflow_id: workflow.workflow_id,
     version: 1,
     status: TASK_STATUS.IN_PROGRESS,

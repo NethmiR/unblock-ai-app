@@ -63,6 +63,7 @@ function task(status: TaskStatus, steps: TaskStepState[], requirements: TaskRequ
     id: "t1",
     reference: "REQ-2026-001",
     session_id: "s1",
+    created_by: "user-1",
     workflow_id: "wf1",
     version: 1,
     status,

@@ -68,7 +68,7 @@ export class TaskService {
     this.config = config;
   }
 
-  async create(sessionId: string | ObjectId): Promise<TaskDocument> {
+  async create(sessionId: string | ObjectId, createdBy: string): Promise<TaskDocument> {
     const workflow = await this.selectionService.getMatchedWorkflow(sessionId);
     const record = await this.workflowService.getRecord(workflow.workflow_id);
     const { requirements, steps } = this.plannerService.compile(workflow);
@@ -80,6 +80,7 @@ export class TaskService {
     const inserted = await this.taskModel.insert({
       reference,
       session_id: String(sessionId),
+      created_by: createdBy,
       workflow_id: record.workflow_id,
       version: record.version,
       status: TASK_STATUS.COLLECTING,
@@ -408,7 +409,7 @@ export class TaskService {
     return this.taskModel.countByWorkflow(workflowId, statuses);
   }
 
-  list(filters: { session_id?: string; status?: TaskStatus }): Promise<TaskDocument[]> {
+  list(filters: { created_by?: string; session_id?: string; status?: TaskStatus }): Promise<TaskDocument[]> {
     return this.taskModel.findAll(filters);
   }
 

@@ -50,6 +50,7 @@ function baseTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
     _id: new ObjectId(),
     reference: "TASK-2026-00042",
     session_id: "session-1",
+    created_by: "user-1",
     workflow_id: LEAVE_WORKFLOW.workflow_id,
     version: 1,
     status: "in_progress",

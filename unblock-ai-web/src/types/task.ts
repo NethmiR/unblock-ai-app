@@ -86,6 +86,7 @@ export interface TaskDto {
   id: string;
   reference: string;
   session_id: string;
+  created_by: string;
   workflow_id: string;
   version: number;
   status: TaskStatus;
