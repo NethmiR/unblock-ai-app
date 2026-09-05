@@ -6,6 +6,7 @@ import { createSelectionRouter } from "./selection.route.js";
 import { createTaskRouter } from "./task.route.js";
 import { createApprovalRouter } from "./approval.route.js";
 import { createAuthRouter } from "./auth.route.js";
+import { createDebugRouter } from "./debug.route.js";
 import type { HealthController } from "../controllers/health.controller.js";
 import type { WorkflowController } from "../controllers/workflow.controller.js";
 import type { DraftController } from "../controllers/draft.controller.js";
@@ -34,6 +35,8 @@ export function createApiRouter(controllers: ApiControllers): Router {
   router.use(createSelectionRouter(controllers.selectionController));
   router.use(createTaskRouter(controllers.taskController));
   router.use(createApprovalRouter(controllers.approvalController));
+  // TEMPORARY - see debug.route.ts. Remove this line and the file once the mail deploy issue is resolved.
+  router.use(createDebugRouter());
 
   return router;
 }
