@@ -1,73 +1,90 @@
 import { Router } from "express";
-import { createConnection } from "node:net";
-import { format } from "node:util";
-import nodemailer from "nodemailer";
 import { config } from "../config/index.config.js";
 import { logger } from "../utils/shared/logger.util.js";
+import { parseSender } from "../services/mailer/brevo.mailer.js";
 
-interface SmtpLogEntry {
+const BREVO_ACCOUNT_URL = "https://api.brevo.com/v3/account";
+const BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email";
+const REQUEST_TIMEOUT_MS = 10_000;
+
+interface DebugLogEntry {
   time: string;
   level: string;
   message: string;
 }
 
+function withTimeout(ms: number): { signal: AbortSignal; cancel: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
+}
+
 /**
- * TEMPORARY diagnostic route - confirms whether the deployed environment can
- * open an outbound TCP connection to the configured SMTP relay, to tell a
- * network/firewall block apart from a credentials/config problem. Delete
- * this file and its registration in index.route.ts once the mail deploy
- * issue is resolved; it is a network probe and must not stay in production.
+ * TEMPORARY diagnostic routes - confirm whether the deployed environment can
+ * reach Brevo's transactional email API and that BREVO_API_KEY is valid, to
+ * tell a network/firewall block apart from a credentials/config problem.
+ * Delete this file and its registration in index.route.ts once the mail
+ * deploy issue is resolved; these are network probes and must not stay in
+ * production.
  *
- * Only reports TCP reachability - it does not attempt TLS or authentication,
- * so `ok: true` means the port is open, not that credentials are valid.
+ * Unlike the old SMTP relay, Brevo's API is plain HTTPS on port 443 - the
+ * same port every other outbound call in this app already uses - so a
+ * platform that blocks SMTP ports 25/465/587 (Render and similar PaaS
+ * providers do, by default) should have no trouble reaching it.
  */
 export function createDebugRouter(): Router {
   const router = Router();
 
-  router.get("/debug/smtp-check", (_req, res) => {
-    const host = config.mail.smtpHost;
-    const port = config.mail.smtpPort;
+  router.get("/debug/smtp-check", async (_req, res) => {
+    const apiKey = config.mail.brevoApiKey;
 
-    if (!host) {
-      res.status(400).json({ ok: false, error: "SMTP_HOST is not configured" });
+    if (!apiKey) {
+      res.status(400).json({ ok: false, error: "BREVO_API_KEY is not configured" });
       return;
     }
 
     const startedAt = Date.now();
-    const socket = createConnection({ host, port });
-    socket.setTimeout(5000);
+    const { signal, cancel } = withTimeout(REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(BREVO_ACCOUNT_URL, {
+        method: "GET",
+        headers: { "api-key": apiKey, accept: "application/json" },
+        signal,
+      });
+      const ms = Date.now() - startedAt;
+      const body: unknown = await response.json().catch(() => ({}));
 
-    // The socket can emit a late error while tearing down after a successful
-    // probe. Responding twice throws ERR_HTTP_HEADERS_SENT from inside an
-    // event handler, which is an uncaught exception - and server.ts exits the
-    // process on those. Answer once, then stay quiet.
-    let settled = false;
-    const settle = (status: number, body: Record<string, unknown>): void => {
-      if (settled) return;
-      settled = true;
-      res.status(status).json({ host, port, ...body });
-      socket.destroy();
-    };
-
-    socket.on("connect", () => settle(200, { ok: true, ms: Date.now() - startedAt }));
-    socket.on("timeout", () => settle(504, { ok: false, error: "timeout - likely blocked outbound" }));
-    socket.on("error", (err) => settle(500, { ok: false, error: err.message }));
+      if (!response.ok) {
+        res.status(response.status).json({ ok: false, ms, status: response.status, body });
+        return;
+      }
+      res.status(200).json({ ok: true, ms, status: response.status, account: body });
+    } catch (err) {
+      const ms = Date.now() - startedAt;
+      const timedOut = err instanceof Error && err.name === "AbortError";
+      res.status(timedOut ? 504 : 500).json({
+        ok: false,
+        ms,
+        error: timedOut ? "timeout - likely blocked outbound" : err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      cancel();
+    }
   });
 
-  // Sends an actual test email through the configured SMTP transport and
-  // returns the full SMTP session transcript (connect/auth/DATA exchange)
-  // rather than a bare ok/failed flag, so a credentials or relay-policy
-  // problem is visible directly in the response instead of only in server logs.
+  // Sends an actual test email through Brevo's HTTP API and returns the full
+  // request/response transcript rather than a bare ok/failed flag, so an
+  // auth or payload problem is visible directly in the response instead of
+  // only in server logs.
   router.post("/debug/smtp-send", async (req, res) => {
-    const host = config.mail.smtpHost;
-    const port = config.mail.smtpPort;
+    const apiKey = config.mail.brevoApiKey;
     const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
 
-    logger.info("smtp-send: request received", { to, host, port });
+    logger.info("smtp-send: request received", { to });
 
-    if (!host) {
-      logger.warn("smtp-send: rejected - SMTP_HOST is not configured");
-      res.status(400).json({ success: false, error: "SMTP_HOST is not configured", log: [] });
+    if (!apiKey) {
+      logger.warn("smtp-send: rejected - BREVO_API_KEY is not configured");
+      res.status(400).json({ success: false, error: "BREVO_API_KEY is not configured", log: [] });
       return;
     }
     if (!to) {
@@ -76,58 +93,66 @@ export function createDebugRouter(): Router {
       return;
     }
 
-    const log: SmtpLogEntry[] = [];
-    const record = (level: string, text: string): void => {
-      log.push({ time: new Date().toISOString(), level, message: text });
-    };
-    // nodemailer calls this bunyan-style: logger[level](entry, message, ...args),
-    // where `entry` carries { tnx: "server" | "client", cid } and `message` is a
-    // util.format template for the remaining args - not a plain (msg, meta) logger.
-    const smtpLoggerRecord = (level: string, entry: Record<string, unknown>, message: string, ...args: unknown[]): void => {
-      const direction = entry?.tnx === "server" ? "S" : entry?.tnx === "client" ? "C" : undefined;
-      const text = format(message, ...args);
-      record(level, direction ? `${direction}: ${text}` : text);
-    };
-    const smtpLogger = {
-      level: () => {},
-      trace: smtpLoggerRecord.bind(null, "trace"),
-      debug: smtpLoggerRecord.bind(null, "debug"),
-      info: smtpLoggerRecord.bind(null, "info"),
-      warn: smtpLoggerRecord.bind(null, "warn"),
-      error: smtpLoggerRecord.bind(null, "error"),
-      fatal: smtpLoggerRecord.bind(null, "fatal"),
+    const log: DebugLogEntry[] = [];
+    const record = (level: string, message: string): void => {
+      log.push({ time: new Date().toISOString(), level, message });
     };
 
-    logger.debug("smtp-send: creating transport", { host, port, secure: port === 465, hasAuth: !!config.mail.smtpUser });
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: config.mail.smtpUser ? { user: config.mail.smtpUser, pass: config.mail.smtpPass } : undefined,
-      logger: smtpLogger,
-      debug: true,
-    });
+    const payload = {
+      sender: parseSender(config.mail.from),
+      to: [{ email: to }],
+      subject: "Unblock AI - Brevo API debug test",
+      textContent: "This is a sample email sent from the /debug/smtp-send diagnostic route.",
+      htmlContent: "<p>This is a sample email sent from the <code>/debug/smtp-send</code> diagnostic route.</p>",
+    };
 
+    record("info", `POST ${BREVO_SEND_URL}`);
+    record("debug", `request body: ${JSON.stringify(payload)}`);
+
+    const { signal, cancel } = withTimeout(REQUEST_TIMEOUT_MS);
+    const startedAt = Date.now();
     try {
-      logger.info("smtp-send: sending test email", { to });
-      const info = await transporter.sendMail({
-        from: config.mail.from,
-        to,
-        subject: "Unblock AI - SMTP debug test",
-        text: "This is a sample email sent from the /debug/smtp-send diagnostic route.",
-        html: "<p>This is a sample email sent from the <code>/debug/smtp-send</code> diagnostic route.</p>",
+      logger.info("smtp-send: calling Brevo API", { to });
+      const response = await fetch(BREVO_SEND_URL, {
+        method: "POST",
+        headers: { "api-key": apiKey, "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(payload),
+        signal,
       });
-      record("info", format("sendMail resolved: messageId=%s response=%s", info.messageId, info.response));
-      logger.info("smtp-send: succeeded", { to, messageId: info.messageId });
-      res.status(200).json({ success: true, host, port, to, messageId: info.messageId, log });
+      const ms = Date.now() - startedAt;
+      const body: unknown = await response.json().catch(() => ({}));
+      record("info", `response: HTTP ${response.status} in ${ms}ms - ${JSON.stringify(body)}`);
+
+      if (!response.ok) {
+        const error =
+          body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string"
+            ? (body as { message: string }).message
+            : `Brevo API returned HTTP ${response.status}`;
+        logger.error("smtp-send: failed", { to, status: response.status, error });
+        res.status(502).json({ success: false, to, status: response.status, error, log });
+        return;
+      }
+
+      const messageId = typeof (body as { messageId?: unknown })?.messageId === "string"
+        ? (body as { messageId: string }).messageId
+        : null;
+      logger.info("smtp-send: succeeded", { to, messageId });
+      res.status(200).json({ success: true, to, messageId, log });
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      record("error", format("sendMail rejected: %s", error));
-      logger.error("smtp-send: failed", { to, host, port, error });
-      res.status(500).json({ success: false, host, port, to, error, log });
+      const ms = Date.now() - startedAt;
+      const timedOut = err instanceof Error && err.name === "AbortError";
+      const error = timedOut ? `timed out after ${ms}ms` : err instanceof Error ? err.message : String(err);
+      const hint = timedOut
+        ? "No response from api.brevo.com within the timeout. Brevo's API is plain HTTPS on port 443, so if this " +
+          "environment can reach any other external HTTPS API it should reach this too - check for an egress " +
+          "proxy/allowlist blocking api.brevo.com specifically, or DNS resolution failing for this host."
+        : undefined;
+      record("error", `request failed: ${error}`);
+      logger.error("smtp-send: failed", { to, error, hint });
+      res.status(500).json({ success: false, to, error, hint, log });
     } finally {
-      transporter.close();
-      logger.debug("smtp-send: transport closed", { to });
+      cancel();
+      logger.debug("smtp-send: done", { to });
     }
   });
 

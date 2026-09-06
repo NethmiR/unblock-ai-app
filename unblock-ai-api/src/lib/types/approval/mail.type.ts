@@ -15,4 +15,5 @@ export interface MailMessage {
 export interface MailSendResult {
   sent: boolean;
   error: string | null;
+  messageId?: string | null;
 }

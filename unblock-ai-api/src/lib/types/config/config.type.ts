@@ -42,12 +42,9 @@ export interface RetrievalConfig {
 }
 
 export interface MailConfig {
-  transport: "console" | "smtp";
+  transport: "console" | "brevo";
   from: string;
-  smtpHost: string;
-  smtpPort: number;
-  smtpUser: string;
-  smtpPass: string;
+  brevoApiKey: string;
   appPublicUrl: string;
   tokenSecret: string;
   tokenTtlDays: number;

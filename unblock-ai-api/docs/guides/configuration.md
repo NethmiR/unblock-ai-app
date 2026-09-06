@@ -29,14 +29,11 @@ configs into a single frozen `config` object that every other module imports.
 | `SELECTION_MAX_ROUNDS` | no | `2` | `src/config/retrieval.config.ts` | `config.retrieval.maxSelectionRounds` — clarifying-question round cap |
 | `VECTOR_BACKEND` | no | `memory` | `src/config/retrieval.config.ts` | `config.retrieval.vectorBackend` — selects `InMemoryVectorStore` or `AtlasVectorStore` at composition root |
 | `ATLAS_VECTOR_INDEX` | no | `template_vector_index` | `src/config/retrieval.config.ts` | `config.retrieval.atlasIndexName` — only used when `VECTOR_BACKEND=atlas` |
-| `MAIL_TRANSPORT` | no | `console` | `src/config/mail.config.ts` | `config.mail.transport` — `console` \| `smtp`, selects `IMailer` at composition root |
-| `MAIL_FROM` | no | `Unblock AI <noreply@localhost>` | `src/config/mail.config.ts` | `config.mail.from` — `From` header on outgoing approval mail |
-| `SMTP_HOST` | no | `""` | `src/config/mail.config.ts` | `config.mail.smtpHost` — passed to `nodemailer.createTransport`; not validated at startup, so an empty host only surfaces as a send failure once `MAIL_TRANSPORT=smtp` actually sends |
-| `SMTP_PORT` | no | `587` | `src/config/mail.config.ts` | `config.mail.smtpPort` — `465` selects implicit TLS (`secure: true`) |
-| `SMTP_USER` | no | `""` | `src/config/mail.config.ts` | `config.mail.smtpUser` — omitted from transporter `auth` entirely when empty |
-| `SMTP_PASS` | no | `""` | `src/config/mail.config.ts` | `config.mail.smtpPass` |
+| `MAIL_TRANSPORT` | no | `console` | `src/config/mail.config.ts` | `config.mail.transport` — `console` \| `brevo`, selects `IMailer` at composition root |
+| `MAIL_FROM` | no | `Unblock AI <noreply@localhost>` | `src/config/mail.config.ts` | `config.mail.from` — `From` header on outgoing approval mail, parsed into Brevo's `{name, email}` sender shape |
+| `BREVO_API_KEY` | \*\* | `""` | `src/config/mail.config.ts` | `config.mail.brevoApiKey` — sent as the `api-key` header to Brevo's transactional email HTTP API (`https://api.brevo.com/v3/smtp/email`); **required when `MAIL_TRANSPORT=brevo`**, throwing `ConfigurationError` at startup |
 | `APP_PUBLIC_URL` | no | `http://localhost:3001` | `src/config/mail.config.ts` | `config.mail.appPublicUrl` — base URL used to build `/approvals/:token` links in emails |
-| `APPROVAL_TOKEN_SECRET` | \*\* | `""` | `src/config/mail.config.ts` | `config.mail.tokenSecret` — HMAC-SHA256 signing key for approval tokens (`token.util.ts`); **required when `MAIL_TRANSPORT=smtp`**, throwing `ConfigurationError` at startup — an empty dev default is otherwise tolerated |
+| `APPROVAL_TOKEN_SECRET` | \*\* | `""` | `src/config/mail.config.ts` | `config.mail.tokenSecret` — HMAC-SHA256 signing key for approval tokens (`token.util.ts`); **required when `MAIL_TRANSPORT=brevo`**, throwing `ConfigurationError` at startup — an empty dev default is otherwise tolerated |
 | `APPROVAL_TOKEN_TTL_DAYS` | no | `14` | `src/config/mail.config.ts` | `config.mail.tokenTtlDays` — approval token lifetime, in days |
 | `DOCUMENT_ENABLED` | no | `true` | `src/config/document.config.ts` | `config.document.enabled` — generate a completion-document record at all; `false` reproduces pre-feature behaviour exactly |
 | `DOCUMENT_ATTACH_TO_EMAIL` | no | `true` | `src/config/document.config.ts` | `config.document.attachToEmail` — attach the rendered record to the completion email, in addition to the portal download |
@@ -44,10 +41,11 @@ configs into a single frozen `config` object that every other module imports.
 | `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | `src/config/document.config.ts` | `config.document.institutionName` — printed in the record's footer |
 | `DOCUMENT_MAX_ATTACHMENT_BYTES` | no | `5000000` | `src/config/document.config.ts` | `config.document.maxAttachmentBytes` — above this size the record is download-only, dropped from the email attachment |
 
-36 variables total (\* = required, throws at startup if missing/empty; \*\* = only
-`APPROVAL_TOKEN_SECRET` is conditionally required, when `MAIL_TRANSPORT=smtp` — see
-below. The four `SMTP_*` vars are not validated at startup at all; a misconfigured
-SMTP transport fails at send time instead, caught and logged by
+32 variables total (\* = required, throws at startup if missing/empty; \*\* =
+`APPROVAL_TOKEN_SECRET` and `BREVO_API_KEY` are conditionally required, both only
+when `MAIL_TRANSPORT=brevo` — both throw `ConfigurationError` at startup in that
+case, in `src/config/mail.config.ts`. A misconfigured Brevo API key that is merely
+non-empty but wrong still only surfaces as a send failure, caught and logged by
 `notification.service.ts` rather than crashing the process).
 
 `KNOWLEDGE_BANK_PATH` was **removed** during the restructure. It was read into

@@ -1,17 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ConsoleMailer } from "../../../src/services/mailer/console.mailer.js";
-import { SmtpMailer } from "../../../src/services/mailer/smtp.mailer.js";
+import { BrevoMailer, parseSender } from "../../../src/services/mailer/brevo.mailer.js";
 import type { MailMessage } from "../../../src/lib/types/approval/mail.type.js";
 import type { MailConfig } from "../../../src/lib/types/config/config.type.js";
 
 const FAKE_CONFIG: MailConfig = {
-  transport: "smtp",
-  from: "noreply@unblock.example",
-  smtpHost: "localhost",
-  smtpPort: 587,
-  smtpUser: "",
-  smtpPass: "",
+  transport: "brevo",
+  from: "Unblock AI <noreply@unblock.example>",
+  brevoApiKey: "fake-api-key",
   appPublicUrl: "https://unblock.example",
   tokenSecret: "secret",
   tokenTtlDays: 7,
@@ -45,21 +42,56 @@ test("FakeMailer records the attachment array passed to send()", async () => {
   assert.equal(sent[0]!.attachments?.[0]!.filename, "UNB-2026-000481-record.pdf");
 });
 
-test("SmtpMailer forwards attachments to the underlying transporter", async () => {
-  const mailer = new SmtpMailer({ config: FAKE_CONFIG });
+test("BrevoMailer posts attachments as base64 to the Brevo API", async () => {
+  const mailer = new BrevoMailer({ config: FAKE_CONFIG });
   const message = messageWithAttachment();
-  let received: unknown;
-  (mailer as unknown as { transporter: { sendMail: (opts: unknown) => Promise<unknown> } }).transporter.sendMail = (
-    opts: unknown,
-  ) => {
-    received = opts;
-    return Promise.resolve();
-  };
+  const originalFetch = global.fetch;
+  let receivedUrl: string | undefined;
+  let receivedInit: RequestInit | undefined;
+  global.fetch = ((url: string, init?: RequestInit) => {
+    receivedUrl = url;
+    receivedInit = init;
+    return Promise.resolve(new Response(JSON.stringify({ messageId: "<abc@brevo>" }), { status: 201 }));
+  }) as typeof fetch;
 
-  const result = await mailer.send(message);
+  try {
+    const result = await mailer.send(message);
 
-  assert.equal(result.sent, true);
-  assert.deepEqual((received as { attachments?: unknown }).attachments, message.attachments);
+    assert.equal(result.sent, true);
+    assert.equal(result.messageId, "<abc@brevo>");
+    assert.equal(receivedUrl, "https://api.brevo.com/v3/smtp/email");
+    assert.equal((receivedInit?.headers as Record<string, string>)["api-key"], "fake-api-key");
+
+    const body = JSON.parse(receivedInit?.body as string);
+    assert.deepEqual(body.sender, { name: "Unblock AI", email: "noreply@unblock.example" });
+    assert.equal(body.attachment[0].name, "UNB-2026-000481-record.pdf");
+    assert.equal(body.attachment[0].content, message.attachments![0]!.content.toString("base64"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("BrevoMailer surfaces the Brevo error message on a non-2xx response", async () => {
+  const mailer = new BrevoMailer({ config: FAKE_CONFIG });
+  const originalFetch = global.fetch;
+  global.fetch = (() =>
+    Promise.resolve(new Response(JSON.stringify({ message: "Key not found" }), { status: 401 }))) as typeof fetch;
+
+  try {
+    const result = await mailer.send(messageWithAttachment());
+    assert.equal(result.sent, false);
+    assert.equal(result.error, "Key not found");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("parseSender splits 'Name <email>' into Brevo's {name, email} shape", () => {
+  assert.deepEqual(parseSender("Unblock AI <noreply@unblock.example>"), {
+    name: "Unblock AI",
+    email: "noreply@unblock.example",
+  });
+  assert.deepEqual(parseSender("noreply@unblock.example"), { email: "noreply@unblock.example" });
 });
 
 test("ConsoleMailer logs attachment metadata, never the buffer content", async () => {
