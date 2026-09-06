@@ -1,0 +1,17 @@
+[
+  {
+    "id": "short_vague",
+    "label": "Short / vague",
+    "input": "I want to apply for overseas leave"
+  },
+  {
+    "id": "medium_specific",
+    "label": "Medium / specific",
+    "input": "I'm a student in the IT faculty and I need approval to travel abroad for a two-week research conference next month."
+  },
+  {
+    "id": "long_detailed",
+    "label": "Long / detailed",
+    "input": "Hi, I'm from the electronics lab and I'd like to request approval to purchase a new digital oscilloscope for our final-year student projects. Our current unit is over eight years old and keeps giving inconsistent readings, which is affecting a few ongoing experiments. Could you let me know what I need to submit to get this approved?"
+  }
+]

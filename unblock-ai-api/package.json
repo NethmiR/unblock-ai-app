@@ -19,6 +19,7 @@
     "seed:auth": "tsx scripts/seed-auth.script.ts",
     "backfill:summaries": "tsx scripts/backfill-summaries.script.ts",
     "evaluate:selection": "tsx scripts/evaluate-selection.script.ts",
+    "perf-test": "tsx scripts/perf/perf-test.script.ts",
     "smoke-test:azure": "tsx scripts/smoke-test-azure.script.ts",
     "smoke-test:embeddings": "tsx scripts/smoke-test-embeddings.script.ts",
     "smoke-test:mail": "tsx scripts/smoke-test-mail.script.ts",

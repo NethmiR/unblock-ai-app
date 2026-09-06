@@ -1,0 +1,17 @@
+[
+  {
+    "id": "short_simple",
+    "label": "Short / single approver",
+    "input": "Students who want to reserve the seminar hall must submit their name, index number, and the date they need the hall. The request is approved by the Head of Department. Once approved, the student receives a confirmation email."
+  },
+  {
+    "id": "medium_typical",
+    "label": "Medium / multi-approver",
+    "input": "In our university's Faculty of Medicine, there is a process to be followed when students are applying for overseas leaves. First, we need to know following details of the student.\n- Index number\n- Name\n- Batch (selected out of 4 options: Batch 21, Batch 22, Batch 23, Batch 24)\n- Travelling country\n- Period (Departure date and returning date)\n- Reason in brief\n- Category (Dropdown with options: Medical, Research, Sports, Competitions, Other)\nEach student request should be approved by his academic advisor, Faculty's director of undergraduate studies and head of the department."
+  },
+  {
+    "id": "long_complex",
+    "label": "Long / conditional branching",
+    "input": "The Faculty of Engineering requires all departments to follow a standard procurement process for laboratory equipment purchases above LKR 50,000.\n\nA requesting lecturer starts the process by submitting a purchase request containing: the department name, the equipment name and specification, the estimated cost, the vendor name and contact details, the intended use (teaching, research, or administration), the budget line the cost should be charged to, and a brief justification for the purchase.\n\nIf the estimated cost is below LKR 250,000, the request is reviewed and approved directly by the Head of Department, and then forwarded to the Faculty Bursar for a budget availability check. If the Bursar confirms the budget is available, the request proceeds to procurement. If the budget is not available, the request is sent back to the requesting lecturer with comments.\n\nIf the estimated cost is LKR 250,000 or above, the request must first be approved by the Head of Department, then reviewed by the Faculty Procurement Committee, and finally approved by the Dean of the Faculty, before being sent to the Bursar for the same budget availability check described above.\n\nAt every approval stage, the approver may approve, reject with a reason, or request additional clarification from the requesting lecturer, in which case the request returns to that lecturer for revision and must restart from the Head of Department review.\n\nOnce procurement is confirmed, the department's administrative officer places the order with the vendor and updates the request with the purchase order number and expected delivery date. When the equipment is delivered, the requesting lecturer confirms receipt and the request is closed."
+  }
+]

@@ -2,18 +2,15 @@ import type { AzureOpenAI } from "openai";
 import { chatClient } from "./azure-openai.client.js";
 import { ValidationService } from "./validation.service.js";
 import { config } from "../config/index.config.js";
-import { SYSTEM_PROMPT } from "../data/prompts/extraction.prompt.js";
-import { FEW_SHOT_MESSAGES, type FewShotMessage } from "../data/prompts/extraction-few-shot.prompt.js";
 import { RETRIEVAL_SUMMARY_ONLY_PROMPT } from "../data/prompts/retrieval-summary.prompt.js";
 import { strictWorkflowSchema } from "../data/schemas/workflow-schema.data.js";
 import { retrievalSummarySchema } from "../data/schemas/retrieval-summary.schema.js";
 import { supportsTemperatureControl } from "../data/constants/model.constant.js";
+import { buildExtractionMessages, type ChatMessage } from "../utils/workflow/build-extraction-messages.util.js";
 import { ExtractionError } from "../errors/extraction.error.js";
 import type { AzureOpenAIConfig } from "../lib/types/config/config.type.js";
 import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
 import type { RetrievalSummary } from "../lib/types/workflow/retrieval-summary.type.js";
-
-type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 export interface ExtractionServiceOptions {
   client?: AzureOpenAI;
@@ -35,14 +32,6 @@ export class ExtractionService {
     this.client = client;
     this.validationService = validationService;
     this.openAIConfig = openAIConfig;
-  }
-
-  private buildMessages(text: string): ChatMessage[] {
-    return [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...(FEW_SHOT_MESSAGES as FewShotMessage[]),
-      { role: "user", content: text },
-    ];
   }
 
   private buildRepairPrompt(errors: string[]): string {
@@ -78,7 +67,7 @@ export class ExtractionService {
 
   async extract(text: string, options: { maxAttempts?: number } = {}): Promise<ExtractionResult> {
     const maxAttempts = options.maxAttempts ?? this.openAIConfig.maxExtractionAttempts;
-    const messages = this.buildMessages(text);
+    const messages = buildExtractionMessages(text);
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const candidate = (await this.callModel(messages)) as WorkflowDefinition;
