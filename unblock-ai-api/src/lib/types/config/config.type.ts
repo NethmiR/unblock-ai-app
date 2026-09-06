@@ -1,6 +1,6 @@
 export interface ServerConfig {
   port: number;
-  corsOrigin: string;
+  corsOrigins: string[];
   nodeEnv: "development" | "production" | "test";
 }
 

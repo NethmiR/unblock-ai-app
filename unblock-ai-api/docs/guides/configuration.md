@@ -10,7 +10,7 @@ configs into a single frozen `config` object that every other module imports.
 | --- | --- | --- | --- | --- |
 | `NODE_ENV` | no | `development` | `src/config/server.config.ts` | `config.server.nodeEnv` |
 | `PORT` | no | `3000` | `src/config/server.config.ts` | `config.server.port` — HTTP listen port |
-| `CORS_ORIGIN` | no | `http://localhost:3001` | `src/config/server.config.ts` | `config.server.corsOrigin` — `src/middlewares/cors.middleware.ts` |
+| `CORS_ORIGIN` | no | `http://localhost:3001` | `src/config/server.config.ts` | `config.server.corsOrigins` (comma-separated) — `src/middlewares/cors.middleware.ts`; ignored when `NODE_ENV=development`, which allows any origin |
 | `MONGODB_URI` | **yes** | — | `src/config/db.config.ts` | `config.db.uri` — `src/db/mongo.client.ts` |
 | `MONGODB_DB` | no | `unblock_ai` | `src/config/db.config.ts` | `config.db.dbName` |
 | `AZURE_OPENAI_ENDPOINT` | **yes** | — | `src/config/azure-openai.config.ts` | `config.azureOpenAI.endpoint` — chat client |

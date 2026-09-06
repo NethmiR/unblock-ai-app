@@ -40,6 +40,20 @@ export function parseBoolean(
   throw new ConfigurationError(`Environment variable ${name} must be "true" or "false", got: ${raw}`);
 }
 
+export function optionalStringList(
+  name: string,
+  raw: string | undefined,
+  fallback: string[],
+): string[] {
+  if (raw === undefined || raw === "") return fallback;
+  const values = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  if (values.length === 0) return fallback;
+  return values;
+}
+
 export function parseEnum<T extends string>(
   name: string,
   raw: string | undefined,
