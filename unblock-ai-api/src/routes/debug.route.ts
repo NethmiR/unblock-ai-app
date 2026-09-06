@@ -3,6 +3,7 @@ import { createConnection } from "node:net";
 import { format } from "node:util";
 import nodemailer from "nodemailer";
 import { config } from "../config/index.config.js";
+import { logger } from "../utils/shared/logger.util.js";
 
 interface SmtpLogEntry {
   time: string;
@@ -62,11 +63,15 @@ export function createDebugRouter(): Router {
     const port = config.mail.smtpPort;
     const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
 
+    logger.info("smtp-send: request received", { to, host, port });
+
     if (!host) {
+      logger.warn("smtp-send: rejected - SMTP_HOST is not configured");
       res.status(400).json({ success: false, error: "SMTP_HOST is not configured", log: [] });
       return;
     }
     if (!to) {
+      logger.warn("smtp-send: rejected - 'to' missing from request body");
       res.status(400).json({ success: false, error: "'to' is required in the request body", log: [] });
       return;
     }
@@ -93,6 +98,7 @@ export function createDebugRouter(): Router {
       fatal: smtpLoggerRecord.bind(null, "fatal"),
     };
 
+    logger.debug("smtp-send: creating transport", { host, port, secure: port === 465, hasAuth: !!config.mail.smtpUser });
     const transporter = nodemailer.createTransport({
       host,
       port,
@@ -103,6 +109,7 @@ export function createDebugRouter(): Router {
     });
 
     try {
+      logger.info("smtp-send: sending test email", { to });
       const info = await transporter.sendMail({
         from: config.mail.from,
         to,
@@ -111,13 +118,16 @@ export function createDebugRouter(): Router {
         html: "<p>This is a sample email sent from the <code>/debug/smtp-send</code> diagnostic route.</p>",
       });
       record("info", format("sendMail resolved: messageId=%s response=%s", info.messageId, info.response));
+      logger.info("smtp-send: succeeded", { to, messageId: info.messageId });
       res.status(200).json({ success: true, host, port, to, messageId: info.messageId, log });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       record("error", format("sendMail rejected: %s", error));
+      logger.error("smtp-send: failed", { to, host, port, error });
       res.status(500).json({ success: false, host, port, to, error, log });
     } finally {
       transporter.close();
+      logger.debug("smtp-send: transport closed", { to });
     }
   });
 
