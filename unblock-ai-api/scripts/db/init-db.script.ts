@@ -1,6 +1,6 @@
-import { ensureIndexes } from "../src/db/index.definition.js";
-import { closeDb, getDb } from "../src/db/mongo.client.js";
-import { config } from "../src/config/index.config.js";
+import { ensureIndexes } from "../../src/db/index.definition.js";
+import { closeDb, getDb } from "../../src/db/mongo.client.js";
+import { config } from "../../src/config/index.config.js";
 
 const db = await getDb();
 await ensureIndexes();

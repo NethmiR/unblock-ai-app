@@ -1,6 +1,6 @@
-import { hashPassword } from "../src/utils/shared/password.util.js";
-import { query, closePool } from "../src/db/postgres.client.js";
-import { ConfigurationError } from "../src/errors/configuration.error.js";
+import { hashPassword } from "../../src/utils/shared/password.util.js";
+import { query, closePool } from "../../src/db/postgres.client.js";
+import { ConfigurationError } from "../../src/errors/configuration.error.js";
 
 interface SeedAdmin {
   username: string;

@@ -1,12 +1,12 @@
-import { TemplateModel } from "../src/models/template.model.js";
-import { TaskModel } from "../src/models/task.model.js";
-import { WorkflowService } from "../src/services/workflow.service.js";
-import { EmbeddingService } from "../src/services/embedding.service.js";
-import { ExtractionService } from "../src/services/extraction.service.js";
-import { ValidationService } from "../src/services/validation.service.js";
-import { DeletionLogService } from "../src/services/deletion-log.service.js";
-import { InMemoryAuthStore } from "../src/services/auth-store/in-memory.auth-store.js";
-import { closeDb } from "../src/db/mongo.client.js";
+import { TemplateModel } from "../../src/models/template.model.js";
+import { TaskModel } from "../../src/models/task.model.js";
+import { WorkflowService } from "../../src/services/workflow.service.js";
+import { EmbeddingService } from "../../src/services/embedding.service.js";
+import { ExtractionService } from "../../src/services/extraction.service.js";
+import { ValidationService } from "../../src/services/validation.service.js";
+import { DeletionLogService } from "../../src/services/deletion-log.service.js";
+import { InMemoryAuthStore } from "../../src/services/auth-store/in-memory.auth-store.js";
+import { closeDb } from "../../src/db/mongo.client.js";
 
 const templateModel = new TemplateModel();
 const embeddingService = new EmbeddingService();

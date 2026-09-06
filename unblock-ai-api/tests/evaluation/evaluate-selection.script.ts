@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { TemplateModel } from "../src/models/template.model.js";
-import { InMemoryVectorStore } from "../src/services/vector-store/in-memory.vector-store.js";
-import { RetrievalService } from "../src/services/retrieval.service.js";
-import { EmbeddingService } from "../src/services/embedding.service.js";
-import { SelectorService } from "../src/services/selector.service.js";
-import { closeDb } from "../src/db/mongo.client.js";
+import { TemplateModel } from "../../src/models/template.model.js";
+import { InMemoryVectorStore } from "../../src/services/vector-store/in-memory.vector-store.js";
+import { RetrievalService } from "../../src/services/retrieval.service.js";
+import { EmbeddingService } from "../../src/services/embedding.service.js";
+import { SelectorService } from "../../src/services/selector.service.js";
+import { closeDb } from "../../src/db/mongo.client.js";
 
 interface EvaluationCase {
   query: string;

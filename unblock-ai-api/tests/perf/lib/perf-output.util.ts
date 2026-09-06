@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PerfRecord } from "../../../src/lib/types/perf/perf.type.js";
 
-const RESULTS_ROOT = path.join("scripts", "perf", "results");
+const RESULTS_ROOT = path.join("tests", "perf", "results");
 
 function toCsvValue(value: unknown): string {
   const raw = value === null || value === undefined ? "" : String(value);
@@ -22,7 +22,7 @@ function versionStamp(): string {
 
 /**
  * Writes one timestamped JSON + CSV pair per run under
- * `scripts/perf/results/<operation>/`, so past runs are never overwritten.
+ * `tests/perf/results/<operation>/`, so past runs are never overwritten.
  */
 export async function writePerfResults(operation: string, records: PerfRecord[]): Promise<{ json: string; csv: string }> {
   const dir = path.join(RESULTS_ROOT, operation);

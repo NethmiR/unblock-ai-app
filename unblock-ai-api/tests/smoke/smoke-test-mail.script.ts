@@ -1,5 +1,5 @@
-import { createMailer } from "../src/services/mailer/index.mailer.js";
-import { config } from "../src/config/index.config.js";
+import { createMailer } from "../../src/services/mailer/index.mailer.js";
+import { config } from "../../src/config/index.config.js";
 
 async function smokeTest(): Promise<void> {
   const to = process.argv[2];

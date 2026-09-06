@@ -43,7 +43,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # perf test run outputs (generated, timestamped per run)
-/unblock-ai-api/scripts/perf/results/
+/unblock-ai-api/tests/perf/results/
 
 # misc
 .DS_Store

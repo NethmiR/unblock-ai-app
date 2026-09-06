@@ -1,15 +1,15 @@
 import { writeFile } from "node:fs/promises";
-import { TaskModel } from "../src/models/task.model.js";
-import { TemplateModel } from "../src/models/template.model.js";
-import { WorkflowService } from "../src/services/workflow.service.js";
-import { EmbeddingService } from "../src/services/embedding.service.js";
-import { ValidationService } from "../src/services/validation.service.js";
-import { DeletionLogService } from "../src/services/deletion-log.service.js";
-import { InMemoryAuthStore } from "../src/services/auth-store/in-memory.auth-store.js";
-import { CompletionDocumentService } from "../src/services/completion-document.service.js";
-import { createDocumentRenderer } from "../src/services/document/index.document.js";
-import { config } from "../src/config/index.config.js";
-import { closeDb } from "../src/db/mongo.client.js";
+import { TaskModel } from "../../src/models/task.model.js";
+import { TemplateModel } from "../../src/models/template.model.js";
+import { WorkflowService } from "../../src/services/workflow.service.js";
+import { EmbeddingService } from "../../src/services/embedding.service.js";
+import { ValidationService } from "../../src/services/validation.service.js";
+import { DeletionLogService } from "../../src/services/deletion-log.service.js";
+import { InMemoryAuthStore } from "../../src/services/auth-store/in-memory.auth-store.js";
+import { CompletionDocumentService } from "../../src/services/completion-document.service.js";
+import { createDocumentRenderer } from "../../src/services/document/index.document.js";
+import { config } from "../../src/config/index.config.js";
+import { closeDb } from "../../src/db/mongo.client.js";
 
 async function smokeTest(): Promise<void> {
   const taskId = process.argv[2];

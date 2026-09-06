@@ -1,5 +1,5 @@
-import { chatClient } from "../src/services/azure-openai.client.js";
-import { config } from "../src/config/index.config.js";
+import { chatClient } from "../../src/services/azure-openai.client.js";
+import { config } from "../../src/config/index.config.js";
 
 async function smokeTest(): Promise<string> {
   const response = await chatClient.chat.completions.create({

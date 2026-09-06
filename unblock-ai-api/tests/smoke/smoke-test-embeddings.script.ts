@@ -1,6 +1,6 @@
-import { EmbeddingService } from "../src/services/embedding.service.js";
-import { dot } from "../src/utils/retrieval/vector-math.util.js";
-import { config } from "../src/config/index.config.js";
+import { EmbeddingService } from "../../src/services/embedding.service.js";
+import { dot } from "../../src/utils/retrieval/vector-math.util.js";
+import { config } from "../../src/config/index.config.js";
 
 const embeddingService = new EmbeddingService();
 

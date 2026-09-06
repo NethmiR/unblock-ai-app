@@ -129,11 +129,13 @@ unblock-ai-api/
 │     ├─ mongo.client.ts
 │     └─ index.definition.ts
 ├─ scripts/
-│  ├─ init-db.script.ts
-│  ├─ backfill-summaries.script.ts
-│  ├─ evaluate-selection.script.ts
-│  ├─ smoke-test-azure.script.ts
-│  └─ smoke-test-embeddings.script.ts
+│  ├─ copy-assets.script.ts           # build step: copies non-.ts assets into dist/
+│  ├─ db/
+│  │  ├─ init-db.script.ts
+│  │  ├─ migrate-postgres.script.ts
+│  │  └─ seed-auth.script.ts
+│  └─ maintenance/
+│     └─ backfill-summaries.script.ts
 ├─ tests/
 │  ├─ unit/
 │  │  ├─ utils/
@@ -142,6 +144,9 @@ unblock-ai-api/
 │  │  └─ errors/
 │  ├─ integration/
 │  ├─ live/
+│  ├─ smoke/                          # manual connectivity checks (tsx, not node:test)
+│  ├─ evaluation/                     # offline evaluation harness (recall/decision accuracy report)
+│  ├─ perf/                           # perf-test suite: operations, lib, results/ (git-ignored)
 │  └─ helpers/
 ├─ docs/
 │  ├─ api/
@@ -180,7 +185,9 @@ unblock-ai-api/
 
 **`src/middlewares/`** — One middleware per file, single responsibility each, wired into routes only where applicable.
 
-**`tests/`** — Outside `src/`. All unit tests under `tests/unit/`, mirroring the `src/` layout; integration tests (HTTP-level, in-memory fakes) under `tests/integration/`; network-dependent tests under `tests/live/`; shared fixtures and fake builders under `tests/helpers/`.
+**`scripts/`** — CLI entry points that are neither tests nor part of the running app: `db/` (init-db, run Postgres migrations, seed auth users) and `maintenance/` (one-off data backfills), plus `copy-assets.script.ts` at the root, invoked from `npm run build` to copy non-`.ts` assets (Postgres migrations, sample data) into `dist/`.
+
+**`tests/`** — Outside `src/`. All unit tests under `tests/unit/`, mirroring the `src/` layout; integration tests (HTTP-level, in-memory fakes) under `tests/integration/`; network-dependent tests under `tests/live/`; shared fixtures and fake builders under `tests/helpers/`. Also home to test-adjacent tooling that isn't `node:test`-based: `tests/smoke/` (manual connectivity checks against real Azure/SMTP, run individually via `npm run smoke-test:*`), `tests/evaluation/` (the selector recall/accuracy report, `npm run evaluate:selection`), and `tests/perf/` (the perf-test suite, `npm run perf-test`, writing timestamped results under its own git-ignored `results/`).
 
 **`docs/`** — Outside `src/`. All markdown organised into `api/`, `architecture/`, `guides/`, `plans/`, and `postman/`. See [../README.md](../README.md) for the full index.
 

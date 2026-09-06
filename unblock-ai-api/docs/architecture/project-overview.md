@@ -55,8 +55,8 @@ unblock-ai-api/
 │  ├─ lib/types/              # central TypeScript type directory
 │  ├─ errors/                 # BaseError + one subclass per error category
 │  └─ db/                     # Mongo client + index definitions, Postgres client + migrations
-├─ scripts/                   # CLI scripts (init-db, backfill, evaluate, smoke tests)
-├─ tests/                      # unit/, integration/, live/, helpers/
+├─ scripts/                   # CLI scripts: db/ (init-db, migrate, seed), maintenance/ (backfill), copy-assets
+├─ tests/                      # unit/, integration/, live/, helpers/, smoke/, evaluation/, perf/
 ├─ docs/                        # api/, architecture/, guides/, plans/, postman/
 ├─ dist/                        # build output, git-ignored
 ├─ .env / .example.env           # server configuration
@@ -223,13 +223,13 @@ for the full design rationale; summary of what exists in code:
   `DOCUMENT_ATTACH_TO_EMAIL`, `DOCUMENT_FORMAT`, `DOCUMENT_INSTITUTION_NAME`,
   `DOCUMENT_MAX_ATTACHMENT_BYTES`) — see [../guides/configuration.md](../guides/configuration.md).
 - **Smoke test**: `npm run smoke-test:document -- <task-id> [out.pdf]`
-  ([scripts/smoke-test-document.script.ts](../../scripts/smoke-test-document.script.ts)) renders
+  ([tests/smoke/smoke-test-document.script.ts](../../tests/smoke/smoke-test-document.script.ts)) renders
   a real task's record to a local file for eyeballing, independent of the completion path.
 
 ## 11. Supporting pieces
 
 - **Logger** ([src/utils/shared/logger.util.ts](../../src/utils/shared/logger.util.ts)): structured JSON logger (`debug`/`info`/`warn`/`error`) writing single-line JSON to stdout/stderr with timestamps.
-- **Smoke test scripts** ([scripts/smoke-test-azure.script.ts](../../scripts/smoke-test-azure.script.ts), [scripts/smoke-test-embeddings.script.ts](../../scripts/smoke-test-embeddings.script.ts), [scripts/smoke-test-document.script.ts](../../scripts/smoke-test-document.script.ts)): sanity-check Azure OpenAI chat/embeddings connectivity and completion-document rendering, each independent of the paths that normally trigger them.
+- **Smoke test scripts** ([tests/smoke/smoke-test-azure.script.ts](../../tests/smoke/smoke-test-azure.script.ts), [tests/smoke/smoke-test-embeddings.script.ts](../../tests/smoke/smoke-test-embeddings.script.ts), [tests/smoke/smoke-test-document.script.ts](../../tests/smoke/smoke-test-document.script.ts), [tests/smoke/smoke-test-mail.script.ts](../../tests/smoke/smoke-test-mail.script.ts)): sanity-check Azure OpenAI chat/embeddings connectivity, completion-document rendering, and SMTP delivery, each independent of the paths that normally trigger them.
 
 ## 12. Test suite
 
@@ -243,6 +243,7 @@ Three tiers, matching the test scripts in [package.json](../../package.json):
 - **`npm run test:live`** → `tests/live/**/*.test.ts` (slow, calls real Azure OpenAI, run manually/CI-gated):
   - `extraction-accuracy.live.test.ts` — asserts the model correctly extracts *specific* structural details from the two worked examples (right step IDs, correct `depends_on` chains, correct condition operator/operands, correct loop-back/termination outcomes, correct `context_from_steps` bindings).
   - `generalisation.live.test.ts`, `consistency.live.test.ts`, `robustness.live.test.ts`, `selection-quality.live.test.ts` — extraction on an unseen fixture, repeatability across repeated calls, behavior on messy/edge-case/non-workflow input, and selector agent quality, respectively.
+- Two more manual, non-`node:test` tiers live alongside these: **`npm run evaluate:selection`** (`tests/evaluation/`) prints a recall@5 + decision-accuracy report for the selector agent against `src/data/samples/selection/queries.json`; **`npm run perf-test`** (`tests/perf/`) measures latency/token/cost for a chosen AI operation across configured models, writing timestamped JSON/CSV under its own git-ignored `results/`.
 
 ## 13. Sample data (used as both few-shot examples and test gold data)
 

@@ -1,5 +1,5 @@
-import { runMigrations } from "../src/db/migrate.js";
-import { closePool } from "../src/db/postgres.client.js";
+import { runMigrations } from "../../src/db/migrate.js";
+import { closePool } from "../../src/db/postgres.client.js";
 
 const applied = await runMigrations();
 

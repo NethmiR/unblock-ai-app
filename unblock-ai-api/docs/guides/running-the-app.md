@@ -130,7 +130,7 @@ Once MongoDB is reachable (either option above), run this from `unblock-ai-api/`
 npm run init-db
 ```
 
-This creates the required collections and indexes (via `scripts/init-db.script.ts`) and prints a summary of what was created. It is idempotent — safe to re-run any time.
+This creates the required collections and indexes (via `scripts/db/init-db.script.ts`) and prints a summary of what was created. It is idempotent — safe to re-run any time.
 
 Expected output:
 
