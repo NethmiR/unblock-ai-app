@@ -4,6 +4,7 @@ import { InMemoryVectorStore } from "../../src/services/vector-store/in-memory.v
 import { RetrievalService } from "../../src/services/retrieval.service.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { SelectorService } from "../../src/services/selector.service.js";
+import { LlmMessageRole } from "../../src/data/constants/llm.constant.js";
 import { closeDb } from "../../src/db/mongo.client.js";
 
 interface EvaluationCase {
@@ -55,7 +56,7 @@ for (const c of cases) {
     recall = hit ? "HIT" : "MISS";
   }
 
-  const decision = await selectorService.decide(candidates, [{ role: "user", text: c.query }]);
+  const decision = await selectorService.decide(candidates, [{ role: LlmMessageRole.USER, text: c.query }]);
   const correct =
     decision.decision === c.expect && (!c.expect_workflow || decision.workflow_id === c.expect_workflow);
   if (correct) decisionHits++;

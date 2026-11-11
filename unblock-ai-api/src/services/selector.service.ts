@@ -1,27 +1,22 @@
-import type { AzureOpenAI } from "openai";
-import { selectorChatClient } from "./azure-openai.client.js";
+import { createLlmAdapter, type ILlmAdapter } from "./llm-adapter/index.llm-adapter.js";
 import { config } from "../config/index.config.js";
 import { buildSelectorMessages, type SelectorTranscriptTurn } from "../data/prompts/selector.prompt.js";
-import { decisionSchema, DECISION_SCHEMA_NAME } from "../data/schemas/decision.schema.js";
+import { decisionResponseSchema, isSelectorDecision } from "../data/schemas/decision.schema.js";
 import { SELECTION_DECISION } from "../data/constants/status.constant.js";
-import { supportsTemperatureControl } from "../data/constants/model.constant.js";
 import { logger } from "../utils/shared/logger.util.js";
 import { SelectionError } from "../errors/selection.error.js";
 import type { BoostedCandidate } from "../lib/types/selection/candidate.type.js";
 import type { SelectorDecision } from "../lib/types/selection/decision.type.js";
 
 export interface SelectorServiceOptions {
-  client?: AzureOpenAI;
-  deployment?: string;
+  llmAdapter?: ILlmAdapter;
 }
 
 export class SelectorService {
-  private readonly client: AzureOpenAI;
-  private readonly deployment: string;
+  private readonly llmAdapter: ILlmAdapter;
 
-  constructor({ client = selectorChatClient, deployment = config.azureOpenAI.selectorDeployment }: SelectorServiceOptions = {}) {
-    this.client = client;
-    this.deployment = deployment;
+  constructor({ llmAdapter = createLlmAdapter(config.llm) }: SelectorServiceOptions = {}) {
+    this.llmAdapter = llmAdapter;
   }
 
   async decide(candidates: BoostedCandidate[], transcript: SelectorTranscriptTurn[]): Promise<SelectorDecision> {
@@ -40,23 +35,18 @@ export class SelectorService {
 
     const messages = buildSelectorMessages({ candidates, transcript });
 
-    let raw: SelectorDecision;
+    let decision: unknown;
     try {
-      const response = await this.client.chat.completions.create({
-        model: this.deployment,
-        messages,
-        response_format: {
-          type: "json_schema",
-          json_schema: { name: DECISION_SCHEMA_NAME, schema: decisionSchema, strict: true },
-        },
-        ...(supportsTemperatureControl(this.deployment) ? { temperature: 0 } : {}),
-      });
-      raw = JSON.parse(response.choices[0]?.message.content ?? "{}") as SelectorDecision;
+      const completion = await this.llmAdapter.generateCompletion({ messages, responseSchema: decisionResponseSchema });
+      decision = JSON.parse(completion.content);
     } catch (err) {
       throw new SelectionError(`Selector call failed: ${(err as Error).message}`, { cause: err });
     }
 
-    return this.sanitize(raw, candidates);
+    if (!isSelectorDecision(decision)) {
+      throw new SelectionError("Selector returned a decision that does not match the decision schema");
+    }
+    return this.sanitize(decision, candidates);
   }
 
   private sanitize(decision: SelectorDecision, candidates: BoostedCandidate[]): SelectorDecision {

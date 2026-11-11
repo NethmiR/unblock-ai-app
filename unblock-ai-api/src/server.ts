@@ -9,6 +9,8 @@ import { TemplateModel } from "./models/template.model.js";
 import { SelectionSessionModel } from "./models/selection-session.model.js";
 import { TaskModel } from "./models/task.model.js";
 import { AuditLogModel } from "./models/audit-log.model.js";
+import { createLlmAdapter } from "./services/llm-adapter/index.llm-adapter.js";
+import { createEmbeddingAdapter } from "./services/embedding-adapter/index.embedding-adapter.js";
 import { EmbeddingService } from "./services/embedding.service.js";
 import { ValidationService } from "./services/validation.service.js";
 import { ExtractionService } from "./services/extraction.service.js";
@@ -46,9 +48,11 @@ async function main(): Promise<void> {
   const auditLogModel = new AuditLogModel();
 
   const auditService = new AuditService({ auditLogModel });
-  const embeddingService = new EmbeddingService();
+  const llmAdapter = createLlmAdapter(config.llm);
+  const embeddingAdapter = createEmbeddingAdapter(config.embedding);
+  const embeddingService = new EmbeddingService({ embeddingAdapter });
   const validationService = new ValidationService();
-  const extractionService = new ExtractionService({ validationService });
+  const extractionService = new ExtractionService({ llmAdapter, validationService });
   const draftService = new DraftService({ draftModel });
 
   const authStore = createAuthStore(config.auth.storeBackend);
@@ -70,7 +74,7 @@ async function main(): Promise<void> {
   });
 
   const retrievalService = new RetrievalService({ vectorStore, embeddingService });
-  const selectorService = new SelectorService();
+  const selectorService = new SelectorService({ llmAdapter });
   const selectionService = new SelectionService({
     retrievalService,
     selectorService,

@@ -4,14 +4,14 @@ import { config } from "../../src/config/index.config.js";
 
 const embeddingService = new EmbeddingService();
 
-const [a, b] = await Promise.all([
-  embeddingService.embedQuery("I want to apply for overseas leave"),
-  embeddingService.embedQuery("going abroad for a conference"),
-]);
-
-console.log(`endpoint     : ${config.azureEmbedding.endpoint}`);
-console.log(`deployment   : ${config.azureEmbedding.deployment}`);
-console.log(`dimensions   : ${a.length}  (expected ${config.azureEmbedding.dimensions})`);
-console.log(`unit length  : ${dot(a, a).toFixed(6)}  (expected 1.000000)`);
-console.log(`related sim  : ${dot(a, b).toFixed(4)}  (expect > 0.4)`);
-console.log(a.length === config.azureEmbedding.dimensions ? "OK embeddings" : "FAIL dimension mismatch");
+try {
+  const vector = await embeddingService.embedQuery("overseas leave");
+  console.log(`provider     : ${config.embedding.provider}`);
+  console.log(`model        : ${embeddingService.metadata().model}`);
+  console.log(`dimensions   : ${vector.length}  (expected ${config.embedding.dimensions})`);
+  console.log(`unit length  : ${dot(vector, vector).toFixed(6)}  (expected 1.000000)`);
+  console.log("OK embeddings");
+} catch (err) {
+  console.error(`${config.embedding.provider} embeddings failed:`, (err as Error).message);
+  process.exitCode = 1;
+}

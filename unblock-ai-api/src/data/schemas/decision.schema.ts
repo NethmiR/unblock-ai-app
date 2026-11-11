@@ -1,3 +1,7 @@
+import { createJsonSchemaGuard } from "../../utils/shared/json-schema-guard.util.js";
+import type { LlmResponseSchema } from "../../lib/types/ai/llm.type.js";
+import type { SelectorDecision } from "../../lib/types/selection/decision.type.js";
+
 export const decisionSchema = {
   type: "object",
   additionalProperties: false,
@@ -31,4 +35,9 @@ export const decisionSchema = {
   },
 } as const;
 
-export const DECISION_SCHEMA_NAME = "workflow_selection_decision";
+export const decisionResponseSchema: LlmResponseSchema = {
+  name: "workflow_selection_decision",
+  definition: decisionSchema,
+};
+
+export const isSelectorDecision = createJsonSchemaGuard<SelectorDecision>(decisionSchema);

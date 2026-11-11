@@ -1,5 +1,5 @@
-export { createChatClient, chatClient, selectorChatClient } from "./azure-openai.client.js";
-export { embeddingClient } from "./azure-embedding.client.js";
+export { AzureOpenAILlmAdapter, GeminiLlmAdapter, createLlmAdapter } from "./llm-adapter/index.llm-adapter.js";
+export { AzureOpenAIEmbeddingAdapter, GeminiEmbeddingAdapter, createEmbeddingAdapter } from "./embedding-adapter/index.embedding-adapter.js";
 export { ValidationService } from "./validation.service.js";
 export { EmbeddingService } from "./embedding.service.js";
 export { ExtractionService } from "./extraction.service.js";

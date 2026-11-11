@@ -1,12 +1,12 @@
 import { SYSTEM_PROMPT } from "../../data/prompts/extraction.prompt.js";
-import { FEW_SHOT_MESSAGES, type FewShotMessage } from "../../data/prompts/extraction-few-shot.prompt.js";
+import { FEW_SHOT_MESSAGES } from "../../data/prompts/extraction-few-shot.prompt.js";
+import { LlmMessageRole } from "../../data/constants/llm.constant.js";
+import type { LlmMessage } from "../../lib/types/ai/llm.type.js";
 
-export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
-
-export function buildExtractionMessages(text: string): ChatMessage[] {
+export function buildExtractionMessages(text: string): LlmMessage[] {
   return [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...(FEW_SHOT_MESSAGES as FewShotMessage[]),
-    { role: "user", content: text },
+    { role: LlmMessageRole.SYSTEM, content: SYSTEM_PROMPT },
+    ...FEW_SHOT_MESSAGES,
+    { role: LlmMessageRole.USER, content: text },
   ];
 }

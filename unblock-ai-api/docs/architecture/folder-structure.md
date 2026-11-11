@@ -29,8 +29,16 @@ unblock-ai-api/
 │  │  ├─ selector.service.ts
 │  │  ├─ selection.service.ts
 │  │  ├─ validation.service.ts
-│  │  ├─ azure-openai.client.ts
-│  │  ├─ azure-embedding.client.ts
+│  │  ├─ llm-adapter/
+│  │  │  ├─ llm-adapter.interface.ts
+│  │  │  ├─ azure-openai.llm-adapter.ts
+│  │  │  ├─ gemini.llm-adapter.ts
+│  │  │  └─ index.llm-adapter.ts
+│  │  ├─ embedding-adapter/
+│  │  │  ├─ embedding-adapter.interface.ts
+│  │  │  ├─ azure-openai.embedding-adapter.ts
+│  │  │  ├─ gemini.embedding-adapter.ts
+│  │  │  └─ index.embedding-adapter.ts
 │  │  └─ vector-store/
 │  │     ├─ vector-store.interface.ts
 │  │     ├─ in-memory.vector-store.ts
@@ -43,8 +51,9 @@ unblock-ai-api/
 │  ├─ config/
 │  │  ├─ env.config.ts
 │  │  ├─ db.config.ts
-│  │  ├─ azure-openai.config.ts
-│  │  ├─ azure-embedding.config.ts
+│  │  ├─ llm.config.ts
+│  │  ├─ embedding.config.ts
+│  │  ├─ extraction.config.ts
 │  │  ├─ retrieval.config.ts
 │  │  ├─ server.config.ts
 │  │  └─ index.config.ts
@@ -62,7 +71,8 @@ unblock-ai-api/
 │  │  │  ├─ hash.util.ts
 │  │  │  ├─ object-id.util.ts
 │  │  │  ├─ assert.util.ts
-│  │  │  └─ env-parse.util.ts
+│  │  │  ├─ env-parse.util.ts
+│  │  │  └─ json-schema-guard.util.ts
 │  │  ├─ workflow/
 │  │  │  ├─ graph-validator.util.ts
 │  │  │  ├─ schema-validator.util.ts
@@ -90,7 +100,9 @@ unblock-ai-api/
 │  │  ├─ constants/
 │  │  │  ├─ collection.constant.ts
 │  │  │  ├─ status.constant.ts
-│  │  │  └─ model.constant.ts
+│  │  │  ├─ ai-provider.constant.ts
+│  │  │  ├─ llm.constant.ts
+│  │  │  └─ embedding.constant.ts
 │  │  └─ samples/
 │  │     ├─ input/
 │  │     ├─ expected/
@@ -111,6 +123,7 @@ unblock-ai-api/
 │  │     │  ├─ decision.type.ts
 │  │     │  └─ candidate.type.ts
 │  │     ├─ retrieval/retrieval.type.ts
+│  │     ├─ ai/llm.type.ts
 │  │     ├─ config/config.type.ts
 │  │     ├─ http/http.type.ts
 │  │     └─ index.type.ts
@@ -167,9 +180,9 @@ unblock-ai-api/
 
 **`src/routes/`** — One file per route group. A route file does exactly three things: create an Express `Router`, attach middlewares that apply to that group, and bind each path+method to a controller method wrapped in `asyncHandler`. A route file contains no business logic, no body parsing, no status-code decisions, and no `res.json` calls.
 
-**`src/controllers/`** — Parses and validates the HTTP request (params, query, body), calls one or more services, maps the service result to an HTTP status code and response body, and returns. Controllers never touch MongoDB, never call the OpenAI SDK, and never contain domain rules. A controller throws typed errors from `src/errors/`; it never formats an error response itself.
+**`src/controllers/`** — Parses and validates the HTTP request (params, query, body), calls one or more services, maps the service result to an HTTP status code and response body, and returns. Controllers never touch MongoDB, never call an AI adapter or provider SDK, and never contain domain rules. A controller throws typed errors from `src/errors/`; it never formats an error response itself.
 
-**`src/services/`** — Owns all business logic. A service performs DB access through its model, calls utils for pure computation, and calls external resources (Azure chat completions, Azure embeddings). Services receive their collaborators through constructor injection, never by importing a concrete singleton. `extraction.service.ts` only extracts, `embedding.service.ts` only embeds, `retrieval.service.ts` only ranks, `selector.service.ts` only makes one model decision, `selection.service.ts` only orchestrates the multi-round loop.
+**`src/services/`** — Owns all business logic. A service performs DB access through its model, calls utils for pure computation, and calls external AI providers only through `ILlmAdapter` and `IEmbeddingAdapter`, never through a provider SDK directly. Each provider lives in one adapter file under `llm-adapter/` or `embedding-adapter/`, and the matching `create*Adapter` factory picks one from config. Services receive their collaborators through constructor injection, never by importing a concrete singleton. `extraction.service.ts` only extracts, `embedding.service.ts` only embeds, `retrieval.service.ts` only ranks, `selector.service.ts` only makes one model decision, `selection.service.ts` only orchestrates the multi-round loop.
 
 **`src/models/`** — One model per MongoDB collection. A model owns: the collection name, the TypeScript document interface, the index specifications for that collection, and thin typed CRUD operations (`insertOne`, `findOne`, `updateOne`, `find`, projections). Models contain no business rules — no version-number computation, no embedding calls, no status transition policy. Those live in services.
 

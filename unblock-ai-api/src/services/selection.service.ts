@@ -6,6 +6,7 @@ import { SelectionSessionModel } from "../models/selection-session.model.js";
 import { config } from "../config/index.config.js";
 import { logger } from "../utils/shared/logger.util.js";
 import { SELECTION_DECISION, SESSION_OUTCOME } from "../data/constants/status.constant.js";
+import { LlmMessageRole } from "../data/constants/llm.constant.js";
 import { ConflictError } from "../errors/conflict.error.js";
 import { ValidationError } from "../errors/validation.error.js";
 import { NotFoundError } from "../errors/not-found.error.js";
@@ -78,7 +79,7 @@ export class SelectionService {
       updated_at: now,
     });
 
-    const transcript: SelectorTranscriptTurn[] = [{ role: "user", text: userQuery }];
+    const transcript: SelectorTranscriptTurn[] = [{ role: LlmMessageRole.USER, text: userQuery }];
     const decision = await this.selectorService.decide(candidates, transcript);
 
     return this.apply(session, decision, candidates);
@@ -99,11 +100,12 @@ export class SelectionService {
     const candidates = this.toBoostedCandidates(updated);
 
     const transcript: SelectorTranscriptTurn[] = [
-      { role: "user", text: updated.user_query },
-      ...updated.rounds.flatMap((r): SelectorTranscriptTurn[] => [
-        { role: "assistant", text: r.question },
-        ...(r.answer ? ([{ role: "user", text: r.answer }] as SelectorTranscriptTurn[]) : []),
-      ]),
+      { role: LlmMessageRole.USER, text: updated.user_query },
+      ...updated.rounds.flatMap((r): SelectorTranscriptTurn[] => {
+        const turns: SelectorTranscriptTurn[] = [{ role: LlmMessageRole.ASSISTANT, text: r.question }];
+        if (r.answer) turns.push({ role: LlmMessageRole.USER, text: r.answer });
+        return turns;
+      }),
     ];
 
     // The candidate set from round one is deliberately frozen; re-running

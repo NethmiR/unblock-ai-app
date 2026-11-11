@@ -1,21 +1,22 @@
-import type { AzureOpenAI } from "openai";
-import { chatClient } from "./azure-openai.client.js";
+import { createLlmAdapter, type ILlmAdapter } from "./llm-adapter/index.llm-adapter.js";
 import { ValidationService } from "./validation.service.js";
 import { config } from "../config/index.config.js";
 import { RETRIEVAL_SUMMARY_ONLY_PROMPT } from "../data/prompts/retrieval-summary.prompt.js";
-import { strictWorkflowSchema } from "../data/schemas/workflow-schema.data.js";
-import { retrievalSummarySchema } from "../data/schemas/retrieval-summary.schema.js";
-import { supportsTemperatureControl } from "../data/constants/model.constant.js";
-import { buildExtractionMessages, type ChatMessage } from "../utils/workflow/build-extraction-messages.util.js";
+import { workflowResponseSchema } from "../data/schemas/workflow-schema.data.js";
+import { isRetrievalSummary, retrievalSummaryResponseSchema } from "../data/schemas/retrieval-summary.schema.js";
+import { LlmMessageRole } from "../data/constants/llm.constant.js";
+import { REVIEW_STATUS } from "../data/constants/status.constant.js";
+import { buildExtractionMessages } from "../utils/workflow/build-extraction-messages.util.js";
 import { ExtractionError } from "../errors/extraction.error.js";
-import type { AzureOpenAIConfig } from "../lib/types/config/config.type.js";
+import type { ExtractionConfig } from "../lib/types/config/config.type.js";
+import type { LlmMessage, LlmResponseSchema } from "../lib/types/ai/llm.type.js";
 import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
 import type { RetrievalSummary } from "../lib/types/workflow/retrieval-summary.type.js";
 
 export interface ExtractionServiceOptions {
-  client?: AzureOpenAI;
+  llmAdapter?: ILlmAdapter;
   validationService: ValidationService;
-  openAIConfig?: AzureOpenAIConfig;
+  extractionConfig?: ExtractionConfig;
 }
 
 export interface ExtractionResult {
@@ -24,14 +25,18 @@ export interface ExtractionResult {
 }
 
 export class ExtractionService {
-  private readonly client: AzureOpenAI;
+  private readonly llmAdapter: ILlmAdapter;
   private readonly validationService: ValidationService;
-  private readonly openAIConfig: AzureOpenAIConfig;
+  private readonly extractionConfig: ExtractionConfig;
 
-  constructor({ client = chatClient, validationService, openAIConfig = config.azureOpenAI }: ExtractionServiceOptions) {
-    this.client = client;
+  constructor({
+    llmAdapter = createLlmAdapter(config.llm),
+    validationService,
+    extractionConfig = config.extraction,
+  }: ExtractionServiceOptions) {
+    this.llmAdapter = llmAdapter;
     this.validationService = validationService;
-    this.openAIConfig = openAIConfig;
+    this.extractionConfig = extractionConfig;
   }
 
   private buildRepairPrompt(errors: string[]): string {
@@ -41,45 +46,32 @@ export class ExtractionService {
     );
   }
 
-  private async callModel(messages: ChatMessage[]): Promise<unknown> {
-    const response = await this.client.chat.completions.create({
-      model: this.openAIConfig.deployment,
-      messages,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "workflow_definition",
-          schema: strictWorkflowSchema,
-          strict: true,
-        },
-      },
-      ...(supportsTemperatureControl(this.openAIConfig.deployment) ? { temperature: 0 } : {}),
-    });
-
-    const content = response.choices[0]?.message.content ?? "";
+  private async requestStructuredJson(messages: LlmMessage[], responseSchema: LlmResponseSchema): Promise<unknown> {
+    const completion = await this.llmAdapter.generateCompletion({ messages, responseSchema });
 
     try {
-      return JSON.parse(content);
+      return JSON.parse(completion.content);
     } catch (err) {
-      throw new ExtractionError("Azure returned content that is not valid JSON", { cause: err });
+      throw new ExtractionError("Model returned content that is not valid JSON", { cause: err });
     }
   }
 
   async extract(text: string, options: { maxAttempts?: number } = {}): Promise<ExtractionResult> {
-    const maxAttempts = options.maxAttempts ?? this.openAIConfig.maxExtractionAttempts;
+    const maxAttempts = options.maxAttempts ?? this.extractionConfig.maxAttempts;
     const messages = buildExtractionMessages(text);
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const candidate = (await this.callModel(messages)) as WorkflowDefinition;
+      const candidate = await this.requestStructuredJson(messages, workflowResponseSchema);
       const errors = this.validationService.validate(candidate);
 
       if (errors.length === 0) {
-        if (candidate.metadata?.review_status === "rejected") {
+        const workflow = candidate as WorkflowDefinition;
+        if (workflow.metadata.review_status === REVIEW_STATUS.REJECTED) {
           throw new ExtractionError("Source text does not describe a workflow", {
-            details: candidate.metadata.ambiguities,
+            details: workflow.metadata.ambiguities,
           });
         }
-        return { workflow: candidate, attempts: attempt };
+        return { workflow, attempts: attempt };
       }
 
       if (attempt === maxAttempts) {
@@ -89,8 +81,8 @@ export class ExtractionService {
       }
 
       messages.push(
-        { role: "assistant", content: JSON.stringify(candidate) },
-        { role: "user", content: this.buildRepairPrompt(errors) },
+        { role: LlmMessageRole.ASSISTANT, content: JSON.stringify(candidate) },
+        { role: LlmMessageRole.USER, content: this.buildRepairPrompt(errors) },
       );
     }
 
@@ -98,19 +90,15 @@ export class ExtractionService {
   }
 
   async generateRetrievalSummary(workflow: WorkflowDefinition): Promise<RetrievalSummary> {
-    const response = await this.client.chat.completions.create({
-      model: this.openAIConfig.deployment,
-      temperature: 0,
-      messages: [
-        { role: "system", content: RETRIEVAL_SUMMARY_ONLY_PROMPT },
-        { role: "user", content: JSON.stringify(workflow) },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "retrieval_summary", schema: retrievalSummarySchema, strict: true },
-      },
-    });
+    const messages: LlmMessage[] = [
+      { role: LlmMessageRole.SYSTEM, content: RETRIEVAL_SUMMARY_ONLY_PROMPT },
+      { role: LlmMessageRole.USER, content: JSON.stringify(workflow) },
+    ];
 
-    return JSON.parse(response.choices[0]?.message.content ?? "{}") as RetrievalSummary;
+    const summary = await this.requestStructuredJson(messages, retrievalSummaryResponseSchema);
+    if (!isRetrievalSummary(summary)) {
+      throw new ExtractionError("Model returned a retrieval summary that does not match its schema");
+    }
+    return summary;
   }
 }

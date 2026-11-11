@@ -3,7 +3,7 @@
 Every environment variable the app reads, in the order listed in `.example.env`. All
 of them are read exactly once, in `src/config/env.config.ts` (the only file in the
 repo permitted to reference `process.env`), and validated by the domain-specific
-config module that owns them. `src/config/index.config.ts` composes the five domain
+config module that owns them. `src/config/index.config.ts` composes the domain
 configs into a single frozen `config` object that every other module imports.
 
 | Variable | Required | Default | Owning module | Consumed by |
@@ -13,17 +13,21 @@ configs into a single frozen `config` object that every other module imports.
 | `CORS_ORIGIN` | no | `http://localhost:3001` | `src/config/server.config.ts` | `config.server.corsOrigins` (comma-separated) — `src/middlewares/cors.middleware.ts`; ignored when `NODE_ENV=development`, which allows any origin |
 | `MONGODB_URI` | **yes** | — | `src/config/db.config.ts` | `config.db.uri` — `src/db/mongo.client.ts` |
 | `MONGODB_DB` | no | `unblock_ai` | `src/config/db.config.ts` | `config.db.dbName` |
-| `AZURE_OPENAI_ENDPOINT` | **yes** | — | `src/config/azure-openai.config.ts` | `config.azureOpenAI.endpoint` — chat client |
-| `AZURE_OPENAI_API_KEY` | **yes** | — | `src/config/azure-openai.config.ts` | `config.azureOpenAI.apiKey` |
-| `AZURE_OPENAI_DEPLOYMENT` | **yes** | — | `src/config/azure-openai.config.ts` | `config.azureOpenAI.deployment` — extraction model |
-| `AZURE_OPENAI_API_VERSION` | **yes** | — | `src/config/azure-openai.config.ts` | `config.azureOpenAI.apiVersion` |
-| `AZURE_SELECTOR_DEPLOYMENT` | no | falls back to `AZURE_OPENAI_DEPLOYMENT` | `src/config/azure-openai.config.ts` | `config.azureOpenAI.selectorDeployment` — selector agent model |
-| `EXTRACTION_MAX_ATTEMPTS` | no | `3` | `src/config/azure-openai.config.ts` | `config.azureOpenAI.maxExtractionAttempts` — extraction repair-loop cap |
-| `AZURE_EMBEDDING_ENDPOINT` | **yes** | — | `src/config/azure-embedding.config.ts` | `config.azureEmbedding.endpoint` |
-| `AZURE_EMBEDDING_API_KEY` | **yes** | — | `src/config/azure-embedding.config.ts` | `config.azureEmbedding.apiKey` |
-| `AZURE_EMBEDDING_DEPLOYMENT` | no | `text-embedding-3-small` | `src/config/azure-embedding.config.ts` | `config.azureEmbedding.deployment` |
-| `AZURE_EMBEDDING_API_VERSION` | no | `2024-10-21` | `src/config/azure-embedding.config.ts` | `config.azureEmbedding.apiVersion` |
-| `AZURE_EMBEDDING_DIM` | no | `1536` | `src/config/azure-embedding.config.ts` | `config.azureEmbedding.dimensions` — validated against the actual returned vector length |
+| `LLM_PROVIDER` | no | `azure-openai` | `src/config/llm.config.ts` | `config.llm.provider` — `azure-openai` \| `gemini`, selects the `ILlmAdapter` used for every generation task (extraction, retrieval summaries, selection) |
+| `AZURE_OPENAI_ENDPOINT` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.endpoint` — **required when `LLM_PROVIDER=azure-openai`** |
+| `AZURE_OPENAI_API_KEY` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.apiKey` — **required when `LLM_PROVIDER=azure-openai`** |
+| `AZURE_OPENAI_API_VERSION` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.apiVersion` — **required when `LLM_PROVIDER=azure-openai`** |
+| `AZURE_OPENAI_CHAT_DEPLOYMENT` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.deployment` — **required when `LLM_PROVIDER=azure-openai`** |
+| `GEMINI_API_KEY` | \*\* | — | `src/config/llm.config.ts`, `src/config/embedding.config.ts` | `config.llm.gemini.apiKey` / `config.embedding.gemini.apiKey` — Google AI Studio key; **required when `LLM_PROVIDER` or `EMBEDDING_PROVIDER` is `gemini`** |
+| `GEMINI_CHAT_MODEL` | \*\* | — | `src/config/llm.config.ts` | `config.llm.gemini.model` — **required when `LLM_PROVIDER=gemini`** |
+| `EXTRACTION_MAX_ATTEMPTS` | no | `3` | `src/config/extraction.config.ts` | `config.extraction.maxAttempts` — extraction repair-loop cap |
+| `EMBEDDING_PROVIDER` | no | `azure-openai` | `src/config/embedding.config.ts` | `config.embedding.provider` — `azure-openai` \| `gemini`, selects the `IEmbeddingAdapter`. Changing it (or the embedding model) requires re-embedding every stored template |
+| `AZURE_OPENAI_EMBEDDING_ENDPOINT` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.endpoint` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
+| `AZURE_OPENAI_EMBEDDING_API_KEY` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.apiKey` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
+| `AZURE_OPENAI_EMBEDDING_API_VERSION` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.apiVersion` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.deployment` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
+| `GEMINI_EMBEDDING_MODEL` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.gemini.model` — **required when `EMBEDDING_PROVIDER=gemini`** |
+| `EMBEDDING_DIMENSIONS` | no | `1536` | `src/config/embedding.config.ts` | `config.embedding.dimensions` — requested from the provider and validated against the returned vector length; must match the vector index |
 | `RETRIEVAL_TOP_K` | no | `5` | `src/config/retrieval.config.ts` | `config.retrieval.topK` — max candidates returned by retrieval |
 | `RETRIEVAL_ALIAS_BOOST` | no | `0.15` | `src/config/retrieval.config.ts` | `config.retrieval.aliasBoost` — additive score boost for exact alias matches |
 | `SELECTION_MAX_ROUNDS` | no | `2` | `src/config/retrieval.config.ts` | `config.retrieval.maxSelectionRounds` — clarifying-question round cap |
@@ -41,12 +45,20 @@ configs into a single frozen `config` object that every other module imports.
 | `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | `src/config/document.config.ts` | `config.document.institutionName` — printed in the record's footer |
 | `DOCUMENT_MAX_ATTACHMENT_BYTES` | no | `5000000` | `src/config/document.config.ts` | `config.document.maxAttachmentBytes` — above this size the record is download-only, dropped from the email attachment |
 
-32 variables total (\* = required, throws at startup if missing/empty; \*\* =
+36 variables total (\* = required, throws at startup if missing/empty; \*\* =
 `APPROVAL_TOKEN_SECRET` and `BREVO_API_KEY` are conditionally required, both only
 when `MAIL_TRANSPORT=brevo` — both throw `ConfigurationError` at startup in that
 case, in `src/config/mail.config.ts`. A misconfigured Brevo API key that is merely
 non-empty but wrong still only surfaces as a send failure, caught and logged by
-`notification.service.ts` rather than crashing the process).
+`notification.service.ts` rather than crashing the process). The `AZURE_OPENAI_*` and
+`GEMINI_*` provider variables are likewise conditionally required: only the keys of
+the provider selected by `LLM_PROVIDER` / `EMBEDDING_PROVIDER` are validated, in
+`src/config/llm.config.ts` and `src/config/embedding.config.ts`.
+
+To switch providers, change `LLM_PROVIDER` and/or `EMBEDDING_PROVIDER` and fill in that
+provider's keys — no code changes are needed. Switching the embedding provider (or
+embedding model) makes previously stored template vectors incomparable with new query
+vectors, so every stored template must be re-embedded before retrieval is reliable.
 
 `KNOWLEDGE_BANK_PATH` was **removed** during the restructure. It was read into
 the pre-restructure config but consumed by nothing after the migration to MongoDB —

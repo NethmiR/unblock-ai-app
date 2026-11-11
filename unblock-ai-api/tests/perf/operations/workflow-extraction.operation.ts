@@ -1,16 +1,17 @@
 import { readFile } from "node:fs/promises";
-import { chatClient } from "../../../src/services/azure-openai.client.js";
+import { createLlmAdapter } from "../../../src/services/llm-adapter/index.llm-adapter.js";
 import { config } from "../../../src/config/index.config.js";
-import { strictWorkflowSchema } from "../../../src/data/schemas/workflow-schema.data.js";
-import { supportsTemperatureControl } from "../../../src/data/constants/model.constant.js";
+import { workflowResponseSchema } from "../../../src/data/schemas/workflow-schema.data.js";
 import { buildExtractionMessages } from "../../../src/utils/workflow/build-extraction-messages.util.js";
 import type { PerfCase, PerfOperation, PerfUsage } from "../../../src/lib/types/perf/perf.type.js";
 
 const CASES_PATH = "src/data/samples/perf/workflow-extraction.cases.json";
 
+const llmAdapter = createLlmAdapter(config.llm);
+
 /**
  * Exercises the same single-call shape as `ExtractionService`'s first attempt
- * (identical messages, schema, and response_format) so measured tokens/latency
+ * (identical messages and response schema) so measured tokens/latency
  * reflect the real extraction request. Validation-repair retries are excluded
  * on purpose — this measures the primary request, not the retry tail.
  */
@@ -23,27 +24,13 @@ export const workflowExtractionOperation: PerfOperation = {
   },
 
   async run(testCase: PerfCase): Promise<PerfUsage> {
-    const deployment = config.azureOpenAI.deployment;
-    const messages = buildExtractionMessages(testCase.input);
-
-    const response = await chatClient.chat.completions.create({
-      model: deployment,
-      messages,
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "workflow_definition", schema: strictWorkflowSchema, strict: true },
-      },
-      ...(supportsTemperatureControl(deployment) ? { temperature: 0 } : {}),
+    const completion = await llmAdapter.generateCompletion({
+      messages: buildExtractionMessages(testCase.input),
+      responseSchema: workflowResponseSchema,
     });
 
-    const choice = response.choices[0];
-    JSON.parse(choice?.message.content ?? "");
+    JSON.parse(completion.content);
 
-    return {
-      inputTokens: response.usage?.prompt_tokens ?? null,
-      outputTokens: response.usage?.completion_tokens ?? null,
-      totalTokens: response.usage?.total_tokens ?? null,
-      finishReason: choice?.finish_reason ?? null,
-    };
+    return { ...completion.usage, finishReason: completion.finishReason };
   },
 };

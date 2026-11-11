@@ -1,7 +1,9 @@
 import type { BoostedCandidate } from "../../lib/types/selection/candidate.type.js";
+import { LlmMessageRole } from "../constants/llm.constant.js";
+import type { LlmConversationRole, LlmMessage } from "../../lib/types/ai/llm.type.js";
 
 export interface SelectorTranscriptTurn {
-  role: "user" | "assistant";
+  role: LlmConversationRole;
   text: string;
 }
 
@@ -59,13 +61,13 @@ export function buildSelectorMessages({
 }: {
   candidates: BoostedCandidate[];
   transcript: SelectorTranscriptTurn[];
-}): Array<{ role: "system" | "user"; content: string }> {
-  const conversation = transcript.map((turn) => `${turn.role === "user" ? "Person" : "You asked"}: ${turn.text}`).join("\n");
+}): LlmMessage[] {
+  const conversation = transcript.map((turn) => `${turn.role === LlmMessageRole.USER ? "Person" : "You asked"}: ${turn.text}`).join("\n");
 
   return [
-    { role: "system", content: SELECTOR_SYSTEM_PROMPT },
+    { role: LlmMessageRole.SYSTEM, content: SELECTOR_SYSTEM_PROMPT },
     {
-      role: "user",
+      role: LlmMessageRole.USER,
       content: [
         "## Conversation so far",
         conversation,

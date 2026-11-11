@@ -3,15 +3,17 @@ import { TemplateModel } from "../../../src/models/template.model.js";
 import { createVectorStore } from "../../../src/services/vector-store/index.vector-store.js";
 import { RetrievalService } from "../../../src/services/retrieval.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
-import { selectorChatClient } from "../../../src/services/azure-openai.client.js";
+import { createLlmAdapter } from "../../../src/services/llm-adapter/index.llm-adapter.js";
 import { buildSelectorMessages, type SelectorTranscriptTurn } from "../../../src/data/prompts/selector.prompt.js";
-import { decisionSchema, DECISION_SCHEMA_NAME } from "../../../src/data/schemas/decision.schema.js";
-import { supportsTemperatureControl } from "../../../src/data/constants/model.constant.js";
+import { decisionResponseSchema } from "../../../src/data/schemas/decision.schema.js";
+import { LlmMessageRole } from "../../../src/data/constants/llm.constant.js";
 import { config } from "../../../src/config/index.config.js";
 import { closeDb } from "../../../src/db/mongo.client.js";
 import type { PerfCase, PerfOperation, PerfUsage } from "../../../src/lib/types/perf/perf.type.js";
 
 const CASES_PATH = "src/data/samples/perf/task-request.cases.json";
+
+const llmAdapter = createLlmAdapter(config.llm);
 
 let retrievalService: RetrievalService;
 
@@ -56,28 +58,14 @@ export const taskRequestOperation: PerfOperation = {
       return { inputTokens: null, outputTokens: null, totalTokens: null, finishReason: null };
     }
 
-    const transcript: SelectorTranscriptTurn[] = [{ role: "user", text: testCase.input }];
-    const messages = buildSelectorMessages({ candidates, transcript });
-    const deployment = config.azureOpenAI.selectorDeployment;
-
-    const response = await selectorChatClient.chat.completions.create({
-      model: deployment,
-      messages,
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: DECISION_SCHEMA_NAME, schema: decisionSchema, strict: true },
-      },
-      ...(supportsTemperatureControl(deployment) ? { temperature: 0 } : {}),
+    const transcript: SelectorTranscriptTurn[] = [{ role: LlmMessageRole.USER, text: testCase.input }];
+    const completion = await llmAdapter.generateCompletion({
+      messages: buildSelectorMessages({ candidates, transcript }),
+      responseSchema: decisionResponseSchema,
     });
 
-    const choice = response.choices[0];
-    JSON.parse(choice?.message.content ?? "{}");
+    JSON.parse(completion.content);
 
-    return {
-      inputTokens: response.usage?.prompt_tokens ?? null,
-      outputTokens: response.usage?.completion_tokens ?? null,
-      totalTokens: response.usage?.total_tokens ?? null,
-      finishReason: choice?.finish_reason ?? null,
-    };
+    return { ...completion.usage, finishReason: completion.finishReason };
   },
 };

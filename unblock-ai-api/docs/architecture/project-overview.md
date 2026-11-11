@@ -10,7 +10,7 @@ UNBLOCK-AI turns a **plain-English description of an institutional approval work
 Admin pastes plain text
         │
         ▼
-  LLM Extraction (Azure OpenAI)  ──►  Schema + Graph Validation
+  LLM Extraction (LLM adapter)   ──►  Schema + Graph Validation
         │                                     │
         │  (on failure, feed errors back)     │ pass
         ▼                                     ▼
@@ -26,13 +26,13 @@ Actually **executing** a workflow (sending real emails, collecting real approval
 
 ## 2. Tech stack
 
-- **Runtime**: Node.js 18+, ES modules (`"type": "module"` in [package.json](../../package.json)), compiled with TypeScript (`strict: true`)
+- **Runtime**: Node.js 20+, ES modules (`"type": "module"` in [package.json](../../package.json)), compiled with TypeScript (`strict: true`)
 - **Web framework**: Express 5 ([src/app.ts](../../src/app.ts), [src/server.ts](../../src/server.ts))
-- **LLM provider**: Azure OpenAI, via the official `openai` SDK's `AzureOpenAI` client ([src/services/azure-openai.client.ts](../../src/services/azure-openai.client.ts))
+- **LLM and embedding providers**: pluggable via the adapter pattern. Services depend only on `ILlmAdapter` ([src/services/llm-adapter/](../../src/services/llm-adapter/)) and `IEmbeddingAdapter` ([src/services/embedding-adapter/](../../src/services/embedding-adapter/)); `LLM_PROVIDER` and `EMBEDDING_PROVIDER` independently select Azure OpenAI (official `openai` SDK) or Google AI Studio Gemini (official `@google/genai` SDK)
 - **Schema validation**: AJV (2020-12 dialect) + `ajv-formats` ([src/utils/workflow/schema-validator.util.ts](../../src/utils/workflow/schema-validator.util.ts))
 - **Persistence**: MongoDB via the official `mongodb` driver ([src/db/mongo.client.ts](../../src/db/mongo.client.ts), [src/models/](../../src/models/)) for workflows/drafts/tasks, **plus PostgreSQL** via `pg` ([src/db/postgres.client.ts](../../src/db/postgres.client.ts)) for auth and the template deletion log — see §8.1
 - **Auth**: HMAC-signed stateless session tokens (`node:crypto` scrypt for password hashing, no `bcrypt`/`argon2` dependency) — see §8.1
-- **Testing**: Node's built-in `node:test` runner, executed via `tsx` — split into `tests/unit/`, `tests/integration/`, and `tests/live/` (calls the real Azure endpoint)
+- **Testing**: Node's built-in `node:test` runner, executed via `tsx` — split into `tests/unit/`, `tests/integration/`, and `tests/live/` (calls the configured live AI provider)
 - **Config**: `dotenv`, loaded and validated once at startup ([src/config/env.config.ts](../../src/config/env.config.ts))
 
 ## 3. Directory structure
@@ -94,7 +94,7 @@ Key modeling decisions (also encoded as instructions in the extraction system pr
 ## 6. LLM extraction pipeline ([src/services/extraction.service.ts](../../src/services/extraction.service.ts))
 
 1. **Prompt assembly** ([src/data/prompts/extraction.prompt.ts](../../src/data/prompts/extraction.prompt.ts)): a detailed system prompt encodes all the schema semantics above (graph vs. list, actor resolution, namespace paths, ambiguity handling, rejection-of-non-workflow-input rules), followed by two **few-shot examples** loaded from [src/data/samples/input/](../../src/data/samples/input/) + [src/data/samples/expected/](../../src/data/samples/expected/) ([src/data/prompts/extraction-few-shot.prompt.ts](../../src/data/prompts/extraction-few-shot.prompt.ts)), followed by the actual user-supplied plain text.
-2. **Structured-output call**: calls the Azure deployment with `response_format: { type: "json_schema", json_schema: { schema: strictWorkflowSchema, strict: true } }`, forcing the model to emit schema-conformant JSON. `temperature: 0` is set unless the deployment is a reasoning model (`o*`/`gpt-5*`, detected by regex), which don't support temperature control.
+2. **Structured-output call**: calls the configured `ILlmAdapter` with `workflowResponseSchema`, forcing the model to emit schema-conformant JSON. Each adapter maps this onto its provider's native structured output (Azure OpenAI strict `json_schema`; Gemini `responseJsonSchema`) and applies its own sampling rules: the Azure adapter pins `temperature: 0` unless the deployment is a reasoning model (`o*`/`gpt-5*`); the Gemini adapter keeps the provider default, as Google recommends for Gemini 3.x.
 3. **Two-layer validation** on every candidate (schema validation + graph validation via [src/services/validation.service.ts](../../src/services/validation.service.ts)):
    - **Schema validation** ([src/utils/workflow/schema-validator.util.ts](../../src/utils/workflow/schema-validator.util.ts)): AJV structural check against `workflow.schema.json`.
    - **Graph validation** ([src/utils/workflow/graph-validator.util.ts](../../src/utils/workflow/graph-validator.util.ts)): semantic checks the JSON Schema can't express —
@@ -106,7 +106,7 @@ Key modeling decisions (also encoded as instructions in the extraction system pr
      - `checkApprovalOutcomes` — every `approval`-type step defines both `approved` and `rejected`
      - `checkCompletionRequiredSteps` — `completion.required_steps` references real steps
      - `checkNamespacePaths` — every `inputs.*` / `computed.*` / `steps.*` / `requester.*` / `system.*` reference used in conditions, computed arguments, and `context_from_steps` bindings actually resolves to something declared elsewhere in the document
-4. **Self-repair loop**: if validation fails and attempts remain, the invalid candidate plus a formatted list of errors is appended to the conversation as assistant/user turns, and the model is asked to return corrected JSON fixing *only* those problems. Default `maxAttempts` comes from `config.azureOpenAI.maxExtractionAttempts` (3). If still invalid after the last attempt, throws `ExtractionError`.
+4. **Self-repair loop**: if validation fails and attempts remain, the invalid candidate plus a formatted list of errors is appended to the conversation as assistant/user turns, and the model is asked to return corrected JSON fixing *only* those problems. Default `maxAttempts` comes from `config.extraction.maxAttempts` (3). If still invalid after the last attempt, throws `ExtractionError`.
 5. **Non-workflow guard**: even a schema-valid result is rejected (`ExtractionError`) if `metadata.review_status === "rejected"` — i.e., the model itself flagged the input as not describing a workflow.
 
 ## 7. Validation as a standalone capability
@@ -229,7 +229,7 @@ for the full design rationale; summary of what exists in code:
 ## 11. Supporting pieces
 
 - **Logger** ([src/utils/shared/logger.util.ts](../../src/utils/shared/logger.util.ts)): structured JSON logger (`debug`/`info`/`warn`/`error`) writing single-line JSON to stdout/stderr with timestamps.
-- **Smoke test scripts** ([tests/smoke/smoke-test-azure.script.ts](../../tests/smoke/smoke-test-azure.script.ts), [tests/smoke/smoke-test-embeddings.script.ts](../../tests/smoke/smoke-test-embeddings.script.ts), [tests/smoke/smoke-test-document.script.ts](../../tests/smoke/smoke-test-document.script.ts), [tests/smoke/smoke-test-mail.script.ts](../../tests/smoke/smoke-test-mail.script.ts)): sanity-check Azure OpenAI chat/embeddings connectivity, completion-document rendering, and SMTP delivery, each independent of the paths that normally trigger them.
+- **Smoke test scripts** ([tests/smoke/smoke-test-llm.script.ts](../../tests/smoke/smoke-test-llm.script.ts), [tests/smoke/smoke-test-embeddings.script.ts](../../tests/smoke/smoke-test-embeddings.script.ts), [tests/smoke/smoke-test-document.script.ts](../../tests/smoke/smoke-test-document.script.ts), [tests/smoke/smoke-test-mail.script.ts](../../tests/smoke/smoke-test-mail.script.ts)): sanity-check connectivity of the configured LLM and embedding providers, completion-document rendering, and SMTP delivery, each independent of the paths that normally trigger them.
 
 ## 12. Test suite
 
@@ -240,7 +240,7 @@ Three tiers, matching the test scripts in [package.json](../../package.json):
   - `tests/unit/services/` — draft, workflow, retrieval, selection, selector, vector-store services against fakes.
   - `tests/unit/errors/` — `BaseError` contract.
   - `tests/integration/` — full HTTP-level coverage of draft, workflow, and selection routes, and the error handler, using an in-process Express server.
-- **`npm run test:live`** → `tests/live/**/*.test.ts` (slow, calls real Azure OpenAI, run manually/CI-gated):
+- **`npm run test:live`** → `tests/live/**/*.test.ts` (slow, calls the configured live AI provider, run manually/CI-gated):
   - `extraction-accuracy.live.test.ts` — asserts the model correctly extracts *specific* structural details from the two worked examples (right step IDs, correct `depends_on` chains, correct condition operator/operands, correct loop-back/termination outcomes, correct `context_from_steps` bindings).
   - `generalisation.live.test.ts`, `consistency.live.test.ts`, `robustness.live.test.ts`, `selection-quality.live.test.ts` — extraction on an unseen fixture, repeatability across repeated calls, behavior on messy/edge-case/non-workflow input, and selector agent quality, respectively.
 - Two more manual, non-`node:test` tiers live alongside these: **`npm run evaluate:selection`** (`tests/evaluation/`) prints a recall@5 + decision-accuracy report for the selector agent against `src/data/samples/selection/queries.json`; **`npm run perf-test`** (`tests/perf/`) measures latency/token/cost for a chosen AI operation across configured models, writing timestamped JSON/CSV under its own git-ignored `results/`.
@@ -269,11 +269,11 @@ See [../guides/running-the-app.md](../guides/running-the-app.md) for the full se
 
 ```bash
 npm install
-cp .example.env .env   # then fill in Azure OpenAI + MongoDB + PostgreSQL credentials
+cp .example.env .env   # then fill in AI provider + MongoDB + PostgreSQL credentials
 npm run init-db               # create Mongo collections/indexes
 npm run migrate:pg            # create the Postgres auth + deletion-log tables
 npm run seed:auth             # seed the admin + two portal users from .env credentials
 npm run dev                   # tsx watch, or: npm run build && npm start
 npm test                      # fast unit + integration tests (AUTH_STORE_BACKEND=memory needs no Postgres)
-npm run test:live             # slow tests that call Azure OpenAI (needs valid .env)
+npm run test:live             # slow tests that call the configured AI provider (needs valid .env)
 ```

@@ -1,50 +1,44 @@
-import type { AzureOpenAI } from "openai";
-import { embeddingClient } from "./azure-embedding.client.js";
+import { createEmbeddingAdapter, type IEmbeddingAdapter } from "./embedding-adapter/index.embedding-adapter.js";
 import { config } from "../config/index.config.js";
 import { l2normalize } from "../utils/retrieval/vector-math.util.js";
-import { EMBEDDING_MODEL_ID } from "../data/constants/model.constant.js";
-import { logger } from "../utils/shared/logger.util.js";
+import { EmbeddingPurpose } from "../data/constants/embedding.constant.js";
 import { EmbeddingError } from "../errors/embedding.error.js";
-import type { AzureEmbeddingConfig } from "../lib/types/config/config.type.js";
 import type { EmbeddingMetadata } from "../lib/types/retrieval/retrieval.type.js";
 
 export interface EmbeddingServiceOptions {
-  client?: AzureOpenAI;
-  embeddingConfig?: AzureEmbeddingConfig;
+  embeddingAdapter?: IEmbeddingAdapter;
+  dimensions?: number;
 }
 
 export class EmbeddingService {
-  private readonly client: AzureOpenAI;
-  private readonly embeddingConfig: AzureEmbeddingConfig;
+  private readonly embeddingAdapter: IEmbeddingAdapter;
+  private readonly dimensions: number;
 
-  constructor({ client = embeddingClient, embeddingConfig = config.azureEmbedding }: EmbeddingServiceOptions = {}) {
-    this.client = client;
-    this.embeddingConfig = embeddingConfig;
+  constructor({
+    embeddingAdapter = createEmbeddingAdapter(config.embedding),
+    dimensions = config.embedding.dimensions,
+  }: EmbeddingServiceOptions = {}) {
+    this.embeddingAdapter = embeddingAdapter;
+    this.dimensions = dimensions;
   }
 
-  private async embed(text: string): Promise<number[]> {
+  private async embed(text: string, purpose: EmbeddingPurpose): Promise<number[]> {
     if (typeof text !== "string" || text.trim().length === 0) {
       throw new EmbeddingError("Cannot embed empty text");
     }
 
-    let response;
+    let vector: number[];
     try {
-      response = await this.client.embeddings.create({
-        model: this.embeddingConfig.deployment,
-        input: text,
-      });
+      vector = await this.embeddingAdapter.embed(text, purpose);
     } catch (err) {
+      if (err instanceof EmbeddingError) throw err;
       throw new EmbeddingError(`Embedding request failed: ${(err as Error).message}`, { cause: err });
     }
 
-    const vector = response.data?.[0]?.embedding;
-    if (!Array.isArray(vector)) {
-      throw new EmbeddingError("Embedding response contained no vector");
-    }
-    if (vector.length !== this.embeddingConfig.dimensions) {
+    if (vector.length !== this.dimensions) {
       throw new EmbeddingError(
-        `Expected ${this.embeddingConfig.dimensions} dimensions, got ${vector.length}. ` +
-          `Check AZURE_EMBEDDING_DIM matches the deployed model.`,
+        `Expected ${this.dimensions} dimensions, got ${vector.length}. ` +
+          `Check EMBEDDING_DIMENSIONS matches the configured embedding model.`,
       );
     }
 
@@ -52,30 +46,17 @@ export class EmbeddingService {
   }
 
   embedDocument(text: string): Promise<number[]> {
-    return this.embed(text);
+    return this.embed(text, EmbeddingPurpose.DOCUMENT);
   }
 
   embedQuery(text: string): Promise<number[]> {
-    return this.embed(text);
-  }
-
-  async embedBatch(
-    texts: string[],
-    options: { onProgress?: (done: number, total: number) => void } = {},
-  ): Promise<number[][]> {
-    const vectors: number[][] = [];
-    for (const [index, text] of texts.entries()) {
-      vectors.push(await this.embed(text));
-      options.onProgress?.(index + 1, texts.length);
-      logger.debug("embedded", { index: index + 1, total: texts.length });
-    }
-    return vectors;
+    return this.embed(text, EmbeddingPurpose.QUERY);
   }
 
   metadata(): EmbeddingMetadata {
     return {
-      model: EMBEDDING_MODEL_ID,
-      dim: this.embeddingConfig.dimensions,
+      model: this.embeddingAdapter.modelName,
+      dim: this.dimensions,
       embedded_at: new Date().toISOString(),
     };
   }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ObjectId } from "mongodb";
 import { SelectionService } from "../../../src/services/selection.service.js";
 import { ConflictError } from "../../../src/errors/conflict.error.js";
+import { LlmMessageRole } from "../../../src/data/constants/llm.constant.js";
 import { FakeSelectionSessionModel } from "../../helpers/fake-model.helper.js";
 import type { RetrievalService } from "../../../src/services/retrieval.service.js";
 import type { SelectorService } from "../../../src/services/selector.service.js";
@@ -213,9 +214,9 @@ test("answer() replays the full transcript against the frozen candidates", async
 
   const secondCall = selectorService.calls[1];
   assert.deepEqual(secondCall?.transcript, [
-    { role: "user", text: "I want overseas leave" },
-    { role: "assistant", text: "Which faculty are you attached to?" },
-    { role: "user", text: "Information Technology" },
+    { role: LlmMessageRole.USER, text: "I want overseas leave" },
+    { role: LlmMessageRole.ASSISTANT, text: "Which faculty are you attached to?" },
+    { role: LlmMessageRole.USER, text: "Information Technology" },
   ]);
   assert.deepEqual(
     secondCall?.candidates.map((c) => c.workflow_id),

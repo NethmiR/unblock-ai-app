@@ -1,3 +1,7 @@
+import { createJsonSchemaGuard } from "../../utils/shared/json-schema-guard.util.js";
+import type { LlmResponseSchema } from "../../lib/types/ai/llm.type.js";
+import type { RetrievalSummary } from "../../lib/types/workflow/retrieval-summary.type.js";
+
 export const retrievalSummarySchema = {
   type: "object",
   additionalProperties: false,
@@ -11,3 +15,10 @@ export const retrievalSummarySchema = {
     not_for: { type: "array", items: { type: "string" } },
   },
 } as const;
+
+export const retrievalSummaryResponseSchema: LlmResponseSchema = {
+  name: "retrieval_summary",
+  definition: retrievalSummarySchema,
+};
+
+export const isRetrievalSummary = createJsonSchemaGuard<RetrievalSummary>(retrievalSummarySchema);

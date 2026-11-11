@@ -1,3 +1,5 @@
+import type { LlmFinishReason } from "../../../data/constants/llm.constant.js";
+
 export interface PerfCase {
   id: string;
   label: string;
@@ -8,7 +10,7 @@ export interface PerfUsage {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
-  finishReason: string | null;
+  finishReason: LlmFinishReason | null;
 }
 
 export interface PerfRecord extends PerfUsage {

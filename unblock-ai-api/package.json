@@ -4,7 +4,7 @@
   "description": "Express + TypeScript backend that extracts, stores, retrieves, and helps select institutional approval workflow templates.",
   "main": "dist/src/server.js",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "prestart": "npm run build",
@@ -20,7 +20,7 @@
     "backfill:summaries": "tsx scripts/maintenance/backfill-summaries.script.ts",
     "evaluate:selection": "tsx tests/evaluation/evaluate-selection.script.ts",
     "perf-test": "tsx tests/perf/perf-test.script.ts",
-    "smoke-test:azure": "tsx tests/smoke/smoke-test-azure.script.ts",
+    "smoke-test:llm": "tsx tests/smoke/smoke-test-llm.script.ts",
     "smoke-test:embeddings": "tsx tests/smoke/smoke-test-embeddings.script.ts",
     "smoke-test:mail": "tsx tests/smoke/smoke-test-mail.script.ts",
     "smoke-test:document": "tsx tests/smoke/smoke-test-document.script.ts"
@@ -30,6 +30,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@google/genai": "^2.30.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "dotenv": "^17.4.2",

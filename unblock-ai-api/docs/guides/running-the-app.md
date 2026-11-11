@@ -183,22 +183,24 @@ CORS_ORIGIN=http://localhost:3001
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB=unblock_ai
 
-# Azure OpenAI (chat model, used for extraction/generation)
+# LLM provider for every generation task: azure-openai | gemini
+LLM_PROVIDER=azure-openai
 AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/
 AZURE_OPENAI_API_KEY=<your-key>
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
 AZURE_OPENAI_API_VERSION=2024-10-21
-
-# Selector LLM (reuses the chat resource above by default)
-AZURE_SELECTOR_DEPLOYMENT=gpt-4o
+AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o
+GEMINI_API_KEY=<your-google-ai-studio-key>
+GEMINI_CHAT_MODEL=gemini-3.8-flash
 EXTRACTION_MAX_ATTEMPTS=3
 
-# Azure embeddings (separate resource/deployment from the chat model)
-AZURE_EMBEDDING_ENDPOINT=https://<your-foundry>.services.ai.azure.com
-AZURE_EMBEDDING_API_KEY=<your-key>
-AZURE_EMBEDDING_DEPLOYMENT=text-embedding-3-small
-AZURE_EMBEDDING_API_VERSION=2024-10-21
-AZURE_EMBEDDING_DIM=1536
+# Embedding provider: azure-openai | gemini (switching requires re-embedding stored templates)
+EMBEDDING_PROVIDER=azure-openai
+AZURE_OPENAI_EMBEDDING_ENDPOINT=https://<your-foundry>.services.ai.azure.com
+AZURE_OPENAI_EMBEDDING_API_KEY=<your-key>
+AZURE_OPENAI_EMBEDDING_API_VERSION=2024-10-21
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+GEMINI_EMBEDDING_MODEL=gemini-embedding-2
+EMBEDDING_DIMENSIONS=1536
 
 # Retrieval tuning (defaults shown)
 RETRIEVAL_TOP_K=5
@@ -279,8 +281,8 @@ Run from `unblock-ai-api/`:
 npm run typecheck               # tsc --noEmit
 npm test                        # unit + integration tests (tests/unit, tests/integration)
 npm run test:live               # tests that hit live Azure/Mongo services (tests/live)
-npm run smoke-test:azure        # sanity-check Azure OpenAI connectivity
-npm run smoke-test:embeddings   # sanity-check the embeddings deployment
+npm run smoke-test:llm          # sanity-check the configured LLM provider
+npm run smoke-test:embeddings   # sanity-check the configured embedding provider
 npm run evaluate:selection      # evaluate the selector agent
 npm run backfill:summaries      # backfill workflow summaries in MongoDB
 ```
@@ -291,7 +293,7 @@ npm run backfill:summaries      # backfill workflow summaries in MongoDB
 
 | Symptom | Likely cause |
 | --- | --- |
-| Backend fails at startup with `Missing required environment variable` | One of the required Azure/Mongo vars in `.env` is empty — check `AZURE_OPENAI_*`, `AZURE_EMBEDDING_*`, `MONGODB_URI` |
+| Backend fails at startup with `Missing required environment variable` | A var required by the selected `LLM_PROVIDER` / `EMBEDDING_PROVIDER` (or Mongo) is empty — check `AZURE_OPENAI_*`, `GEMINI_*`, `MONGODB_URI` |
 | Backend can't connect to Mongo (`ECONNREFUSED 27017`) | MongoDB isn't running — start the Windows service (`Start-Service MongoDB`, or `net start MongoDB` from an admin prompt) or the Docker container (`docker start unblock-ai-mongo`) |
 | Compass connects fine but the app sees no data | Compass may be pointed at a different database — check you're in `unblock_ai`, matching `MONGODB_DB` in `.env` |
 | `mongosh` not recognised after installing | Reopen the terminal so the updated `PATH` loads, or call it directly at `%LOCALAPPDATA%\Programs\mongosh\mongosh.exe` |

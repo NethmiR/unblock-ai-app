@@ -7,6 +7,7 @@ import { TemplateModel } from "../../src/models/template.model.js";
 import { InMemoryVectorStore } from "../../src/services/vector-store/in-memory.vector-store.js";
 import { RetrievalService } from "../../src/services/retrieval.service.js";
 import { SelectorService } from "../../src/services/selector.service.js";
+import { LlmMessageRole } from "../../src/data/constants/llm.constant.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { closeDb } from "../../src/db/mongo.client.js";
 
@@ -45,7 +46,7 @@ test("selection quality meets Recall@5 and decision-accuracy targets", async (t)
       if (expectedIds.every((id) => ids.includes(id))) recallHits++;
     }
 
-    const decision = await selectorService.decide(candidates, [{ role: "user", text: c.query }]);
+    const decision = await selectorService.decide(candidates, [{ role: LlmMessageRole.USER, text: c.query }]);
     const correct = decision.decision === c.expect && (!c.expect_workflow || decision.workflow_id === c.expect_workflow);
     if (correct) decisionHits++;
 

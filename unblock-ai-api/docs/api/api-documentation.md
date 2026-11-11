@@ -151,9 +151,9 @@ Liveness check — no dependencies (Mongo, Azure) are touched.
 
 ### 4.1 `POST /api/workflows/extract`
 
-Sends prose to Azure OpenAI and returns the extracted workflow JSON. Nothing is
+Sends prose to the configured LLM provider and returns the extracted workflow JSON. Nothing is
 persisted — use this to preview extraction. It retries internally (up to
-`config.azureOpenAI.maxExtractionAttempts`, default 3), feeding validation errors
+`config.extraction.maxAttempts`, default 3), feeding validation errors
 back to the model as repair prompts.
 
 **Request body**

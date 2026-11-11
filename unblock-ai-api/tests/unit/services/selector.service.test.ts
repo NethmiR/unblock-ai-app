@@ -1,22 +1,40 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { AzureOpenAI } from "openai";
 import { SelectorService } from "../../../src/services/selector.service.js";
 import { SelectionError } from "../../../src/errors/selection.error.js";
-import { config } from "../../../src/config/index.config.js";
+import { LlmFinishReason, LlmMessageRole } from "../../../src/data/constants/llm.constant.js";
+import type { ILlmAdapter } from "../../../src/services/llm-adapter/llm-adapter.interface.js";
+import type { LlmCompletionRequest } from "../../../src/lib/types/ai/llm.type.js";
 import type { BoostedCandidate } from "../../../src/lib/types/selection/candidate.type.js";
 import type { SelectorDecision } from "../../../src/lib/types/selection/decision.type.js";
 
-function fakeClient(payload: SelectorDecision): AzureOpenAI {
+const NO_MATCH_DECISION: SelectorDecision = {
+  decision: "no_match",
+  workflow_id: null,
+  confidence: "high",
+  question: null,
+  options: [],
+  reasoning: "",
+};
+
+function fakeLlmAdapter(
+  respond: (request: LlmCompletionRequest) => Promise<SelectorDecision>,
+): ILlmAdapter {
   return {
-    chat: {
-      completions: {
-        create: async () => ({
-          choices: [{ message: { content: JSON.stringify(payload) } }],
-        }),
-      },
+    modelName: "fake-model",
+    async generateCompletion(request) {
+      const decision = await respond(request);
+      return {
+        content: JSON.stringify(decision),
+        usage: { inputTokens: null, outputTokens: null, totalTokens: null },
+        finishReason: LlmFinishReason.STOP,
+      };
     },
-  } as unknown as AzureOpenAI;
+  };
+}
+
+function replyingWith(payload: SelectorDecision): ILlmAdapter {
+  return fakeLlmAdapter(() => Promise.resolve(payload));
 }
 
 function candidate(overrides: Partial<BoostedCandidate>): BoostedCandidate {
@@ -42,7 +60,7 @@ const candidates: BoostedCandidate[] = [
 
 test("a hallucinated workflow_id is downgraded to ambiguous", async () => {
   const service = new SelectorService({
-    client: fakeClient({
+    llmAdapter: replyingWith({
       decision: "matched",
       workflow_id: "invented_id",
       confidence: "high",
@@ -51,14 +69,14 @@ test("a hallucinated workflow_id is downgraded to ambiguous", async () => {
       reasoning: "",
     }),
   });
-  const out = await service.decide(candidates, [{ role: "user", text: "leave" }]);
+  const out = await service.decide(candidates, [{ role: LlmMessageRole.USER, text: "leave" }]);
   assert.equal(out.decision, "ambiguous");
   assert.equal(out.workflow_id, null);
 });
 
 test("a low-confidence match is downgraded to ambiguous", async () => {
   const service = new SelectorService({
-    client: fakeClient({
+    llmAdapter: replyingWith({
       decision: "matched",
       workflow_id: "it_leave",
       confidence: "low",
@@ -67,14 +85,14 @@ test("a low-confidence match is downgraded to ambiguous", async () => {
       reasoning: "",
     }),
   });
-  const out = await service.decide(candidates, [{ role: "user", text: "leave" }]);
+  const out = await service.decide(candidates, [{ role: LlmMessageRole.USER, text: "leave" }]);
   assert.equal(out.decision, "ambiguous");
   assert.ok(out.options.length > 0, "must offer options when falling back");
 });
 
 test("an ambiguous verdict without a question gets one", async () => {
   const service = new SelectorService({
-    client: fakeClient({
+    llmAdapter: replyingWith({
       decision: "ambiguous",
       workflow_id: null,
       confidence: "medium",
@@ -83,31 +101,25 @@ test("an ambiguous verdict without a question gets one", async () => {
       reasoning: "",
     }),
   });
-  const out = await service.decide(candidates, [{ role: "user", text: "leave" }]);
+  const out = await service.decide(candidates, [{ role: LlmMessageRole.USER, text: "leave" }]);
   assert.ok(out.question);
 });
 
 test("empty candidates short-circuit to no_match without a model call", async () => {
   let called = false;
-  const client = {
-    chat: {
-      completions: {
-        create: async () => {
-          called = true;
-          throw new Error("should not be called");
-        },
-      },
-    },
-  } as unknown as AzureOpenAI;
-  const service = new SelectorService({ client });
-  const out = await service.decide([], [{ role: "user", text: "anything" }]);
+  const llmAdapter = fakeLlmAdapter(() => {
+    called = true;
+    throw new Error("should not be called");
+  });
+  const service = new SelectorService({ llmAdapter });
+  const out = await service.decide([], [{ role: LlmMessageRole.USER, text: "anything" }]);
   assert.equal(out.decision, "no_match");
   assert.equal(called, false);
 });
 
 test("a valid high-confidence match passes through untouched", async () => {
   const service = new SelectorService({
-    client: fakeClient({
+    llmAdapter: replyingWith({
       decision: "matched",
       workflow_id: "it_leave",
       confidence: "high",
@@ -116,138 +128,66 @@ test("a valid high-confidence match passes through untouched", async () => {
       reasoning: "faculty matched",
     }),
   });
-  const out = await service.decide(candidates, [{ role: "user", text: "IT overseas leave" }]);
+  const out = await service.decide(candidates, [{ role: LlmMessageRole.USER, text: "IT overseas leave" }]);
   assert.equal(out.decision, "matched");
   assert.equal(out.workflow_id, "it_leave");
 });
 
 test("a transport failure surfaces as SelectionError", async () => {
-  const client = {
-    chat: {
-      completions: {
-        create: async () => {
-          throw new Error("503 upstream");
-        },
-      },
-    },
-  } as unknown as AzureOpenAI;
-  const service = new SelectorService({ client });
+  const llmAdapter = fakeLlmAdapter(() => Promise.reject(new Error("503 upstream")));
+  const service = new SelectorService({ llmAdapter });
   await assert.rejects(
-    () => service.decide(candidates, [{ role: "user", text: "leave" }]),
+    () => service.decide(candidates, [{ role: LlmMessageRole.USER, text: "leave" }]),
     (err: unknown) => err instanceof SelectionError && /503 upstream/.test(err.message),
   );
 });
 
-test("the request carries strict structured output and the candidate summaries", async () => {
-  let sent: Record<string, unknown> | null = null;
-  const client = {
-    chat: {
-      completions: {
-        create: async (body: Record<string, unknown>) => {
-          sent = body;
-          return {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    decision: "no_match",
-                    workflow_id: null,
-                    confidence: "high",
-                    question: null,
-                    options: [],
-                    reasoning: "",
-                  }),
-                },
-              },
-            ],
-          };
-        },
-      },
-    },
-  } as unknown as AzureOpenAI;
-  const service = new SelectorService({ client, deployment: "gpt-4o" });
-
-  await service.decide(candidates, [{ role: "user", text: "leave" }]);
-
-  const body = sent as unknown as {
-    response_format: { type: string; json_schema: { strict: boolean } };
-    temperature: number;
-    messages: Array<{ content: string }>;
+test("non-JSON model content surfaces as SelectionError", async () => {
+  const llmAdapter: ILlmAdapter = {
+    modelName: "fake-model",
+    generateCompletion: () =>
+      Promise.resolve({
+        content: "not json",
+        usage: { inputTokens: null, outputTokens: null, totalTokens: null },
+        finishReason: LlmFinishReason.STOP,
+      }),
   };
-  assert.equal(body.response_format.type, "json_schema");
-  assert.equal(body.response_format.json_schema.strict, true);
-  assert.equal(body.temperature, 0, "non-reasoning deployments pin temperature to 0");
-  assert.match(body.messages[1]!.content, /it_leave/);
-  assert.match(body.messages[1]!.content, /eng_leave/);
+  const service = new SelectorService({ llmAdapter });
+  await assert.rejects(
+    () => service.decide(candidates, [{ role: LlmMessageRole.USER, text: "leave" }]),
+    (err: unknown) => err instanceof SelectionError,
+  );
 });
 
-test("with no deployment override, the service defaults to the configured selector deployment", async () => {
-  let sentModel: string | null = null;
-  const client = {
-    chat: {
-      completions: {
-        create: async (body: Record<string, unknown>) => {
-          sentModel = body.model as string;
-          return {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    decision: "no_match",
-                    workflow_id: null,
-                    confidence: "high",
-                    question: null,
-                    options: [],
-                    reasoning: "",
-                  }),
-                },
-              },
-            ],
-          };
-        },
-      },
-    },
-  } as unknown as AzureOpenAI;
-
-  // Guards the deviation documented in azure-openai.client.ts: the SDK routes
-  // on the deployment its client was built with, ignoring the body's `model`.
-  // If SelectorService silently defaulted to the extraction deployment, every
-  // selector call would misroute.
-  const service = new SelectorService({ client });
-  await service.decide(candidates, [{ role: "user", text: "leave" }]);
-
-  assert.equal(sentModel, config.azureOpenAI.selectorDeployment);
+test("a decision that does not match the decision schema surfaces as SelectionError", async () => {
+  const llmAdapter: ILlmAdapter = {
+    modelName: "fake-model",
+    generateCompletion: () =>
+      Promise.resolve({
+        content: JSON.stringify({ decision: "matched", workflow_id: "it_leave" }),
+        usage: { inputTokens: null, outputTokens: null, totalTokens: null },
+        finishReason: LlmFinishReason.STOP,
+      }),
+  };
+  const service = new SelectorService({ llmAdapter });
+  await assert.rejects(
+    () => service.decide(candidates, [{ role: LlmMessageRole.USER, text: "leave" }]),
+    (err: unknown) => err instanceof SelectionError && /decision schema/.test(err.message),
+  );
 });
 
-test("reasoning deployments omit temperature", async () => {
-  let sent: Record<string, unknown> | null = null;
-  const client = {
-    chat: {
-      completions: {
-        create: async (body: Record<string, unknown>) => {
-          sent = body;
-          return {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    decision: "no_match",
-                    workflow_id: null,
-                    confidence: "high",
-                    question: null,
-                    options: [],
-                    reasoning: "",
-                  }),
-                },
-              },
-            ],
-          };
-        },
-      },
-    },
-  } as unknown as AzureOpenAI;
-  const service = new SelectorService({ client, deployment: "o3-mini" });
+test("the request carries the decision response schema and the candidate summaries", async () => {
+  let sent: LlmCompletionRequest | null = null;
+  const llmAdapter = fakeLlmAdapter((request) => {
+    sent = request;
+    return Promise.resolve(NO_MATCH_DECISION);
+  });
+  const service = new SelectorService({ llmAdapter });
 
-  await service.decide(candidates, [{ role: "user", text: "leave" }]);
-  assert.equal(sent !== null && "temperature" in sent, false);
+  await service.decide(candidates, [{ role: LlmMessageRole.USER, text: "leave" }]);
+
+  const request = sent as unknown as LlmCompletionRequest;
+  assert.equal(request.responseSchema?.name, "workflow_selection_decision");
+  assert.match(request.messages[1]!.content, /it_leave/);
+  assert.match(request.messages[1]!.content, /eng_leave/);
 });

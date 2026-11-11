@@ -1,3 +1,5 @@
+import type { AiProvider } from "../../../data/constants/ai-provider.constant.js";
+
 export interface ServerConfig {
   port: number;
   corsOrigins: string[];
@@ -16,21 +18,28 @@ export interface PostgresConfig {
   connectionTimeoutMs: number;
 }
 
-export interface AzureOpenAIConfig {
+export interface AzureOpenAIConnectionConfig {
   endpoint: string;
   apiKey: string;
-  deployment: string;
   apiVersion: string;
-  selectorDeployment: string;
-  maxExtractionAttempts: number;
+  deployment: string;
 }
 
-export interface AzureEmbeddingConfig {
-  endpoint: string;
+export interface GeminiConnectionConfig {
   apiKey: string;
-  deployment: string;
-  apiVersion: string;
-  dimensions: number;
+  model: string;
+}
+
+export type AiProviderConnectionConfig =
+  | { provider: AiProvider.AZURE_OPENAI; azureOpenAI: AzureOpenAIConnectionConfig }
+  | { provider: AiProvider.GEMINI; gemini: GeminiConnectionConfig };
+
+export type LlmConfig = AiProviderConnectionConfig;
+
+export type EmbeddingConfig = { dimensions: number } & AiProviderConnectionConfig;
+
+export interface ExtractionConfig {
+  maxAttempts: number;
 }
 
 export interface RetrievalConfig {
@@ -69,8 +78,9 @@ export interface AppConfig {
   server: ServerConfig;
   db: DbConfig;
   postgres: PostgresConfig;
-  azureOpenAI: AzureOpenAIConfig;
-  azureEmbedding: AzureEmbeddingConfig;
+  llm: LlmConfig;
+  embedding: EmbeddingConfig;
+  extraction: ExtractionConfig;
   retrieval: RetrievalConfig;
   mail: MailConfig;
   auth: AuthConfig;
