@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { BaseError } from "../errors/index.error.js";
 import { logger } from "../utils/shared/logger.util.js";
+import { describeError } from "../utils/shared/error-description.util.js";
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction): void {
   if (err instanceof BaseError) {
@@ -8,6 +9,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       type: err.name,
       code: err.code,
       message: err.message,
+      ...(err.cause !== undefined && { cause: describeError(err.cause) }),
       requestId: req.requestId,
     });
     res.status(err.statusCode).json(err.toJSON());

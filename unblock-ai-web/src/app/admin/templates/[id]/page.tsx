@@ -21,7 +21,6 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
       initialTitle={record.document.title}
       initialText={record.draft_text ?? ""}
       initialWorkflow={record.document}
-      initialDraftId={record.draft_id}
       initialReviewStatus={record.review_status}
       initialVersion={record.version}
     />

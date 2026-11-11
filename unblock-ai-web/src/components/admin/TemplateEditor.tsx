@@ -25,7 +25,6 @@ const WorkflowFlowchart = dynamic(
 interface Props {
   initialText?: string;
   initialWorkflow?: Workflow | null;
-  initialDraftId?: string | null;
   initialReviewStatus?: ReviewStatus | null;
   initialVersion?: number | null;
   /** Empty for a template that has never been compiled - the heading shows a placeholder. */
@@ -52,8 +51,7 @@ const REVIEW_STATUS_LABEL: Record<ReviewStatus, string> = {
  * machine readable.
  */
 export function TemplateEditor({
-  initialText = "", initialWorkflow = null, initialDraftId = null,
-  initialReviewStatus = null, initialVersion = null, initialTitle = "",
+  initialText = "", initialWorkflow = null, initialReviewStatus = null, initialVersion = null, initialTitle = "",
 }: Props) {
   const [text, setText] = useState(initialText);
   const [title, setTitle] = useState(initialTitle);
@@ -69,7 +67,6 @@ export function TemplateEditor({
   const [compiledFromText, setCompiledFromText] = useState<string | null>(
     initialWorkflow ? initialText : null,
   );
-  const [draftId, setDraftId] = useState<string | null>(initialDraftId);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus | null>(initialReviewStatus);
   const [version, setVersion] = useState<number | null>(initialVersion);
   const [error, setError] = useState<string | null>(null);
@@ -89,10 +86,7 @@ export function TemplateEditor({
   // Distinguishes a slow compile from a hung one. A single timer keyed off
   // the existing useTransition pending flag - no polling, no new requests.
   useEffect(() => {
-    if (!isGenerating) {
-      setIsSlowCompile(false);
-      return;
-    }
+    if (!isGenerating) return;
     const timer = setTimeout(() => setIsSlowCompile(true), 8000);
     return () => clearTimeout(timer);
   }, [isGenerating]);
@@ -158,8 +152,7 @@ export function TemplateEditor({
     setError(null);
     startSaving(async () => {
       try {
-        const draft = await draftsApi.create(text, title.trim() || undefined);
-        setDraftId(draft.id);
+        await draftsApi.create(text, title.trim() || undefined);
         setSavedText(text);
       } catch (err) {
         setError(
@@ -172,13 +165,13 @@ export function TemplateEditor({
   async function generate() {
     setError(null);
     setLastAttempts(null);
+    setIsSlowCompile(false);
     startGenerating(async () => {
       try {
         // Save the draft first so the raw text survives even if extraction fails.
         // `create` is idempotent by content hash, so re-generating identical
         // text does not pile up duplicate drafts.
         const draft = await draftsApi.create(text, title.trim() || undefined);
-        setDraftId(draft.id);
         setSavedText(text);
 
         // The title goes with the request. The model would otherwise infer a

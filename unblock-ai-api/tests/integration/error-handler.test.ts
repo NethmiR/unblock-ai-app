@@ -6,6 +6,7 @@ import { SelectionController } from "../../src/controllers/selection.controller.
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
+import { DatabaseError } from "../../src/errors/database.error.js";
 import {
   authHeaderFor,
   TestIdentity,
@@ -90,6 +91,35 @@ test("an unknown error responds 500 with a generic body and does not leak the or
     assert.equal(body.code, "INTERNAL_ERROR");
     assert.equal(body.details, null);
     assert.ok(!body.error.includes("connection string"));
+  } finally {
+    await server.close();
+  }
+});
+
+test("a BaseError with a cause logs the cause chain without exposing it in the response", async (t) => {
+  const selectionService = {
+    start() {
+      throw new DatabaseError("Postgres query failed", {
+        cause: new Error("getaddrinfo ENOTFOUND db.example.test"),
+      });
+    },
+  } as unknown as SelectionService;
+  const warn = t.mock.method(console, "warn", () => {});
+  const server = await buildServer(selectionService);
+  try {
+    const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
+      body: JSON.stringify({ query: "anything" }),
+    });
+    assert.equal(res.status, 500);
+    const body = (await res.json()) as { error: string; code: string; details: unknown };
+    assert.equal(body.code, "DATABASE_ERROR");
+    assert.ok(!JSON.stringify(body).includes("ENOTFOUND"));
+
+    const entries = warn.mock.calls.map((call) => JSON.parse(String(call.arguments[0])) as Record<string, unknown>);
+    const entry = entries.find((e) => e.code === "DATABASE_ERROR");
+    assert.equal(entry?.cause, "getaddrinfo ENOTFOUND db.example.test");
   } finally {
     await server.close();
   }
