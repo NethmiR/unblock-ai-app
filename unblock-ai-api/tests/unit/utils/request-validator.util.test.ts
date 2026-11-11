@@ -7,6 +7,8 @@ import {
   optionalString,
   optionalObject,
   optionalPositiveInt,
+  requireStringArray,
+  requireUuid,
 } from "../../../src/utils/http/request-validator.util.js";
 import { ValidationError } from "../../../src/errors/validation.error.js";
 
@@ -108,4 +110,26 @@ test("optionalPositiveInt throws for zero or negative values", () => {
 
 test("optionalPositiveInt throws for a non-integer value", () => {
   assert.throws(() => optionalPositiveInt("1.5", "version"), ValidationError);
+});
+
+test("requireStringArray returns an array of strings", () => {
+  assert.deepEqual(requireStringArray({ items: ["a", "b"] }, "items"), ["a", "b"]);
+  assert.deepEqual(requireStringArray({ items: [] }, "items"), []);
+});
+
+test("requireStringArray rejects a missing field, a non-array or non-string elements", () => {
+  for (const body of [{}, { items: "a" }, { items: ["a", 1] }, null]) {
+    assert.throws(() => requireStringArray(body, "items"), ValidationError);
+  }
+});
+
+test("requireUuid accepts a UUID", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  assert.equal(requireUuid(id, "id"), id);
+});
+
+test("requireUuid rejects non-UUID values", () => {
+  for (const value of ["", "abc", 42, undefined, "00000000-0000-4000-8000-00000000000"]) {
+    assert.throws(() => requireUuid(value, "id"), ValidationError);
+  }
 });

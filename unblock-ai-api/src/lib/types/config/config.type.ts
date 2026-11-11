@@ -1,4 +1,5 @@
 import type { AiProvider } from "../../../data/constants/ai-provider.constant.js";
+import type { RepositoryBackend } from "../../../data/constants/repository.constant.js";
 
 export interface ServerConfig {
   port: number;
@@ -16,6 +17,7 @@ export interface PostgresConfig {
   url: string;
   poolMax: number;
   connectionTimeoutMs: number;
+  repositoryBackend: RepositoryBackend;
 }
 
 export interface AzureOpenAIConnectionConfig {
@@ -60,10 +62,18 @@ export interface MailConfig {
 }
 
 export interface AuthConfig {
-  sessionTokenSecret: string;
   sessionTtlHours: number;
   maxFailedAttempts: number;
-  storeBackend: "postgres" | "memory";
+  lockoutDurationMinutes: number;
+}
+
+export interface UserConfig {
+  defaultPassword: string;
+}
+
+export interface SeedConfig {
+  administratorEmail: string;
+  administratorFullName: string;
 }
 
 export interface DocumentConfig {
@@ -84,5 +94,6 @@ export interface AppConfig {
   retrieval: RetrievalConfig;
   mail: MailConfig;
   auth: AuthConfig;
+  user: UserConfig;
   document: DocumentConfig;
 }

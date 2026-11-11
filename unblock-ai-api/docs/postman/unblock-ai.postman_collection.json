@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b6f0a1c2-3e6a-4b1a-9b7a-9f6d1c2a5e01",
     "name": "UNBLOCK-AI API",
-    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Auth, Drafts, Workflows, Selection, Tasks, Approvals, Error cases. Most requests need a bearer token - the collection-level auth reads it from {{adminToken}}, captured by the 'Login (admin)' request in the Auth folder, so running Auth first is what makes everything after it authenticate automatically. The Approvals folder needs a token copied by hand out of the console mailer's stdout log after 'Start task (dispatch approval chain)' -- it cannot be fully automated by the Collection Runner.",
+    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Auth, Users, Drafts, Workflows, Selection, Tasks, Approvals, Error cases. Most requests need a bearer token - the collection-level auth reads it from {{authToken}}, captured by the 'Login' request in the Auth folder from {{loginEmail}} / {{loginPassword}}, so running Auth first is what makes everything after it authenticate automatically. Set loginEmail to the administrator seeded by 'npm run seed:pg:run' (SEED_ADMINISTRATOR_EMAIL) and loginPassword to the server's USER_DEFAULT_PASSWORD. The Approvals folder needs a token copied by hand out of the console mailer's stdout log after 'Start task (dispatch approval chain)' -- it cannot be fully automated by the Collection Runner.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -55,11 +55,31 @@
       "value": ""
     },
     {
-      "key": "adminToken",
+      "key": "loginEmail",
+      "value": "admin@example.edu"
+    },
+    {
+      "key": "loginPassword",
+      "value": "12345"
+    },
+    {
+      "key": "authToken",
       "value": ""
     },
     {
-      "key": "portalToken",
+      "key": "secondAuthToken",
+      "value": ""
+    },
+    {
+      "key": "otherUserSessionId",
+      "value": ""
+    },
+    {
+      "key": "logoutToken",
+      "value": ""
+    },
+    {
+      "key": "userId",
       "value": ""
     }
   ],
@@ -100,9 +120,10 @@
     },
     {
       "name": "Auth",
+      "description": "Login stores the token in {{authToken}}, which the collection-level Bearer auth sends on every later request. Credentials come from {{loginEmail}} / {{loginPassword}} (the administrator seeded by npm run seed:pg:run, whose password is USER_DEFAULT_PASSWORD). The session requests use a second, throwaway session so {{authToken}} is never revoked mid-run. See docs/api/api-documentation.md §12.",
       "item": [
         {
-          "name": "Login (admin)",
+          "name": "Login",
           "request": {
             "auth": {
               "type": "noauth"
@@ -126,14 +147,14 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"audience\": \"admin\",\n  \"username\": \"admin\",\n  \"password\": \"Admin@12345\"\n}",
+              "raw": "{\n  \"email\": \"{{loginEmail}}\",\n  \"password\": \"{{loginPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Logs in as the seeded admin user. Edit the username/password in this request body to match your own seed:auth run."
+            "description": "Logs in with {{loginEmail}} / {{loginPassword}} and stores the returned token in {{authToken}}. Set those two collection variables to the seeded administrator's SEED_ADMINISTRATOR_EMAIL and the server's USER_DEFAULT_PASSWORD."
           },
           "response": [],
           "event": [
@@ -143,64 +164,17 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"response has a token\", function () { pm.expect(pm.response.json()).to.have.property(\"token\"); });",
-                  "pm.collectionVariables.set(\"adminToken\", pm.response.json().token);"
+                  "var json = pm.response.json();",
+                  "pm.test(\"response has token, expires_at and user\", function () { pm.expect(json).to.have.property(\"token\"); pm.expect(json).to.have.property(\"expires_at\"); pm.expect(json).to.have.property(\"user\"); });",
+                  "pm.test(\"user has permissions\", function () { pm.expect(json.user.permissions).to.be.an(\"array\").that.is.not.empty; });",
+                  "pm.collectionVariables.set(\"authToken\", json.token);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Login (portal)",
-          "request": {
-            "auth": {
-              "type": "noauth"
-            },
-            "method": "POST",
-            "url": {
-              "raw": "{{baseUrl}}/auth/login",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "auth",
-                "login"
-              ]
-            },
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"audience\": \"portal\",\n  \"username\": \"chathura\",\n  \"password\": \"User@12345\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "Logs in as the seeded portal user. Edit the username/password in this request body to match your own seed:auth run."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"response has a token\", function () { pm.expect(pm.response.json()).to.have.property(\"token\"); });",
-                  "pm.collectionVariables.set(\"portalToken\", pm.response.json().token);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Get current session",
+          "name": "Get current user",
           "request": {
             "method": "GET",
             "url": {
@@ -213,7 +187,7 @@
                 "me"
               ]
             },
-            "description": "Confirms {{adminToken}} is valid and round-trips to the logged-in admin."
+            "description": "Confirms {{authToken}} is valid. Returns { user: { id, email, full_name, permissions }, session: { id, expires_at } }."
           },
           "response": [],
           "event": [
@@ -223,7 +197,158 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"response has user\", function () { pm.expect(pm.response.json()).to.have.property(\"user\"); });"
+                  "var json = pm.response.json();",
+                  "pm.test(\"response has user and session\", function () { pm.expect(json).to.have.property(\"user\"); pm.expect(json).to.have.property(\"session\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (second session)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{loginEmail}}\",\n  \"password\": \"{{loginPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Logs in again as the same user to open a second concurrent session. Its token goes into {{secondAuthToken}}, not {{authToken}}, so the requests below can revoke it safely."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set(\"secondAuthToken\", pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List sessions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/auth/sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "sessions"
+              ]
+            },
+            "description": "The caller's active sessions, newest first. The session behind {{authToken}} has is_current: true. Stores the newest other session (the one from 'Login (second session)') in {{otherUserSessionId}}."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var sessions = pm.response.json().sessions;",
+                  "pm.test(\"sessions is an array\", function () { pm.expect(sessions).to.be.an(\"array\"); });",
+                  "pm.test(\"exactly one session is current\", function () { pm.expect(sessions.filter(function (s) { return s.is_current; }).length).to.eql(1); });",
+                  "var other = sessions.find(function (s) { return !s.is_current; });",
+                  "if (other) { pm.collectionVariables.set(\"otherUserSessionId\", other.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke one session",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/auth/sessions/{{otherUserSessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "sessions",
+                "{{otherUserSessionId}}"
+              ]
+            },
+            "description": "Revokes one of the caller's own sessions by id (204). A session that is not one of the caller's active sessions is 404 USER_SESSION_NOT_FOUND; a non-UUID id is 400. Revoking the current session behaves like logout - do not point this at the session behind {{authToken}}."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", function () { pm.response.to.have.status(204); });",
+                  "pm.sendRequest({",
+                  "    url: pm.variables.replaceIn(\"{{baseUrl}}/auth/me\"),",
+                  "    method: \"GET\",",
+                  "    header: { \"Authorization\": \"Bearer \" + pm.collectionVariables.get(\"secondAuthToken\") }",
+                  "}, function (err, res) {",
+                  "    pm.test(\"revoked token is rejected with 401\", function () { pm.expect(res.code).to.eql(401); });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke other sessions",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/auth/sessions/others",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "sessions",
+                "others"
+              ]
+            },
+            "description": "Revokes every active session of the caller except the current one. Returns { revoked_count }. This also signs out any other browser or device logged in as the same user, such as the web app."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"response has revoked_count\", function () { pm.expect(pm.response.json().revoked_count).to.be.a(\"number\"); });"
                 ]
               }
             }
@@ -232,6 +357,16 @@
         {
           "name": "Logout",
           "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{logoutToken}}",
+                  "type": "string"
+                }
+              ]
+            },
             "method": "POST",
             "url": {
               "raw": "{{baseUrl}}/auth/logout",
@@ -243,7 +378,86 @@
                 "logout"
               ]
             },
-            "description": "Stateless session (D-3) - always 204, nothing to invalidate server-side."
+            "description": "Revokes the session the request is made with (204). The pre-request script logs in a throwaway session into {{logoutToken}} and this request logs that one out, so {{authToken}} keeps working for the rest of the run. Calling logout with {{authToken}} itself would make every later request 401."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.sendRequest({",
+                  "    url: pm.variables.replaceIn(\"{{baseUrl}}/auth/login\"),",
+                  "    method: \"POST\",",
+                  "    header: { \"Content-Type\": \"application/json\" },",
+                  "    body: {",
+                  "        mode: \"raw\",",
+                  "        raw: JSON.stringify({",
+                  "            email: pm.variables.get(\"loginEmail\"),",
+                  "            password: pm.variables.get(\"loginPassword\")",
+                  "        })",
+                  "    }",
+                  "}, function (err, res) {",
+                  "    if (err || res.code !== 200) { console.error(\"throwaway login failed\", err || res.code); return; }",
+                  "    pm.collectionVariables.set(\"logoutToken\", res.json().token);",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", function () { pm.response.to.have.status(204); });",
+                  "pm.sendRequest({",
+                  "    url: pm.variables.replaceIn(\"{{baseUrl}}/auth/me\"),",
+                  "    method: \"GET\",",
+                  "    header: { \"Authorization\": \"Bearer \" + pm.collectionVariables.get(\"logoutToken\") }",
+                  "}, function (err, res) {",
+                  "    pm.test(\"logged-out token is rejected with 401\", function () { pm.expect(res.code).to.eql(401); });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "description": "User management. Every request needs the user:manage permission, which the seeded administrator holds. New users get USER_DEFAULT_PASSWORD as their initial password. See docs/api/api-documentation.md §13.",
+      "item": [
+        {
+          "name": "Create user",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"requester.{{$timestamp}}@example.edu\",\n  \"full_name\": \"Test Requester\",\n  \"permissions\": [\n    \"task:create\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Creates a user with only task:create. The email uses {{$timestamp}} so repeated runs do not hit 409 EMAIL_ALREADY_REGISTERED. permissions must be non-empty, known values, no duplicates. Stores user.id in {{userId}}."
           },
           "response": [],
           "event": [
@@ -252,7 +466,72 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 204\", function () { pm.response.to.have.status(204); });"
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "var user = pm.response.json().user;",
+                  "pm.test(\"user has the requested permissions\", function () { pm.expect(user.permissions).to.eql([\"task:create\"]); });",
+                  "pm.test(\"user is active\", function () { pm.expect(user.status).to.eql(\"active\"); });",
+                  "pm.collectionVariables.set(\"userId\", user.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "description": "Every user, ordered by full_name. Returns { users: UserDto[] }."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var users = pm.response.json().users;",
+                  "pm.test(\"users is an array\", function () { pm.expect(users).to.be.an(\"array\"); });",
+                  "pm.test(\"includes the created user\", function () { pm.expect(users.map(function (u) { return u.id; })).to.include(pm.collectionVariables.get(\"userId\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get user by id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/{{userId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}"
+              ]
+            },
+            "description": "One UserDto. 404 USER_NOT_FOUND for an unknown id; 400 for a non-UUID id."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"returns the requested user\", function () { pm.expect(pm.response.json().user.id).to.eql(pm.collectionVariables.get(\"userId\")); });"
                 ]
               }
             }
@@ -660,7 +939,7 @@
           ]
         },
         {
-          "name": "Get workflow record (admin)",
+          "name": "Get workflow record",
           "request": {
             "method": "GET",
             "url": {
@@ -743,7 +1022,7 @@
           ]
         },
         {
-          "name": "Get deletion log (admin)",
+          "name": "Get deletion log",
           "request": {
             "method": "GET",
             "url": {
@@ -762,7 +1041,7 @@
                 }
               ]
             },
-            "description": "The template deletion log, newest first. admin only - see docs/api/api-documentation.md §4.8."
+            "description": "The template deletion log, newest first. Requires workflow:manage - see docs/api/api-documentation.md §4.8."
           },
           "response": [],
           "event": [
@@ -778,7 +1057,7 @@
           ]
         },
         {
-          "name": "Delete workflow (admin)",
+          "name": "Delete workflow",
           "request": {
             "method": "DELETE",
             "url": {
@@ -1916,6 +2195,120 @@
           ]
         },
         {
+          "name": "Login — unknown email (401)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nobody@example.invalid\",\n  \"password\": \"wrong-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "An unknown email gets the same 401 INVALID_CREDENTIALS as a wrong password. Uses an unregistered email so it never counts toward any account's lockout."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", function () { pm.response.to.have.status(401); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is INVALID_CREDENTIALS\", function () { pm.expect(json.code).to.eql(\"INVALID_CREDENTIALS\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List users — no token (401)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", function () { pm.response.to.have.status(401); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is AUTHENTICATION_REQUIRED\", function () { pm.expect(json.code).to.eql(\"AUTHENTICATION_REQUIRED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get user — unknown id (404)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/00000000-0000-4000-8000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "00000000-0000-4000-8000-000000000000"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", function () { pm.response.to.have.status(404); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
+                  "pm.test(\"code is USER_NOT_FOUND\", function () { pm.expect(json.code).to.eql(\"USER_NOT_FOUND\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Unknown route (404)",
           "request": {
             "method": "GET",
@@ -1953,7 +2346,7 @@
     "bearer": [
       {
         "key": "token",
-        "value": "{{adminToken}}",
+        "value": "{{authToken}}",
         "type": "string"
       }
     ]

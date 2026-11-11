@@ -46,6 +46,17 @@ export class TaskModel {
     }
   }
 
+  async findCreatorById(id: string | ObjectId): Promise<string | null> {
+    const objectId = toObjectId(id);
+    try {
+      const tasks = await this.collection();
+      const task = await tasks.findOne({ _id: objectId }, { projection: { created_by: 1 } });
+      return task?.created_by ?? null;
+    } catch (err) {
+      throw new DatabaseError("Failed to look up task creator", { cause: err });
+    }
+  }
+
   async findAll(filters: {
     created_by?: string;
     session_id?: string;

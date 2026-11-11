@@ -3463,6 +3463,11 @@ export const selectionApi = {
 
 ### 9.8 `src/lib/auth/session.ts` — the mock session seam
 
+> **Superseded.** This mock has since been replaced by real email + password login with server-side
+> sessions and per-user permissions (no roles). Users no longer carry department, faculty or
+> organisation, and `getRequesterContext()` now sends only `actor_type`. See
+> [user-access-and-session-management-phase-plan.md](../../../docs/user-access-and-session-management-phase-plan.md).
+
 ```ts
 /**
  * MOCK AUTHENTICATION - REPLACE BEFORE ANY DEPLOYMENT.
@@ -5489,7 +5494,7 @@ npx tsc --noEmit               # frontend types (in unblock-ai-web/)
 Stated so nobody builds it by accident, and so the gaps are visible when reviewing:
 
 - **Workflow execution.** Nothing runs a saved workflow: no approver resolution against a real directory, no condition evaluation at runtime, no emails, no state machine. The requester portal stops at "here is the plan, submit it".
-- **Real authentication.** `getSession()` returns hardcoded people. There is no login, no session cookie, no route protection, no authorization check on any backend endpoint.
+- **Real authentication.** `getSession()` returns hardcoded people. There is no login, no session cookie, no route protection, no authorization check on any backend endpoint. *(Since implemented — see [user-access-and-session-management-phase-plan.md](../../../docs/user-access-and-session-management-phase-plan.md).)*
 - **The requester job-detail screens.** `/portal/jobs/[id]`, the "Waiting on approver" state, and the mid-workflow "more info requested" flow are built against `PLACEHOLDER_JOBS` and are not connected to anything.
 - **Input collection.** Mockup chat turns 5–6 (collecting destination/dates, computing 45 days, inserting the Dean step) belong to the execution phase.
 - **Policy-document RAG.** A genuinely different retrieval problem — chunked passages, consumed by a Planner Agent. See `WORKFLOW_SELECTION_PLAN.md` §2 for why conflating it with workflow selection would be a mistake.

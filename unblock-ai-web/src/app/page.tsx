@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
+import { RoutePath } from "@/lib/routing/route-path";
 
 export default async function Home() {
   const session = await getSession();
-  if (!session) redirect("/login");
-  redirect(session.user.audience === "admin" ? "/admin" : "/portal");
+  redirect(session ? RoutePath.ACCOUNT : RoutePath.LOGIN);
 }

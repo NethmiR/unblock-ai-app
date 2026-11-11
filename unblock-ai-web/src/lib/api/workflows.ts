@@ -93,7 +93,7 @@ export const workflowsApi = {
   validate: (id: string, workflow: Workflow) =>
     apiRequest<ValidationResult>(`/workflows/${id}/validate`, { method: "POST", body: { workflow } }),
 
-  /** `GET /workflows/deletions` (admin-only) - the template deletion log, newest first. */
+  /** `GET /workflows/deletions` - the template deletion log, newest first. */
   listDeletions: (limit?: number) =>
     apiRequest<TemplateDeletion[]>(`/workflows/deletions${limit ? `?limit=${limit}` : ""}`),
 };

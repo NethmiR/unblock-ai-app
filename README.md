@@ -185,7 +185,7 @@ MONGODB_DB=unblock_ai
 
 # PostgreSQL (from section 4.2)
 POSTGRES_URL=postgresql://unblock_app:choose-a-password@localhost:5432/unblock_ai_auth
-AUTH_STORE_BACKEND=postgres
+POSTGRES_REPOSITORY_BACKEND=postgres
 
 # Azure chat model (from section 3.4)
 AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/
@@ -201,17 +201,21 @@ AZURE_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 AZURE_EMBEDDING_API_VERSION=2024-10-21
 AZURE_EMBEDDING_DIM=1536
 
-# Session signing — must be DIFFERENT from APPROVAL_TOKEN_SECRET
-SESSION_TOKEN_SECRET=<random 32+ char string>
-APPROVAL_TOKEN_SECRET=<a different random 32+ char string>
+# Signs approval links (required when real mail is sent)
+APPROVAL_TOKEN_SECRET=<random 32+ char string>
 
-# Passwords for the seeded demo accounts (section 6.3)
-SEED_ADMIN_PASSWORD=Admin@12345
-SEED_USER1_PASSWORD=Portal@12345
-SEED_USER2_PASSWORD=Portal@12345
+# Users and sessions
+USER_DEFAULT_PASSWORD=12345         # initial password of every new user
+SESSION_TTL_HOURS=12                # absolute session lifetime
+AUTH_MAX_FAILED_ATTEMPTS=0          # failed logins before lockout; 0 disables lockout
+AUTH_LOCKOUT_DURATION_MINUTES=15
+
+# Bootstrap administrator created by `npm run seed:pg:run` (section 6)
+SEED_ADMINISTRATOR_EMAIL=admin@example.com
+SEED_ADMINISTRATOR_FULL_NAME=System Administrator
 ```
 
-Generate the two secrets with:
+Generate the approval secret with:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -219,10 +223,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 **Required at startup** (the server refuses to boot without them): `MONGODB_URI`,
 `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT`,
-`AZURE_OPENAI_API_VERSION`, `AZURE_EMBEDDING_ENDPOINT`, `AZURE_EMBEDDING_API_KEY`, and
-`POSTGRES_URL` (when `AUTH_STORE_BACKEND=postgres`). `SESSION_TOKEN_SECRET` is required only
-when `NODE_ENV=production`; in development a random per-process value is used, which means
-restarting the API invalidates open sessions. It must never equal `APPROVAL_TOKEN_SECRET`.
+`AZURE_OPENAI_API_VERSION`, `AZURE_EMBEDDING_ENDPOINT`, `AZURE_EMBEDDING_API_KEY`,
+`USER_DEFAULT_PASSWORD`, and `POSTGRES_URL` (when `POSTGRES_REPOSITORY_BACKEND=postgres`, the
+default). Sessions are stored in PostgreSQL, so they survive API restarts and need no signing
+secret. `SEED_ADMINISTRATOR_EMAIL` and `SEED_ADMINISTRATOR_FULL_NAME` are read only by the
+seed command, never by the server.
 
 **Email is optional.** The default `MAIL_TRANSPORT=console` prints approval emails —
 including the full approval link — to the API's stdout, so the whole approval chain is
@@ -236,14 +241,11 @@ Create the file with:
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/api
-
-# Must be the SAME value as the API's SESSION_TOKEN_SECRET — the Next proxy verifies
-# the session cookie signature locally. Server-only, deliberately not NEXT_PUBLIC_.
-SESSION_TOKEN_SECRET=<same value as the API's SESSION_TOKEN_SECRET>
 ```
 
-Because the dev fallback for `SESSION_TOKEN_SECRET` is random per process, set an explicit
-value in **both** files or logins will not survive across the two apps.
+That is the only variable the frontend needs (see `unblock-ai-web/.example.env`). The web app
+holds no auth secret: it stores the API's opaque session token in an httpOnly cookie and the
+API validates it on every call.
 
 ---
 
@@ -257,16 +259,20 @@ cd unblock-ai-api
 # 6.1 Apply PostgreSQL + MongoDB migrations (tables, collections, indexes)
 npm run migrate:up
 
-# 6.2 Seed the demo accounts
-npm run seed:auth
+# 6.2 Create the bootstrap administrator
+npm run seed:pg:run
 ```
 
 `npm run migrate:status` shows which migrations each database has applied. Rolling back,
 writing new migrations and every per-database command are covered in
 [unblock-ai-api/docs/guides/database-migrations.md](unblock-ai-api/docs/guides/database-migrations.md).
 
-`npm run seed:auth` will not overwrite an account that already exists. To reset a seeded
-password after changing it in `.env`, run `npm run seed:auth -- --force`.
+`npm run seed:pg:run` creates the administrator from `SEED_ADMINISTRATOR_EMAIL` /
+`SEED_ADMINISTRATOR_FULL_NAME` with all four permissions and the password in
+`USER_DEFAULT_PASSWORD`. Seeders are idempotent: an existing user is skipped, never
+overwritten. `npm run seed:pg:list` lists the seeders and `npm run seed:pg:create -- <name>`
+scaffolds a new one — see
+[unblock-ai-api/docs/guides/database-seeding.md](unblock-ai-api/docs/guides/database-seeding.md).
 
 ---
 
@@ -291,8 +297,9 @@ npm run dev            # port 3001 is already fixed in package.json
 Then open:
 
 - App: **http://localhost:3001**
-- Admin login: **http://localhost:3001/login**
-- Requester (portal) login: **http://localhost:3001/portal/login**
+- Login (every user): **http://localhost:3001/login** — after sign-in you land on `/account`
+- Template authoring dashboard: **http://localhost:3001/admin** (reachable by URL, not linked yet)
+- Requester dashboard: **http://localhost:3001/portal** (reachable by URL, not linked yet)
 - API health check: **http://localhost:3000/api/health**
 
 The frontend **must** run on port 3001 — it is the backend's default `CORS_ORIGIN`. If you
@@ -307,20 +314,40 @@ cd unblock-ai-web && npm run build && npm start
 
 ---
 
-## 8. Test credentials
+## 8. Users and test credentials
 
-These accounts are created by `npm run seed:auth`. The usernames are fixed in `.env`
-(`SEED_*_USERNAME`); the passwords are whatever you set in `SEED_*_PASSWORD` before seeding —
-the values below match the suggested `.env` in section 5.1.
+Everyone signs in at `/login` with **email + password**. There are no roles; each user holds
+one or more permissions:
 
-| Role | Sign in at | Username | Password |
-|---|---|---|---|
-| Admin (authors workflow templates) | `/login` | `admin` | `Admin@12345` |
-| Requester — Faculty of Information Technology | `/portal/login` | `chathura` | `Portal@12345` |
-| Requester — Faculty of Computer Science | `/portal/login` | `dilani` | `Portal@12345` |
+| Permission | Allows |
+|---|---|
+| `workflow:manage` | Author, edit, publish and delete workflow templates; drafts; the deletion log |
+| `task:create` | Read published workflows, chat with the selector, create and run **their own** requests |
+| `task:approve` | Grantable, but gates nothing yet (approvals still use emailed links) |
+| `user:manage` | Create, list and view users |
 
-There is no self-registration, password reset, or password change — accounts are managed only
-through the seed script. Change these passwords before any non-local use.
+**Bootstrap administrator** — created by `npm run seed:pg:run` with all four permissions.
+With the suggested `.env` in section 5.1 that is `admin@example.com` / `12345`.
+
+**Other users** are created by a `user:manage` holder through the API. Every new user gets the
+password in `USER_DEFAULT_PASSWORD`:
+
+```bash
+# 1. Log in and copy "token" from the response
+curl -s http://localhost:3000/api/auth/login -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"12345"}'
+
+# 2. Create a requester
+curl -s http://localhost:3000/api/users -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"email":"requester@example.com","full_name":"Test Requester","permissions":["task:create"]}'
+```
+
+There is no self-registration, password reset, or password change yet — every account keeps
+`USER_DEFAULT_PASSWORD`. Use a different value before any non-local use.
+
+The `/account` page shows your profile, permissions and active sessions; you can revoke a
+single session, sign out of all other sessions, or sign out.
 
 Approvers do not have accounts. An approver receives an emailed link containing a signed
 approval token, and that token is the authentication — with `MAIL_TRANSPORT=console` the link
@@ -345,10 +372,11 @@ npm test                        # unit + integration tests (in-memory Mongo + fa
 
 Frontend checks: `npm run typecheck`, `npm run lint`, `npm test` from `unblock-ai-web/`.
 
-A typical end-to-end walkthrough: sign in as `admin` → create a template from prose →
-Generate → Publish → sign out → sign in as `chathura` → start a new job → describe the request
-in chat → fill in the requirements → submit → copy the approval link from the backend terminal
-→ approve.
+A typical end-to-end walkthrough: sign in as the bootstrap administrator → open `/admin` →
+create a template from prose → Generate → Publish → create a `task:create` user (section 8) →
+sign out → sign in as that user → open `/portal` → start a new job → describe the request in
+chat → fill in the requirements → submit → copy the approval link from the backend terminal →
+approve.
 
 ---
 
@@ -357,12 +385,14 @@ in chat → fill in the requirements → submit → copy the approval link from 
 | Symptom | Fix |
 |---|---|
 | `Missing required environment variable: X` at startup | Fill `X` in `unblock-ai-api/.env` — see the required list in 5.1 |
-| `SESSION_TOKEN_SECRET must differ from APPROVAL_TOKEN_SECRET` | The two secrets are identical; generate a second one |
 | `ECONNREFUSED 27017` | MongoDB is not running — `docker start unblock-ai-mongo`, or `Start-Service MongoDB` |
 | Postgres connection/timeout errors at startup | The service is down, or `POSTGRES_URL` has the wrong password/database. Test it with the `psql` command in 4.2 |
 | `password authentication failed for user "unblock_app"` | Role password does not match `POSTGRES_URL` — `ALTER ROLE unblock_app WITH PASSWORD '...'` |
-| `relation "admin_users" does not exist` | `npm run migrate:pg:up` has not been run |
-| Login succeeds then immediately bounces back to the login page | `SESSION_TOKEN_SECRET` differs between `unblock-ai-api/.env` and `unblock-ai-web/.env.local`, or is unset in dev (random per process) |
+| `relation "users" does not exist` | `npm run migrate:pg:up` has not been run |
+| `Missing required environment variable: SEED_ADMINISTRATOR_EMAIL` from `seed:pg:run` | Set `SEED_ADMINISTRATOR_EMAIL` and `SEED_ADMINISTRATOR_FULL_NAME` in `unblock-ai-api/.env` |
+| Login returns `ACCOUNT_LOCKED` | Too many failed attempts with `AUTH_MAX_FAILED_ATTEMPTS > 0`; wait `AUTH_LOCKOUT_DURATION_MINUTES` |
+| Login succeeds then immediately bounces back to the login page | The session was rejected by the API (expired, revoked, or the API is unreachable from the web app) — check `NEXT_PUBLIC_API_BASE_URL` and the API logs |
+| `403 PERMISSION_DENIED` from the API | The signed-in user lacks the permission that route needs (section 8) |
 | CORS errors in the browser console | The frontend is not on the port in `CORS_ORIGIN` (default 3001) |
 | `EADDRINUSE` on port 3000 | Something else holds the port — free it, or change `PORT` and `NEXT_PUBLIC_API_BASE_URL` together |
 | Extraction returns 422 | The model rejected the prose as not a workflow, or failed validation after `EXTRACTION_MAX_ATTEMPTS` retries — check the backend logs |
@@ -379,4 +409,6 @@ in chat → fill in the requirements → submit → copy the approval link from 
 | [unblock-ai-api/docs/api/api-documentation.md](unblock-ai-api/docs/api/api-documentation.md) | Every endpoint, with request/response bodies and auth |
 | [unblock-ai-api/docs/guides/configuration.md](unblock-ai-api/docs/guides/configuration.md) | Full environment-variable reference |
 | [unblock-ai-api/docs/guides/running-the-app.md](unblock-ai-api/docs/guides/running-the-app.md) | Longer-form run guide |
+| [unblock-ai-api/docs/guides/database-seeding.md](unblock-ai-api/docs/guides/database-seeding.md) | The Postgres seed pack and the bootstrap administrator |
+| [docs/user-access-and-session-management-phase-plan.md](docs/user-access-and-session-management-phase-plan.md) | Design of users, permissions and server-side sessions |
 | [unblock-ai-api/docs/postman/](unblock-ai-api/docs/postman/) | Postman collection that chains ids automatically |

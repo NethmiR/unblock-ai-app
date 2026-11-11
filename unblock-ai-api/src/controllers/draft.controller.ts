@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { requireAuthContext } from "../utils/http/auth-context.util.js";
 import { DraftService } from "../services/draft.service.js";
 import { ExtractionService } from "../services/extraction.service.js";
 import { WorkflowService } from "../services/workflow.service.js";
@@ -29,8 +30,7 @@ export class DraftController {
   create = async (req: Request, res: Response): Promise<void> => {
     const text = requireNonEmptyString(req.body, "text");
     const title = optionalString(req.body, "title");
-    // No auth middleware exists yet, so there is no req.user to read a submitter from.
-    const submittedBy: string | null = null;
+    const submittedBy = requireAuthContext(req).user.id;
     const draft = await this.draftService.create({ rawText: text, title, submittedBy });
     res.status(201).json(serializeDraft(draft));
   };

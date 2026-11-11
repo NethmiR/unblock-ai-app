@@ -12,7 +12,7 @@
 | **Document version** | 1.0 |
 | **Last updated** | 2026-08-29 |
 | **Repository** | `unblock-ai-app` (branch `dev`, mainline `main`) |
-| **Audience** | Engineers, architects, product stakeholders, reviewers, presenters |
+| **Intended readers** | Engineers, architects, product stakeholders, reviewers, presenters |
 | **Status of the system** | Working end-to-end for the happy path; see [§16 Limitations](#16-known-limitations--explicitly-out-of-scope) |
 
 ---
@@ -60,7 +60,7 @@ UNBLOCK-AI closes that gap in four moves:
 
 | # | Move | Who | Result |
 |---|---|---|---|
-| 1 | **Compile** | Admin pastes the policy prose | An LLM extracts it into a strict JSON **workflow graph**, machine-validated and rendered as a flowchart the admin verifies and publishes |
+| 1 | **Compile** | A workflow manager pastes the policy prose | An LLM extracts it into a strict JSON **workflow graph**, machine-validated and rendered as a flowchart the workflow manager verifies and publishes |
 | 2 | **Find** | Requester describes their need in plain language | Vector retrieval + an LLM selector agent maps that request onto exactly one published template — or honestly says it can't |
 | 3 | **Fill & Run** | Requester answers one question at a time | A task is compiled from the template, values are validated, and the approval chain runs over real email with signed per-step links |
 | 4 | **Record** | System, on completion | A deterministic PDF record of the whole request — inputs, computed values, follow-ups, and every approval — emailed and downloadable |
@@ -75,8 +75,8 @@ Two applications in one repository:
 | [`unblock-ai-web/`](unblock-ai-web/) | Frontend — admin authoring surface, requester portal, approver decision page | Next.js 16.3 (App Router, RSC) · React 19.2 · Tailwind CSS v4 · React Flow | 3001 |
 
 Roughly **8,100 lines** of backend source across 169 TypeScript files, and
-**6,700 lines** of frontend source across 89 files, backed by **43 backend test
-files** and 3 frontend test files.
+**6,700 lines** of frontend source across 89 files, backed by **63 backend test
+files** and 2 frontend test files.
 
 ## 1.3 The five ideas that define the design
 
@@ -120,7 +120,8 @@ plausible answer. See [§5.6](#56-retrieval--the-selector-agent).
 | Requirement collection and validation | **Working** |
 | Email approval chain (approve / reject / request-more-info) | **Working**, default transport logs to console |
 | Completion PDF record | **Working**, deterministic and hash-verified |
-| Auth (admin + portal), deletion audit log | **Working** |
+| Email login, permission-based access, revocable server-side sessions, user management API | **Working** — no password change or reset yet |
+| Deletion audit log | **Working** |
 | Directory / HR integration for real approver identity | **Not built** — approver emails are requester-supplied |
 | SLA reminders, escalation, `condition` evaluation at runtime | **Not built** — the schema carries the fields; nothing reads them |
 
@@ -183,9 +184,17 @@ Downstream of that compiled artifact, everything else becomes mechanical:
 
 | Persona | Surface | What they do |
 |---|---|---|
-| **Workflow administrator** | `/admin` (session-authenticated, `admin` audience) | Paste prose, generate, inspect the flowchart, edit, publish, rename, delete. Review the deletion audit log. |
-| **Requester** | `/portal` (session-authenticated, `portal` audience) | Describe a need in plain language, answer clarifying questions, fill requirements, submit, track status, download the record. |
+| **Workflow manager** | `/admin` (signed in, holds `workflow:manage`) | Paste prose, generate, inspect the flowchart, edit, publish, rename, delete. Review the deletion audit log. |
+| **Requester** | `/portal` (signed in, holds `task:create`) | Describe a need in plain language, answer clarifying questions, fill requirements, submit, track status, download the record. |
+| **User manager** | `/api/users` (signed in, holds `user:manage`; no web screen yet) | Create users and grant them permissions. |
 | **Approver** | `/approvals/:token` (**no account**, token-authenticated) | Open a link from an email, see the request in context, approve / reject with a reason / ask for more information. |
+
+These personas are **permissions, not account types**. Everyone signs in at the same
+`/login` page with email and password and lands on `/account`, which shows their
+profile, permissions and active sessions. One account may hold any combination of
+the four permissions (`workflow:manage`, `task:create`, `task:approve`,
+`user:manage`) — see [§5.1](#51-authentication--authorization). The `/admin` and
+`/portal` dashboards are reachable by URL but not yet linked from `/account`.
 
 The approver having **no account at all** is a deliberate constraint that shapes the
 whole auth design — see [§12.2](#122-two-independent-authentication-mechanisms).
@@ -240,42 +249,45 @@ binding, and both `dynamic` and `static` actor resolution.
 +----------------------------------------------------------------------------+
 |  BROWSER                                                                    |
 |                                                                             |
-|   /admin/*          /portal/*         /approvals/:token                     |
-|   admin session     portal session    NO session - token only               |
+|   /login  /account  /admin/*  /portal/*      /approvals/:token              |
+|   one session cookie (ua_session)            NO session - token only        |
 +-------+-----------------+-------------------+-------------------------------+
         |                 |                   |
         v                 v                   v
 +----------------------------------------------------------------------------+
 |  unblock-ai-web  ·  Next.js 16 App Router  ·  :3001                        |
 |                                                                             |
-|   proxy.ts ---------- route guard: verifies ua_session HMAC + expiry        |
+|   proxy.ts ---------- route guard: no ua_session cookie -> /login           |
 |   Server Components - read httpOnly cookie, call API directly w/ Bearer     |
 |   /api/auth/login --- sets the httpOnly cookie on THIS origin               |
+|   /api/auth/logout -- revokes the session at the API, clears the cookie     |
 |   /api/proxy/* ------ forwards browser fetches upstream, attaching Bearer   |
 |   lib/api/client.ts - THE single fetch chokepoint (+ apiBlob for the PDF)   |
 +-------------------------------+--------------------------------------------+
-                                |  HTTP /api  (Bearer session token)
+                                |  HTTP /api  (Bearer opaque session token)
                                 v
 +----------------------------------------------------------------------------+
 |  unblock-ai-api  ·  Express 5  ·  :3000                                    |
 |                                                                             |
 |  requestId -> requestLogger -> cors -> jsonBody(1MB) -> authenticate        |
-|           -> /api router (requireAuth / requireRole per route)              |
+|           -> /api router (requireAuthentication / requireAnyPermission)     |
 |           -> notFound -> errorHandler                                       |
 |                                                                             |
-|  routes -> controllers -> services -> models -> db                          |
+|  routes -> controllers -> services -> models | repositories -> db           |
 |                                                                             |
 |  SERVICES                                                                   |
 |   Draft · Extraction · Validation · Workflow · Embedding                    |
 |   Retrieval · Selector · Selection                                          |
 |   Planner · Task · Execution · Approval · Notification                      |
-|   CompletionDocument · Auth · Audit · DeletionLog                           |
+|   CompletionDocument · Audit · TemplateDeletionLog                          |
+|   Authentication · UserSession · User                                       |
 |                                                                             |
 |  PLUGGABLE ADAPTERS (factory behind an interface)                           |
 |   IVectorStore      memory | atlas                                          |
 |   IMailer           console | smtp                                          |
-|   IAuthStore        memory | postgres                                       |
 |   IDocumentRenderer text   | pdf                                            |
+|   I*Repository      memory | postgres  (user, user-session,                 |
+|                                         template-deletion)                  |
 +----+--------------+---------------+-----------------+----------------------+
      |              |               |                 |
      v              v               v                 v
@@ -283,14 +295,16 @@ binding, and both `dynamic` and `static` actor resolution.
 | MongoDB  |  | Postgres |  | Azure OpenAI |  | SMTP / stdout|
 |   7      |  |    17    |  |  chat +      |  |              |
 |          |  |          |  |  embeddings  |  |              |
-| drafts   |  | admin_   |  |              |  | approval     |
-| templates|  |  users   |  | gpt-4o       |  | links + PDF  |
-| tasks    |  | portal_  |  | text-embed-  |  |              |
-| selection|  |  users   |  |  ding-3-small|  |              |
-| _sessions|  | template_|  |              |  |              |
-| counters |  | deletions|  |              |  |              |
-| audit_   |  |          |  |              |  |              |
-|  logs    |  |          |  |              |  |              |
+| drafts   |  | users    |  |              |  | approval     |
+| templates|  | permis-  |  | gpt-4o       |  | links + PDF  |
+| tasks    |  |  sions   |  | text-embed-  |  |              |
+| selection|  | user_    |  |  ding-3-small|  |              |
+| _sessions|  |  permis- |  |              |  |              |
+| counters |  |  sions   |  |              |  |              |
+| audit_   |  | user_    |  |              |  |              |
+|  logs    |  |  sessions|  |              |  |              |
+|          |  | template_|  |              |  |              |
+|          |  | deletions|  |              |  |              |
 +----------+  +----------+  +--------------+  +--------------+
 ```
 
@@ -298,7 +312,7 @@ binding, and both `dynamic` and `static` actor resolution.
 
 | # | Area | Primary services | Doc |
 |---|---|---|---|
-| A | Authentication & authorization | `auth.service`, `auth-store/` | [§5.1](#51-authentication--authorization) |
+| A | Authentication & authorization | `authentication.service`, `user-session.service`, `user.service`, `repositories/` | [§5.1](#51-authentication--authorization) |
 | B | Draft management | `draft.service` | [§5.2](#52-draft-management) |
 | C | LLM extraction | `extraction.service` | [§5.3](#53-llm-extraction--prose--workflow-json) |
 | D | Validation | `validation.service`, `graph-validator.util` | [§5.4](#54-validation--schema--graph) |
@@ -307,7 +321,7 @@ binding, and both `dynamic` and `static` actor resolution.
 | G | Task planning | `planner.service`, `task.service` | [§5.7](#57-task-planning--requirement-collection) |
 | H | Approval execution | `execution.service`, `approval.service`, `notification.service` | [§5.8](#58-approval-execution) |
 | I | Completion documents | `completion-document.service`, `document/` | [§5.9](#59-completion-documents) |
-| — | Deletion & audit | `deletion-log.service`, `audit.service` | [§5.10](#510-deletion-tracking-and-audit) |
+| — | Deletion & audit | `template-deletion-log.service`, `audit.service` | [§5.10](#510-deletion-tracking-and-audit) |
 
 ## 3.3 Technology choices and why
 
@@ -322,7 +336,7 @@ binding, and both `dynamic` and `static` actor resolution.
 | Embeddings | Azure AI Foundry, `text-embedding-3-small`, 1536-dim | Separate resource from chat — its own endpoint, key, and API version |
 | Schema validation | AJV 8, draft 2020-12, + `ajv-formats` | Full support for the 2020-12 dialect this schema uses |
 | Primary DB | MongoDB 7, official driver, **no ODM** | Workflow documents are deeply nested and schema-versioned; an ODM would duplicate the JSON Schema that already governs them |
-| Auth DB | PostgreSQL 17, `pg`, **no ORM** | Relational, hard uniqueness constraints, real foreign keys — see [§7.3](#73-why-two-databases) |
+| Users, permissions & sessions DB | PostgreSQL 17, `pg`, **no ORM** | Relational, hard uniqueness constraints, real foreign keys — see [§7.3](#73-why-two-databases) |
 | PDF | `pdfkit`, Standard-14 fonts | No headless browser, no font bundling, deterministic byte output |
 | Mail | `nodemailer` (SMTP) or a console transport | Console transport makes the whole approval chain demonstrable with no mail account |
 | Testing | Node's built-in `node:test` via `tsx`, + `mongodb-memory-server` | No Jest, no Vitest on the backend — one fewer toolchain |
@@ -354,15 +368,15 @@ unblock-ai-app/
 │   ├─ overview.md                     the prior single-page reference
 │   ├─ task-planner-design.md          area G design
 │   ├─ approval-execution-design.md    area H design
-│   ├─ auth-and-deletion-tracking-phase-plan.md
+│   ├─ user-access-and-session-management-phase-plan.md
 │   ├─ completion-document-email-phase-plan.md
 │   ├─ requester-contact-gap.md  ·  requester-contact-implementation-plan.md
 │   ├─ web-task-approval-*.md    ·  approver-page-gap-fixes-phase-plan.md
 │   └─ admin-template-open-performance-phase-plan.md
 ├─ unblock-ai-api/
 │   ├─ src/          169 .ts files, ~8,100 LOC
-│   ├─ scripts/      10 CLI scripts (migrate-postgres, migrate-mongo, seed, backfill, evaluate, smoke tests)
-│   ├─ tests/        43 test files across unit / integration / live
+│   ├─ scripts/      10 CLI scripts (migrate-postgres, migrate-mongo, seed-postgres, backfill, evaluate, smoke tests)
+│   ├─ tests/        63 test files across unit / integration / live
 │   └─ docs/         api/ · architecture/ · guides/ · plans/ · postman/
 └─ unblock-ai-web/
     ├─ src/          89 .ts/.tsx files, ~6,700 LOC
@@ -662,54 +676,140 @@ what a selector needs to reject a near-miss instead of stretching to it.
 
 ## 5.1 Authentication & Authorization
 
-**Code:** [`src/services/auth.service.ts`](unblock-ai-api/src/services/auth.service.ts) ·
-[`src/services/auth-store/`](unblock-ai-api/src/services/auth-store/) ·
+**Code:** [`src/services/authentication.service.ts`](unblock-ai-api/src/services/authentication.service.ts) ·
+[`src/services/user-session.service.ts`](unblock-ai-api/src/services/user-session.service.ts) ·
+[`src/services/user.service.ts`](unblock-ai-api/src/services/user.service.ts) ·
+[`src/repositories/`](unblock-ai-api/src/repositories/) ·
 [`src/middlewares/authenticate.middleware.ts`](unblock-ai-api/src/middlewares/authenticate.middleware.ts) ·
-[`src/middlewares/require-auth.middleware.ts`](unblock-ai-api/src/middlewares/require-auth.middleware.ts)
+[`src/middlewares/require-authentication.middleware.ts`](unblock-ai-api/src/middlewares/require-authentication.middleware.ts) ·
+[`src/middlewares/require-permission.middleware.ts`](unblock-ai-api/src/middlewares/require-permission.middleware.ts) ·
+[`src/middlewares/require-task-ownership.middleware.ts`](unblock-ai-api/src/middlewares/require-task-ownership.middleware.ts)
 
-### Two user tables, not one table with a role column
+### One `users` table; access is a set of permissions
 
-`admin_users` and `portal_users` are **separate PostgreSQL tables**. They are
-different privilege domains with different columns — `portal_users` carries a
-`faculty` column that feeds `getRequesterContext()`; `admin_users` does not need it.
-Collapsing them into one table with a `role` column would mean every query carries a
-filter that a missing `WHERE` clause could silently drop.
+Every account is a row in a single PostgreSQL `users` table that holds identity and
+credential fields only: email, full name, password hash, status (`active` |
+`disabled`), login bookkeeping, and the user who created it. Users sign in with
+**email**, which is stored trimmed and lower-cased and is unique on `lower(email)`.
 
-### Stateless HMAC-signed bearer tokens
+What a user may do is a set of **permissions** in `resource:action` form, held as rows
+in a `user_permissions` join table against a `permissions` catalogue (the
+`Permission` enum in [`permission.constant.ts`](unblock-ai-api/src/data/constants/permission.constant.ts)):
 
-Sessions are signed tokens ([`session-token.util.ts`](unblock-ai-api/src/utils/auth/session-token.util.ts)),
-mirroring the approval-token pattern already in the codebase. There is **no
-`sessions` table**.
-
-| Property | Consequence |
+| Permission | Grants |
 |---|---|
-| Nothing to look up per request | Verification is a single HMAC check |
-| Nothing to delete | **No revocation** — "log out everywhere" is impossible |
-| Secret rotation invalidates everything | Acceptable for three seeded users |
+| `workflow:manage` | Create, edit, review and delete workflow templates and drafts; read the deletion log |
+| `task:create` | Find a workflow, and create, complete and manage **one's own** task requests |
+| `task:approve` | Defined in the catalogue and grantable — but **gates nothing yet**. Approval links stay token-based ([§12.2](#122-two-independent-authentication-mechanisms)) |
+| `user:manage` | Create and view users and their permissions |
 
-`SESSION_TOKEN_SECRET` is **required in production**; in dev it falls back to a
-random per-process value (a restart invalidating sessions beats shipping a default
-secret in a config file). It must differ from `APPROVAL_TOKEN_SECRET` — the config
-module throws `ConfigurationError` at startup if they match.
+A user can hold any combination. **Every user must hold at least one permission**,
+enforced twice: `UserService` validates the input, and a `DEFERRABLE INITIALLY
+DEFERRED` constraint trigger rejects, at `COMMIT`, any transaction that leaves a
+user with none ([§7.2](#72-postgresql--five-tables)).
 
-### Authentication and authorization are two separate layers
+### Opaque, server-side sessions
+
+`POST /auth/login` returns a random 256-bit token encoded as base64url
+([`user-session-token.util.ts`](unblock-ai-api/src/utils/auth/user-session-token.util.ts)).
+Only its SHA-256 hex hash is stored, in `user_sessions.token_hash`; the token itself
+exists only in the login response and the client's cookie. The token is not signed,
+so there is no session secret to configure or rotate.
+
+| Property | Behaviour |
+|---|---|
+| Per-request lookup | `authenticate` hashes the Bearer token and finds an active session by hash, then loads the user with their permissions |
+| Expiry | **Absolute** — `SESSION_TTL_HOURS` (default 12) after login, no sliding renewal |
+| Activity | `last_seen_at` is refreshed at most once every 5 minutes; a failed refresh is logged and never fails the request |
+| Concurrency | No limit — every login creates a new session. A user's expired sessions are deleted each time that user logs in |
+| Revocation | **Immediate.** Logout revokes the current session (`signed_out`). A user can list their own active sessions and revoke any one of them, or all others at once (`revoked_by_user`) |
+| Client metadata | `user_agent` only. No IP address is stored |
+
+A session only resolves while its user's status is `active`.
+
+### Login, step by step
+
+[`AuthenticationService.login()`](unblock-ai-api/src/services/authentication.service.ts):
+
+```
+1. Normalise the email and look up the user's credentials
+     unknown email   -> burn equivalent scrypt time, then 401 INVALID_CREDENTIALS
+2. Verify the password - always, BEFORE any account-state check, so response
+   timing does not reveal whether an account is locked
+3. Account locked?   -> 403 ACCOUNT_LOCKED       (even when the password matched)
+4. Wrong password?   -> count the failure; 403 ACCOUNT_LOCKED if this failure
+                        reached the limit, otherwise 401 INVALID_CREDENTIALS
+5. Account disabled? -> 403 ACCOUNT_DISABLED
+6. Reset the failure counter, record last_login_at, issue a session
+```
+
+An unknown email and a wrong password produce the same `401` and the same message,
+"Invalid email or password".
+
+### Account lockout
+
+When `AUTH_MAX_FAILED_ATTEMPTS > 0`, an account is **locked** while
+`failed_login_count >= AUTH_MAX_FAILED_ATTEMPTS` and the last failure happened within
+`AUTH_LOCKOUT_DURATION_MINUTES` (default 15). A locked account is refused **even with
+the correct password**. Once that window has passed, the next failure restarts the
+count at 1; a successful login resets it to 0. The counter update is a single SQL
+statement, so concurrent attempts cannot lose a count.
+
+With `AUTH_MAX_FAILED_ATTEMPTS=0` — the default — failures are still counted but
+never enforced. A failure is logged with the user id and the count, never the email
+or the password. There is **no IP-based rate limiting**.
+
+### Authentication and authorization are separate layers
 
 This split is load-bearing:
 
 ```
-authenticate middleware   - runs on EVERY request
-                            parses the Bearer token, populates req.user
-                            NEVER rejects
+authenticate middleware       - runs on EVERY request
+                                resolves the Bearer token,
+                                populates req.auth = { user, session }
+                                NEVER rejects
 
-requireAuth()             - per-route guard: any valid session, either audience
-requireRole("admin")      - per-route guard: audience must be "admin"
+requireAuthentication()       - per-route guard: an active session
+                                  none -> 401 AUTHENTICATION_REQUIRED
+requireAnyPermission(...p)    - per-route guard: holds at least one of p
+                                  none -> 401 AUTHENTICATION_REQUIRED
+                                  lacks p -> 403 PERMISSION_DENIED
+createRequireTaskOwnership()  - /tasks/:id* guard: the caller created the task
+                                  otherwise -> 404 (existence not revealed)
 ```
 
 **Why:** `/api/approvals/*` is authenticated by a **completely different
 mechanism** — a per-step approval token in the URL. An approver has no account and
 no session. If authentication rejected unauthenticated requests globally, the entire
 approval path would be unreachable. Instead, `authenticate` is permissive and
-observational; the guards do the gating, applied only where they belong.
+observational; the guards do the gating, applied only where they belong. The full
+route → guard map is in [§9.2](#92-all-42-route-bindings).
+
+### Tasks are owner-only
+
+`POST /tasks` records the caller's user id as the task's `created_by`. `GET /tasks`
+always filters by the caller, whatever query parameters are sent. Every
+`/tasks/:id*` route additionally runs the ownership guard, which answers **`404`,
+not `403`**, for a task that exists but belongs to someone else, so the response
+does not reveal that the task exists.
+
+### User management
+
+`POST /api/users`, `GET /api/users` and `GET /api/users/:userId`, all gated on
+`user:manage` ([`user.service.ts`](unblock-ai-api/src/services/user.service.ts)):
+
+- `email` is trimmed, lower-cased, pattern-checked and at most 254 characters; a
+  duplicate is `409 EMAIL_ALREADY_REGISTERED`.
+- `full_name` is trimmed, 1–200 characters.
+- `permissions` is a non-empty, duplicate-free list of known permissions. A
+  `user:manage` holder may grant any permission, including `user:manage`.
+- The creating user's id is recorded as `created_by_user_id` on the user and as
+  `granted_by_user_id` on each permission row.
+- **Every new user gets the password in `USER_DEFAULT_PASSWORD`** (required, no code
+  fallback, never returned or logged; `12345` in `.example.env`).
+
+There is no update, disable or delete endpoint, and no password change or reset flow
+yet. The first account is created by the seed pack ([§7.2](#72-postgresql--five-tables)).
 
 ### Password hashing: `node:crypto` scrypt
 
@@ -718,43 +818,61 @@ painful on Windows and adds a compilation step to CI. `scrypt` is a memory-hard 
 already in the Node standard library —
 [`password.util.ts`](unblock-ai-api/src/utils/shared/password.util.ts).
 
-### Failed-attempt tracking
+### The repositories are pluggable
 
-`failed_attempt_count` and `last_failed_attempt_at` are incremented on a wrong
-password against a known username. **Lockout enforcement is off by default**
-(`AUTH_MAX_FAILED_ATTEMPTS=0`) — attempts are tracked regardless, so turning
-enforcement on later needs no migration. There is **no IP-based rate limiting**.
+Postgres data access is split by responsibility into three repositories under
+[`src/repositories/`](unblock-ai-api/src/repositories/) — **user**, **user session**
+and **template deletion**. Each is an interface with a `postgres` and an in-memory
+implementation plus an `index` factory, and `POSTGRES_REPOSITORY_BACKEND`
+(`postgres` | `memory`) selects the implementation for all three.
 
-### The auth store is pluggable
-
-`IAuthStore` has `postgres` and `memory` implementations, selected by
-`AUTH_STORE_BACKEND`. The `memory` backend is what lets `npm test` run with **no
-live PostgreSQL at all** — the same trick `mongodb-memory-server` provides for Mongo.
+The in-memory implementations reproduce the Postgres behaviour — the email conflict,
+the at-least-one-permission rule, session revocation semantics — by throwing the
+same errors. The test helpers construct them directly, so `npm test` runs with **no
+live PostgreSQL at all**, the same trick `mongodb-memory-server` provides for Mongo.
+A server started with `memory` begins with no users, and the seed pack writes only
+to Postgres, so `memory` is for tests, not for signing in to a running server.
 
 ### Web-side session flow
 
 ```
-1. User posts credentials to  unblock-ai-web  POST /api/auth/login   (Route Handler)
-2. That handler calls the API POST /api/auth/login -> { token, user, expires_at }
-3. It sets an httpOnly cookie  ua_session  ON THE WEB APP'S OWN ORIGIN
-4. proxy.ts verifies that cookie's HMAC + expiry before /admin* or /portal* renders
-5. Server Components read the cookie and call the API directly with a Bearer header
-6. Browser fetches go through /api/proxy/*, which reads the cookie server-side
+1. User posts email + password to unblock-ai-web POST /api/auth/login (Route Handler)
+2. That handler calls the API POST /api/auth/login, forwarding the browser's
+   User-Agent  -> { token, expires_at, user }
+3. It sets an httpOnly cookie  ua_session  ON THE WEB APP'S OWN ORIGIN,
+   expiring at expires_at
+4. The browser lands on /account (or the ?next= path it was sent from)
+5. proxy.ts lets /account*, /admin* and /portal* render only if ua_session is present
+6. Server Components read the cookie and call the API directly with a Bearer header;
+   getSession() resolves the user through GET /auth/me
+7. Browser fetches go through /api/proxy/*, which reads the cookie server-side
    and attaches the Bearer header upstream
+8. Sign out: POST /api/auth/logout revokes the session at the API, then deletes
+   the cookie (the cookie is deleted even if the API call fails)
 ```
 
 **Step 3 is deliberate.** The cookie is set by the *web app*, never by the API. That
 keeps the flow working if the API later moves to a different domain, and means the
 token never reaches JavaScript — only an httpOnly `Set-Cookie`.
 
-**Step 6 exists because** a browser fetch can never read an httpOnly cookie to set
+**Step 7 exists because** a browser fetch can never read an httpOnly cookie to set
 its own `Authorization` header. The same-origin proxy Route Handler can.
 
-**`proxy.ts` is UX, not security.** A forged cookie there just bounces someone to a
-login page. The real boundary is the API's `requireAuth()` / `requireRole()`. The
-proxy still verifies the signature and expiry rather than merely checking the
-cookie exists — a bare presence check is defeated by setting any junk value with the
-right name.
+**`proxy.ts` is UX, not security.** It only checks that the cookie exists and
+otherwise redirects to `/login?next=…`; it cannot validate an opaque token. Real
+validation is the API: an expired, revoked or junk token makes `getSession()` return
+`null` and every guarded API call fail with `401`. `/account` and `/portal/jobs/new`
+redirect to `/login` when `getSession()` returns `null`.
+
+### The `/account` page
+
+The landing page after sign-in: profile (name, email, initials), the user's
+permissions as badges, and their **active sessions** — device (user agent), sign-in
+time and last activity, with the current session marked "This device". Actions: sign
+out any other single session, **sign out of other sessions**, and sign out.
+
+The `/admin` and `/portal` dashboards are still reachable by URL but are not linked
+from `/account` while they await a redesign.
 
 ---
 
@@ -989,15 +1107,16 @@ and letting them choose. The system stops guessing at a fixed point.
 `selection_sessions` stores the query, the frozen candidates (with scores, base
 scores, and alias hits), every round, the final `outcome`
 (`matched` / `abandoned` / `no_match`), the selected `workflow_id`, and the
-`requester_context` handed in from the caller's session.
+`requester_context` handed in by the caller.
 
 ### `requester_context`
 
-`{ faculty, department, actor_type }`, read from the logged-in portal user's record
-server-side and passed to the selector. **The selector uses it to skip questions it
-can already answer.** When the requester's faculty is known, "Which faculty are you
-in?" is a question the system should never have to ask. The exact key names matter —
-the selector prompt depends on them.
+An optional object sent with `POST /selection/sessions` and stored on the session
+record. The web portal builds it server-side with `getRequesterContext()`, which
+currently returns `{ actor_type: "staff" }`. Users carry no faculty or department —
+the `users` table holds identity and credentials only — and the selector prompt does
+not receive this object, so when two candidates differ by faculty the selector
+**asks** "Which faculty are you attached to?" as its clarifying question.
 
 ---
 
@@ -1357,7 +1476,7 @@ Two separate audit mechanisms, deliberately not unified:
 
 | What | Where | Why |
 |---|---|---|
-| **Template deletions** | PostgreSQL `template_deletions` | Needs a real foreign key to `admin_users` with `ON DELETE RESTRICT` |
+| **Template deletions** | PostgreSQL `template_deletions` | Needs a real foreign key to `users` with `ON DELETE RESTRICT` |
 | **Task deletions** | Mongo `audit_logs` | Pre-existing; no dual write introduced |
 
 ### Template deletion — write ordering as atomicity
@@ -1376,12 +1495,15 @@ available:
 > didn't** — a recoverable, *visible* failure state rather than a silent gap. The
 > admin deletion-log UI renders exactly that row as `Incomplete`.
 
-`ON DELETE RESTRICT` on `deleted_by_admin_id` means an audit row can never be
-orphaned or erased by removing the admin who created it. `deleted_by_username` is
-**denormalised on purpose** so the log stays readable if the admin is later renamed.
+`ON DELETE RESTRICT` on `deleted_by_user_id` means an audit row can never be
+orphaned or erased by removing the user who deleted the template. `deleted_by_email`
+is **denormalised on purpose** so the log stays readable on its own. The rows are
+written through `TemplateDeletionLogService` over the template-deletion repository
+([§5.1](#51-authentication--authorization)).
 
-The endpoint requires a **typed confirmation** and is `admin`-only.
-`DELETE /api/workflows/:id` is the **only `DELETE` route in the entire API**.
+`DELETE /api/workflows/:id` requires a **typed confirmation** (the word `delete` plus
+the exact template title) and the `workflow:manage` permission; so does reading the
+log at `GET /api/workflows/deletions`.
 
 ---
 
@@ -1390,7 +1512,8 @@ The endpoint requires a **typed confirmation** and is `admin`-only.
 ## 6.1 Strict layering
 
 ```
-   routes  ->  controllers  ->  services  ->  models  ->  db
+   routes  ->  controllers  ->  services  ->  models        ->  db (MongoDB)
+                    |               |    ->  repositories  ->  db (PostgreSQL)
                     |               |
                     |               +-->  utils (pure)
                     |               +-->  external clients (Azure, SMTP)
@@ -1407,6 +1530,7 @@ Each layer has a written contract:
 | **controllers** | Parses/validates params, query, body; calls services; maps results to status + body | Touch MongoDB, call the OpenAI SDK, hold domain rules, format error responses |
 | **services** | All business logic; DB access via its model; pure computation via utils; external calls | Read `process.env`, import concrete singletons instead of injected collaborators |
 | **models** | Collection name, document interface, index specs, thin typed CRUD | Version-number computation, embedding calls, status-transition policy |
+| **repositories** | PostgreSQL access behind an interface (user, user session, template deletion), with a `postgres` and an in-memory implementation | Business rules such as permission validation, lockout policy or password hashing |
 | **utils** | Pure functions | Any I/O, any config read beyond arguments, any class state |
 | **config** | Read and validate `process.env` **once**, export frozen objects | Anything else |
 
@@ -1423,12 +1547,21 @@ const embeddingService  = new EmbeddingService();
 const validationService = new ValidationService();
 const extractionService = new ExtractionService({ validationService });
 
-const authStore   = createAuthStore(config.auth.storeBackend);
-const authService = new AuthService({ authStore, config });
+const repositoryBackend          = config.postgres.repositoryBackend;
+const userRepository             = createUserRepository(repositoryBackend);
+const userSessionRepository      = createUserSessionRepository(repositoryBackend);
+const templateDeletionRepository = createTemplateDeletionRepository(repositoryBackend);
+
+const userSessionService    = new UserSessionService({ userSessionRepository, authConfig: config.auth });
+const authenticationService = new AuthenticationService({
+  userRepository, userSessionService, authConfig: config.auth,
+});
+const templateDeletionLogService = new TemplateDeletionLogService({ templateDeletionRepository });
+const userService = new UserService({ userRepository, userConfig: config.user });
 
 const workflowService = new WorkflowService({
   templateModel, embeddingService, validationService,
-  taskModel, deletionLog: deletionLogService,
+  taskModel, templateDeletionLog: templateDeletionLogService,
 });
 
 const vectorStore = createVectorStore(config.retrieval.vectorBackend, {
@@ -1436,7 +1569,12 @@ const vectorStore = createVectorStore(config.retrieval.vectorBackend, {
   indexName: config.retrieval.atlasIndexName,
 });
 // ... retrieval, selector, selection, planner, mailer, notification,
-//     execution, documentRenderer, completionDocument, task, approval
+//     execution, documentRenderer, completionDocument, task, approval, controllers
+
+const app = createApp(controllers, {
+  authenticationService,
+  routeGuards: { requireTaskOwnership: createRequireTaskOwnership({ taskService }) },
+});
 ```
 
 **Why no DI container:** with roughly twenty services wired in one readable file,
@@ -1454,8 +1592,9 @@ requestId       -> attaches a correlation id to req, echoed in logs and errors
 requestLogger   -> structured JSON access log
 cors            -> single allowed origin from CORS_ORIGIN
 jsonBody        -> express.json({ limit: "1mb" })
-authenticate    -> parses Bearer, populates req.user, NEVER rejects
-/api router     -> requireAuth() / requireRole("admin") applied per route
+authenticate    -> resolves the Bearer session, populates req.auth, NEVER rejects
+/api router     -> requireAuthentication() / requireAnyPermission(...) applied per
+                   route; the task-ownership guard on /tasks/:id*
 notFound        -> 404 for unmatched paths
 errorHandler    -> the single place an error becomes a response
 ```
@@ -1480,20 +1619,26 @@ abstract class BaseError extends Error {
 `code` defaults to the class name in `SCREAMING_SNAKE_CASE` with a trailing `Error`
 stripped, unless overridden through the constructor options.
 
-### The ten subclasses
+### The twelve subclasses
 
 | Class | Status | `code` | Raised for |
 |---|---|---|---|
 | `ValidationError` | 400 | `VALIDATION_ERROR` | Malformed/missing bodies or fields. Has `.forField()` and `.forObject()` factories |
-| `UnauthorizedError` | 401 | `UNAUTHORIZED` | No or invalid session token |
-| `ForbiddenError` | 403 | `FORBIDDEN` | Valid session, wrong audience |
-| `NotFoundError` | 404 | `NOT_FOUND` | Missing draft/workflow/session/task. Has `.of(resource, id)` factory |
-| `ConflictError` | 409 | `CONFLICT` | Well-formed but conflicts with current state |
+| `UnauthorizedError` | 401 | `UNAUTHORIZED` (default) | Auth raises it with `INVALID_CREDENTIALS` (wrong email or password) or `AUTHENTICATION_REQUIRED` (no active session on a guarded route) |
+| `ForbiddenError` | 403 | `FORBIDDEN` (default) | Auth raises it with `PERMISSION_DENIED` (signed in, lacks the route's permission), `ACCOUNT_LOCKED` or `ACCOUNT_DISABLED` |
+| `NotFoundError` | 404 | `NOT_FOUND` | Missing draft/workflow/session/task — including a task owned by someone else. Has `.of(resource, id)` factory. Also raised with `USER_NOT_FOUND` and `USER_SESSION_NOT_FOUND` |
+| `ConflictError` | 409 | `CONFLICT` | Well-formed but conflicts with current state. Raised with `EMAIL_ALREADY_REGISTERED` for a duplicate user email |
 | `ExtractionError` | 422 | `EXTRACTION_ERROR` | Extraction failed after all repairs, or input flagged not-a-workflow |
 | `SelectionError` | 502 | `SELECTION_ERROR` | The selector-agent Azure call failed |
 | `EmbeddingError` | 502 | `EMBEDDING_ERROR` | Embeddings call failed or returned an unexpected dimension |
 | `DatabaseError` | 500 | `DATABASE_ERROR` | An unexpected MongoDB failure |
 | `ConfigurationError` | 500 | `CONFIGURATION_ERROR` | Missing/invalid env var at startup. `isOperational: false` |
+| `MigrationError` | 500 | `MIGRATION_ERROR` | A migration run failed (CLI only). `isOperational: false` |
+| `SeedError` | 500 | `SEED_ERROR` | A seeder run failed (CLI only). `isOperational: false` |
+
+The auth codes are the `AuthErrorCode` and `UserErrorCode` enums in
+[`src/data/constants/`](unblock-ai-api/src/data/constants/), passed through the
+constructor's `code` option.
 
 ### The middleware
 
@@ -1529,12 +1674,14 @@ shape: an interface, two or more implementations, and a factory selected by conf
 |---|---|---|---|
 | `IVectorStore` | `in-memory` · `atlas` | `VECTOR_BACKEND` | `memory` |
 | `IMailer` | `console` · `smtp` | `MAIL_TRANSPORT` | `console` |
-| `IAuthStore` | `memory` · `postgres` | `AUTH_STORE_BACKEND` | `postgres` |
+| `IUserRepository` · `IUserSessionRepository` · `ITemplateDeletionRepository` | `in-memory` · `postgres` | `POSTGRES_REPOSITORY_BACKEND` (one switch for all three) | `postgres` |
 | `IDocumentRenderer` | `text` · `pdf` | `DOCUMENT_FORMAT` | `pdf` |
 
-**The pattern pays for itself twice.** First, the whole system runs locally with
-zero cloud services: in-memory vectors, console mail, memory auth. Second, the test
-suite gets fakes for free — no mocking framework, because the seam is already there.
+**The pattern pays for itself twice.** First, the system runs locally without cloud
+vector search or a mail account: in-memory vectors, console mail. (The in-memory
+repositories start with no users, so signing in to a running server needs
+PostgreSQL.) Second, the test suite gets fakes for free — no mocking framework,
+because the seam is already there.
 
 ## 6.6 Structured logging and observability
 
@@ -1590,7 +1737,7 @@ function invoked on shutdown.
 | `selection_sessions` | `{ created_at: -1 }` | | List newest first |
 | `tasks` | `{ session_id: 1 }` | | Task-for-session lookup |
 | `tasks` | `{ status: 1, created_at: -1 }` | | Filtered task list |
-| `tasks` | `{ created_by: 1, created_at: -1 }` | | A portal user's own requests, newest first |
+| `tasks` | `{ created_by: 1, created_at: -1 }` | | A user's own requests, newest first — `GET /tasks` always filters by the caller |
 | `tasks` | `{ reference: 1 }` | **unique** | Human reference integrity |
 | `tasks` | `{ "steps.approval_token": 1 }` | **sparse** | **Token → task, one indexed hop** |
 | `tasks` | `{ workflow_id: 1, status: 1 }` | | Per-workflow task queries |
@@ -1598,53 +1745,104 @@ function invoked on shutdown.
 
 `npm run migrate:mongo:up` creates them; the server never touches indexes at boot.
 
-## 7.2 PostgreSQL — three tables
+## 7.2 PostgreSQL — five tables
 
-**Migration:** [`src/db/migration/postgres/migrations/20261111000000_initial-schema.migration.ts`](unblock-ai-api/src/db/migration/postgres/migrations/20261111000000_initial-schema.migration.ts)
+**Migrations**, applied in order:
 
-### `admin_users` / `portal_users`
+1. [`20261111000000_initial-schema.migration.ts`](unblock-ai-api/src/db/migration/postgres/migrations/20261111000000_initial-schema.migration.ts) — creates `template_deletions` and a first set of user tables.
+2. [`20261111015501_unified-users-permissions-and-sessions.migration.ts`](unblock-ai-api/src/db/migration/postgres/migrations/20261111015501_unified-users-permissions-and-sessions.migration.ts) —
+   replaces those user tables with `permissions`, `users`, `user_permissions` and
+   `user_sessions`, and points `template_deletions` at `users`.
+
+The schema below is the state after both.
+
+### `permissions`
 
 ```sql
-id                     UUID PRIMARY KEY DEFAULT gen_random_uuid()
-username               TEXT NOT NULL
-email                  TEXT NOT NULL
-full_name              TEXT NOT NULL
-department             TEXT
-organisation           TEXT
-faculty                TEXT          -- portal_users only; feeds getRequesterContext()
-password_hash          TEXT NOT NULL -- node:crypto scrypt
-is_active              BOOLEAN NOT NULL DEFAULT TRUE
-last_login_at          TIMESTAMPTZ
-failed_attempt_count   INTEGER NOT NULL DEFAULT 0
-last_failed_attempt_at TIMESTAMPTZ
-created_at, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-
-CREATE UNIQUE INDEX ... ON <table> (lower(username));
-CREATE UNIQUE INDEX ... ON <table> (lower(email));
+code        TEXT PRIMARY KEY      -- 'workflow:manage' | 'task:create' | 'task:approve' | 'user:manage'
+description TEXT NOT NULL
 ```
 
-**Case-insensitive uniqueness via `lower()` functional indexes**, deliberately
-avoiding a dependency on the `citext` extension.
+A catalogue of reference data: the migration inserts the four rows. Codes mirror the
+`Permission` enum.
+
+### `users`
+
+```sql
+id                   UUID PRIMARY KEY DEFAULT gen_random_uuid()
+email                TEXT NOT NULL          -- CHECK: email = lower(btrim(email))
+full_name            TEXT NOT NULL
+password_hash        TEXT NOT NULL          -- node:crypto scrypt
+status               TEXT NOT NULL DEFAULT 'active'   -- CHECK: 'active' | 'disabled'
+failed_login_count   INTEGER NOT NULL DEFAULT 0       -- CHECK: >= 0
+last_failed_login_at TIMESTAMPTZ
+last_login_at        TIMESTAMPTZ
+created_by_user_id   UUID REFERENCES users(id) ON DELETE SET NULL
+created_at, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+
+CREATE UNIQUE INDEX users_email_key ON users (lower(email));
+```
+
+**Case-insensitive uniqueness via a `lower()` functional index**, deliberately
+avoiding a dependency on the `citext` extension. A duplicate email surfaces as
+`409 EMAIL_ALREADY_REGISTERED`.
+
+### `user_permissions`
+
+```sql
+user_id            UUID NOT NULL REFERENCES users(id)         ON DELETE CASCADE
+permission_code    TEXT NOT NULL REFERENCES permissions(code) ON DELETE RESTRICT
+granted_by_user_id UUID          REFERENCES users(id)         ON DELETE SET NULL
+granted_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+PRIMARY KEY (user_id, permission_code)
+```
+
+**At least one permission per user** is guaranteed by two `DEFERRABLE INITIALLY
+DEFERRED` constraint triggers (`users_require_permission` after `INSERT` on `users`,
+`user_permissions_require_remaining_permission` after `DELETE` on
+`user_permissions`). Both run `enforce_user_has_permission()` at `COMMIT`, so a user
+and their permission rows can be inserted in one transaction in either order.
+Deleting a user cascades to its permission rows; the trigger then finds the user gone
+and passes, so user deletion is not blocked.
+
+### `user_sessions`
+
+```sql
+id                UUID PRIMARY KEY DEFAULT gen_random_uuid()
+user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE
+token_hash        TEXT NOT NULL UNIQUE    -- SHA-256 hex of the opaque token
+user_agent        TEXT
+created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+last_seen_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+expires_at        TIMESTAMPTZ NOT NULL    -- CHECK: expires_at > created_at
+revoked_at        TIMESTAMPTZ
+revocation_reason TEXT                    -- 'signed_out' | 'revoked_by_user'
+```
+
+A `CHECK` keeps `revoked_at` and `revocation_reason` both null or both set. Indexes:
+a partial index on `user_id WHERE revoked_at IS NULL` (a user's active sessions) and
+one on `expires_at`. A session is **active** while `revoked_at IS NULL AND
+expires_at > now()`.
 
 ### `template_deletions`
 
 ```sql
-id                  BIGSERIAL PRIMARY KEY
-workflow_id         TEXT NOT NULL
-template_title      TEXT NOT NULL
-latest_version      INTEGER NOT NULL
-versions_removed    INTEGER NOT NULL DEFAULT 0    -- still 0 => delete never confirmed
-institution_type    TEXT
-review_status       TEXT
-deleted_by_admin_id UUID NOT NULL REFERENCES admin_users(id) ON DELETE RESTRICT
-deleted_by_username TEXT NOT NULL                 -- denormalised on purpose
-reason              TEXT
-request_id          TEXT                          -- correlates to the API request log
-snapshot            JSONB NOT NULL DEFAULT '{}'
-deleted_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+id                 BIGSERIAL PRIMARY KEY
+workflow_id        TEXT NOT NULL
+template_title     TEXT NOT NULL
+latest_version     INTEGER NOT NULL
+versions_removed   INTEGER NOT NULL DEFAULT 0    -- still 0 => delete never confirmed
+institution_type   TEXT
+review_status      TEXT
+deleted_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT
+deleted_by_email   TEXT NOT NULL                 -- denormalised on purpose
+reason             TEXT
+request_id         TEXT                          -- correlates to the API request log
+snapshot           JSONB NOT NULL DEFAULT '{}'
+deleted_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
-Three indexes: `deleted_at DESC`, `(deleted_by_admin_id, deleted_at DESC)`,
+Three indexes: `deleted_at DESC`, `(deleted_by_user_id, deleted_at DESC)`,
 `workflow_id`.
 
 ### Migrations
@@ -1656,8 +1854,31 @@ guards runs with a `migrations_lock`. Each Postgres migration runs in its own tr
 `npm run migrate:up` applies both sets. See
 [`docs/guides/database-migrations.md`](unblock-ai-api/docs/guides/database-migrations.md).
 
-`npm run seed:auth` seeds the fixed set of users from `.env` credentials,
-idempotently (`ON CONFLICT DO NOTHING`; `DO UPDATE` with `--force`).
+### Seeds
+
+[`src/db/seed/`](unblock-ai-api/src/db/seed/) mirrors the migration pack: a
+database-agnostic core (`seed.loader`, `seed.runner`, `seed.generator`,
+`seed.engine`, `seed.cli`), a Postgres adapter (`postgres.seed-context`,
+`postgres.seed-engine`, `postgres.seed-template`), and timestamped seeder files in
+`src/db/seed/postgres/seeders/<timestamp>_<slug>.seeder.ts`.
+
+| Command | Does |
+|---|---|
+| `npm run seed:pg:run` | Run every seeder in file-name order |
+| `npm run seed:pg:run -- --only <name>` | Run one seeder |
+| `npm run seed:pg:list` | List the discovered seeders |
+| `npm run seed:pg:create -- <name>` | Scaffold a new seeder file |
+
+Seeders are **idempotent and untracked**: there is no seeds table; every run
+re-checks and skips what already exists. They go through services such as
+`UserService` rather than raw SQL, so business rules (email normalisation, the
+permission list, password hashing) apply. The only seeder,
+`20261111021734_administrator-user`, creates the **bootstrap administrator** from
+`SEED_ADMINISTRATOR_EMAIL` and `SEED_ADMINISTRATOR_FULL_NAME`, holding all four
+permissions, with the password from `USER_DEFAULT_PASSWORD`. If that email already
+exists it is skipped — a re-run never changes an existing user. The seed variables
+are read only by the seed command, never by the server. See
+[`docs/guides/database-seeding.md`](unblock-ai-api/docs/guides/database-seeding.md).
 
 ## 7.3 Why two databases
 
@@ -1665,8 +1886,8 @@ This is deliberate polyglot persistence, not accident.
 
 | Reason | Detail |
 |---|---|
-| **Relational shape** | Auth data has hard uniqueness constraints on `lower(username)` and `lower(email)` |
-| **Real foreign keys** | `template_deletions.deleted_by_admin_id` → `admin_users(id)` with `ON DELETE RESTRICT`. An audit row can never be silently orphaned |
+| **Relational shape** | User data has hard constraints: a unique `lower(email)`, a permission catalogue, a unique session-token hash, and an "at least one permission per user" invariant checked at `COMMIT` |
+| **Real foreign keys** | `user_permissions` → `users` and `permissions`; `user_sessions` → `users`; `template_deletions.deleted_by_user_id` → `users(id)` with `ON DELETE RESTRICT`. An audit row can never be silently orphaned |
 | **Document shape** | Workflow documents are deeply nested, schema-versioned JSON already governed by a JSON Schema. A relational decomposition would duplicate that schema in DDL |
 
 ### The cost, stated honestly
@@ -1704,19 +1925,25 @@ approvals actually ran against.
 
 | Route | Type | Guard | Purpose |
 |---|---|---|---|
-| `/` | Server Component | — | Redirects by session: none → `/login`, admin → `/admin`, portal → `/portal` |
-| `/login` | Server Component | — | Admin sign-in |
-| `/portal/login` | Server Component | — | Requester sign-in |
-| `/admin` | Server, `force-dynamic` | `proxy.ts` + API | Template list with institution-type filter |
-| `/admin/templates/new` | Client | admin | Split-pane authoring: prose ⇄ flowchart |
-| `/admin/templates/[id]` | Server → Client | admin | Open, edit, publish, rename, delete an existing template |
-| `/admin/deletions` | Server, `force-dynamic` | admin | The deletion audit log |
-| `/portal` | Server, `force-dynamic` | portal | "My Requests" — the task list |
-| `/portal/jobs/new` | Server → Client | portal | Selection chat + live plan preview |
-| `/portal/jobs/[id]` | Server, `force-dynamic` | portal | Task status timeline + plan + document download |
+| `/` | Server Component | — | Redirects by session: signed in → `/account`, otherwise → `/login` |
+| `/login` | Server Component | — | The single sign-in page (email + password); a signed-in visitor is sent to `/account` |
+| `/account` | Server, `force-dynamic` | `proxy.ts` + session | Profile, permission badges, active sessions (revoke one, sign out of other sessions), sign out |
+| `/admin` | Server, `force-dynamic` | `proxy.ts` + API `workflow:manage` | Template list with institution-type filter |
+| `/admin/templates/new` | Client | `proxy.ts` + API `workflow:manage` | Split-pane authoring: prose ⇄ flowchart |
+| `/admin/templates/[id]` | Server → Client | `proxy.ts` + API `workflow:manage` | Open, edit, publish, rename, delete an existing template |
+| `/admin/deletions` | Server, `force-dynamic` | `proxy.ts` + API `workflow:manage` | The deletion audit log |
+| `/portal` | Server, `force-dynamic` | `proxy.ts` + API `task:create` | "My Requests" — the caller's own task list |
+| `/portal/jobs/new` | Server → Client | `proxy.ts` + session + API `task:create` | Selection chat + live plan preview |
+| `/portal/jobs/[id]` | Server, `force-dynamic` | `proxy.ts` + API `task:create` + ownership | Task status timeline + plan + document download |
 | `/approvals/[token]` | Server → Client | **none** | The approver decision page |
-| `/api/auth/login` · `/api/auth/logout` | Route Handler | — | Sets/clears the httpOnly cookie |
+| `/api/auth/login` | Route Handler | — | Calls the API login (forwarding `User-Agent`), sets the httpOnly `ua_session` cookie |
+| `/api/auth/logout` | Route Handler | — | Revokes the session at the API, then clears the cookie |
 | `/api/proxy/[...path]` | Route Handler | — | Forwards browser fetches upstream with the Bearer header |
+
+`proxy.ts` matches `/account`, `/admin` and `/portal` and only checks that the
+`ua_session` cookie is present; the permission named in the Guard column is enforced
+by the API on the data each page loads. `/admin` and `/portal` are reachable by URL
+but not linked from `/account`, pending a redesign.
 
 > **`/approvals/*` lives deliberately outside `/admin` and `/portal`.** The approver
 > holds a token from an email, not a session. The route must not inherit a
@@ -1724,9 +1951,12 @@ approvals actually ran against.
 
 ## 8.2 The single API chokepoint
 
-[`src/lib/api/client.ts`](unblock-ai-web/src/lib/api/client.ts) is **the only place
-in the app that calls `fetch`** against the backend. Feature modules — `workflows`,
-`drafts`, `selection`, `tasks`, `approvals`, `auth`, `health` — all build on it.
+[`src/lib/api/client.ts`](unblock-ai-web/src/lib/api/client.ts) is **the single
+`fetch` chokepoint for every feature module** that talks to the backend:
+`workflows`, `drafts`, `selection`, `tasks`, `approvals`, `user-sessions` and `health`
+all build on it. The one exception is `lib/api/auth.ts`, used only server-side by `getSession()`
+and the login/logout Route Handlers: it calls the API directly with an explicit token
+(or, for login, the browser's `User-Agent`) and shares `client.ts`'s `ApiError`.
 
 ```ts
 export async function apiRequest<T>(path, options): Promise<T>
@@ -1786,7 +2016,7 @@ Two details that matter:
 ## 8.4 Hand-mirrored types
 
 `src/types/` mirrors the backend's DTOs — `workflow.ts`, `task.ts`, `selection.ts`,
-`approval.ts`, `draft.ts`, `auth.ts` — with unions narrowed to match the backend
+`approval.ts`, `draft.ts`, `auth.ts`, `permission.ts` — with unions narrowed to match the backend
 **exactly**.
 
 **Why hand-mirrored rather than generated or loose:** a loose `string` or
@@ -1862,9 +2092,9 @@ Its four decision branches **are the product**:
 | `no_match` | An honest "nothing matches", not a nearest guess |
 | `matched` | The plan preview, ready to start filling in |
 
-`requesterContext` is read from the session cookie **server-side** and handed down as
-a prop — `getSession()` / `getRequesterContext()` are Server-Component-only (they
-call `next/headers`), so this client hook cannot call them itself.
+`requesterContext` is built **server-side** by the page and handed down as a prop —
+the page first checks `getSession()`, which is Server-Component-only (it calls
+`next/headers`), so this client hook cannot do that itself.
 
 A sibling hook, [`useTaskCollection.ts`](unblock-ai-web/src/lib/hooks/useTaskCollection.ts),
 drives the one-requirement-at-a-time collection modal.
@@ -1901,6 +2131,16 @@ drives the one-requirement-at-a-time collection modal.
 `ApproverView` (the decision page), `ApproverList` (who has decided, and when),
 `ReasonDialog` (reject / request-more-info reason capture).
 
+### Account and sign-in — `src/components/account/`, `src/components/auth/`
+
+| Component | Role |
+|---|---|
+| `LoginForm` | Email + password form; posts to `/api/auth/login`, maps API error codes to messages, then goes to `?next=` or `/account` |
+| `SignOutButton` | Posts to `/api/auth/logout`, then returns to `/login` |
+| `AccountProfileCard` | Name, email, initials |
+| `PermissionBadgeList` | The user's permissions as labelled badges |
+| `ActiveSessionList` · `ActiveSessionRow` | Active sessions from `GET /auth/sessions`; sign out one other session or all other sessions, with confirmation |
+
 ### Shared UI — `src/components/ui/`
 
 `Badge`, `Button`, `Card`, `ConfirmDialog`, `DateTime`, `EmptyState`, `SearchInput`,
@@ -1935,14 +2175,19 @@ typography scale and density for an authoring tool versus a requester-facing app
 | Guard | Requires | Failure |
 |---|---|---|
 | *(none)* | — | — |
-| `requireAuth()` | Any valid session, either audience | `401` |
-| `requireRole("admin")` | Valid session with `audience: "admin"` | `401` no token, `403` portal token |
+| `requireAuthentication()` | An active session | `401 AUTHENTICATION_REQUIRED` |
+| `requireAnyPermission(...p)` | An active session whose user holds at least one of `p` | `401 AUTHENTICATION_REQUIRED` with no session, `403 PERMISSION_DENIED` without the permission |
+| task ownership | The caller created the task (`/tasks/:id*` only, after `task:create`) | `404 NOT_FOUND` — the task's existence is not revealed |
 
 Headers: `Content-Type: application/json` on every POST/PUT/PATCH;
-`Authorization: Bearer <token>` on every guarded route.
+`Authorization: Bearer <token>` on every guarded route, where `<token>` is the opaque
+token returned by `POST /auth/login`.
 Request bodies capped at **1 MB**.
 
-## 9.2 All 34 route bindings
+In the tables below, **auth** means `requireAuthentication()`, and a permission name
+means `requireAnyPermission(...)` with that permission.
+
+## 9.2 All 42 route bindings
 
 ### Health
 
@@ -1950,72 +2195,93 @@ Request bodies capped at **1 MB**.
 |---|---|---|---|---|
 | 1 | `GET` | `/health` | Liveness — touches no dependency. Returns `{ status, uptime, version }` | none |
 
-### Auth
+### Auth and sessions
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 2 | `POST` | `/auth/login` | Log in, either audience → `{ token, user, expires_at }` | none |
-| 3 | `GET` | `/auth/me` | The caller's own identity from their token | `requireAuth()` |
-| 4 | `POST` | `/auth/logout` | No-op `204` — sessions are stateless | none |
+| 2 | `POST` | `/auth/login` | `{ email, password }` → `{ token, expires_at, user: { id, email, full_name, permissions } }`. Records the `User-Agent`. Errors: `401 INVALID_CREDENTIALS`, `403 ACCOUNT_LOCKED`, `403 ACCOUNT_DISABLED` | none |
+| 3 | `GET` | `/auth/me` | `{ user: { id, email, full_name, permissions }, session: { id, expires_at } }` | auth |
+| 4 | `POST` | `/auth/logout` | Revoke the current session (`signed_out`) → `204` | auth |
+| 5 | `GET` | `/auth/sessions` | The caller's active sessions, newest first, current one flagged `is_current` | auth |
+| 6 | `DELETE` | `/auth/sessions/others` | Revoke every other active session of the caller → `{ revoked_count }` | auth |
+| 7 | `DELETE` | `/auth/sessions/:sessionId` | Revoke one of the caller's sessions (`revoked_by_user`) → `204`. Revoking the current one acts as logout. `404 USER_SESSION_NOT_FOUND` if it is not the caller's or already inactive | auth |
+
+### Users
+
+| # | Method | Path | Purpose | Auth |
+|---|---|---|---|---|
+| 8 | `POST` | `/users` | `{ email, full_name, permissions }` → `201 { user }`. Password set from `USER_DEFAULT_PASSWORD`. `409 EMAIL_ALREADY_REGISTERED` on a duplicate | `user:manage` |
+| 9 | `GET` | `/users` | List users with their permissions | `user:manage` |
+| 10 | `GET` | `/users/:userId` | Get one user. `404 USER_NOT_FOUND` | `user:manage` |
 
 ### Workflows / templates
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 5 | `POST` | `/workflows/extract` | Extract workflow JSON from prose — **does not save** | admin |
-| 6 | `POST` | `/workflows` | Save a workflow document as a new version | admin |
-| 7 | `GET` | `/workflows` | List latest workflow summaries (filter `institution_type`) | `requireAuth()` |
-| 8 | `GET` | `/workflows/:id` | Get one workflow document (optional `version`) | `requireAuth()` |
-| 9 | `PUT` | `/workflows/:id` | Update — saves a **new version** | admin |
-| 10 | `POST` | `/workflows/:id/validate` | Validate without saving | admin |
-| 11 | `DELETE` | `/workflows/:id` | Permanently delete; logs the deleting admin. **The only DELETE route** | admin |
-| 12 | `GET` | `/workflows/deletions` | The deletion log, newest first | admin |
-| 17 | `GET` | `/workflows/:id/record` | Full stored row for the admin editor, **including inlined `draft_text`** | `requireAuth()` |
-| 18 | `PATCH` | `/workflows/:id/review` | Publish / reject — the `review_status` gate | admin |
+| 11 | `POST` | `/workflows/extract` | Extract workflow JSON from prose — **does not save** | `workflow:manage` |
+| 12 | `POST` | `/workflows` | Save a workflow document as a new version | `workflow:manage` |
+| 13 | `GET` | `/workflows` | List latest workflow summaries (filter `institution_type`) | `workflow:manage` or `task:create` |
+| 14 | `GET` | `/workflows/deletions` | The deletion log, newest first | `workflow:manage` |
+| 15 | `GET` | `/workflows/:id` | Get one workflow document (optional `version`) | `workflow:manage` or `task:create` |
+| 16 | `PUT` | `/workflows/:id` | Update — saves a **new version** | `workflow:manage` |
+| 17 | `POST` | `/workflows/:id/validate` | Validate without saving | `workflow:manage` |
+| 18 | `GET` | `/workflows/:id/record` | Full stored row for the admin editor, **including inlined `draft_text`** | `workflow:manage` or `task:create` |
+| 19 | `PATCH` | `/workflows/:id/review` | Publish / reject — the `review_status` gate | `workflow:manage` |
+| 20 | `PATCH` | `/workflows/:id/title` | Rename a template | `workflow:manage` |
+| 21 | `DELETE` | `/workflows/:id` | Permanently delete with typed confirmation; logs the deleting user | `workflow:manage` |
 
 ### Drafts
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 13 | `POST` | `/drafts` | Save raw prose (idempotent by content hash) | admin |
-| 14 | `GET` | `/drafts` | List drafts | admin |
-| 15 | `GET` | `/drafts/:id` | Get one draft | admin |
-| 16 | `POST` | `/drafts/:id/extract` | Generate **and save** a template from a draft | admin |
+| 22 | `POST` | `/drafts` | Save raw prose (idempotent by content hash); records the caller as `submitted_by` | `workflow:manage` |
+| 23 | `GET` | `/drafts` | List drafts | `workflow:manage` |
+| 24 | `GET` | `/drafts/:id` | Get one draft | `workflow:manage` |
+| 25 | `POST` | `/drafts/:id/extract` | Generate **and save** a template from a draft | `workflow:manage` |
 
 ### Selection
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 19 | `POST` | `/selection/sessions` | Start a conversation (round 1 — **the only retrieval**) | `requireAuth()` |
-| 20 | `POST` | `/selection/sessions/:id/answer` | Answer a clarifying question (round 2+) | `requireAuth()` |
-| 21 | `POST` | `/selection/sessions/:id/choose` | Pick a workflow manually | `requireAuth()` |
-| 22 | `GET` | `/selection/sessions/:id/workflow` | Get the matched workflow document | `requireAuth()` |
+| 26 | `POST` | `/selection/sessions` | Start a conversation (round 1 — **the only retrieval**) | `task:create` |
+| 27 | `POST` | `/selection/sessions/:id/answer` | Answer a clarifying question (round 2+) | `task:create` |
+| 28 | `POST` | `/selection/sessions/:id/choose` | Pick a workflow manually | `task:create` |
+| 29 | `GET` | `/selection/sessions/:id/workflow` | Get the matched workflow document | `task:create` |
 
 ### Tasks
 
+Every `/tasks/:id*` route also runs the **ownership** guard: a task created by
+someone else is `404`.
+
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 23 | `POST` | `/tasks` | Create a task from a matched session | `requireAuth()` |
-| 24 | `GET` | `/tasks` | List tasks (filter `session_id`, `status`) | `requireAuth()` |
-| 25 | `GET` | `/tasks/:id` | Get one task | `requireAuth()` |
-| 26 | `GET` | `/tasks/:id/next` | The next unfilled requirement | `requireAuth()` |
-| 27 | `POST` | `/tasks/:id/values` | Submit a value (coerced + validated) | `requireAuth()` |
-| 28 | `POST` | `/tasks/:id/finalize` | Seed step states; `collecting` → `ready` | `requireAuth()` |
-| 29 | `PATCH` | `/tasks/:id/status` | Cancel | `requireAuth()` |
-| 30 | `POST` | `/tasks/:id/start` | **Dispatch entry steps, mint tokens, send email** | `requireAuth()` |
-| 31 | `GET` | `/tasks/:id/status` | Requester-facing timeline (incl. who rejected and why) | `requireAuth()` |
-| 32 | `GET` | `/tasks/:id/document` | Download the completion PDF (regenerated on demand) | `requireAuth()` |
+| 30 | `POST` | `/tasks` | Create a task from a matched session; `created_by` is the caller | `task:create` |
+| 31 | `GET` | `/tasks` | List **the caller's own** tasks (filter `session_id`, `status`) | `task:create` |
+| 32 | `GET` | `/tasks/:id/status` | Requester-facing timeline (incl. who rejected and why) | `task:create` + owner |
+| 33 | `GET` | `/tasks/:id/document` | Download the completion PDF (regenerated on demand) | `task:create` + owner |
+| 34 | `GET` | `/tasks/:id` | Get one task | `task:create` + owner |
+| 35 | `GET` | `/tasks/:id/next` | The next unfilled requirement | `task:create` + owner |
+| 36 | `POST` | `/tasks/:id/values` | Submit a value (coerced + validated) | `task:create` + owner |
+| 37 | `POST` | `/tasks/:id/finalize` | Seed step states; `collecting` → `ready` | `task:create` + owner |
+| 38 | `POST` | `/tasks/:id/start` | **Dispatch entry steps, mint tokens, send email** | `task:create` + owner |
+| 39 | `PATCH` | `/tasks/:id/status` | Cancel | `task:create` + owner |
+| 40 | `DELETE` | `/tasks/:id` | Delete a finished task, or one still collecting with no step dispatched (`409` otherwise); writes a Mongo `audit_logs` row first | `task:create` + owner |
 
 ### Approvals
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 33 | `GET` | `/approvals/:token` | The approver page's data | **none — the token IS the auth** |
-| 34 | `POST` | `/approvals/:token/decision` | Approve / reject / request more info | **none — the token IS the auth** |
+| 41 | `GET` | `/approvals/:token` | The approver page's data | **none — the token IS the auth** |
+| 42 | `POST` | `/approvals/:token/decision` | Approve / reject / request more info | **none — the token IS the auth** |
 
-> **Route ordering note:** `GET /tasks/:id/status` and `GET /tasks/:id/document` are
-> registered **before** the bare `GET /tasks/:id` pattern, so neither suffix is ever
-> swallowed as an `:id` value.
+`task:approve` exists in the permission catalogue and can be granted, but no route
+checks it yet: approvers act through the token links above.
+
+> **Route ordering notes:** `GET /tasks/:id/status` and `GET /tasks/:id/document` are
+> registered **before** the bare `GET /tasks/:id` pattern, `GET /workflows/deletions`
+> before `GET /workflows/:id`, and `DELETE /auth/sessions/others` before
+> `DELETE /auth/sessions/:sessionId`, so no literal suffix is ever swallowed as a
+> path parameter.
 
 ## 9.3 Error response shape
 
@@ -2031,9 +2297,10 @@ schema and graph validation messages on a `VALIDATION_ERROR`.
 ## 9.4 Known API rough edge
 
 > **Malformed ObjectIds return `500 DATABASE_ERROR`, not `400`/`404`.**
-> On `/drafts/:id*`, `/selection/sessions/:id*`, and `/tasks/:id*`, a syntactically
-> invalid ObjectId fails inside the Mongo driver rather than being rejected at the
-> controller boundary. The frontend works around this at
+> On `/drafts/:id*` and `/selection/sessions/:id*`, a syntactically invalid ObjectId
+> fails inside the Mongo driver rather than being rejected at the controller boundary.
+> (`/tasks/:id*` is not affected: the task-ownership guard parses the id first and
+> answers `400 VALIDATION_ERROR`.) The frontend works around this at
 > `admin/templates/[id]/page.tsx`. The clean fix is an ObjectId-shape guard in
 > `request-validator.util.ts` applied at each of those route params.
 
@@ -2061,21 +2328,24 @@ validate what they own, and `index.config.ts` composes them into a single frozen
 |---|---|---|---|
 | `MONGODB_URI` | **yes** | — | MongoDB connection string |
 | `MONGODB_DB` | no | `unblock_ai` | Database name |
-| `POSTGRES_URL` | conditional | — | Required unless `AUTH_STORE_BACKEND=memory` |
+| `POSTGRES_URL` | conditional | — | Required when `POSTGRES_REPOSITORY_BACKEND=postgres` |
 | `POSTGRES_POOL_MAX` | no | `10` | Max pooled connections |
 | `POSTGRES_CONNECTION_TIMEOUT_MS` | no | `5000` | Acquisition timeout |
+| `POSTGRES_REPOSITORY_BACKEND` | no | `postgres` | `postgres` \| `memory` — the implementation behind the user, user-session and template-deletion repositories. `memory` starts with no users |
 
-## 10.3 Auth
+## 10.3 Auth and users
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `SESSION_TOKEN_SECRET` | **in production** | random per-process in dev | HMAC key for session tokens. **Must differ from `APPROVAL_TOKEN_SECRET`** — startup throws if equal |
-| `SESSION_TTL_HOURS` | no | `12` | Session lifetime |
-| `AUTH_MAX_FAILED_ATTEMPTS` | no | `0` | Consecutive failures before lockout. `0` = tracked but not enforced |
-| `AUTH_STORE_BACKEND` | no | `postgres` | `postgres` \| `memory` |
-| `SEED_ADMIN_USERNAME` / `_PASSWORD` | seed only | `admin` / — | Consumed only by `npm run seed:auth` |
-| `SEED_USER1_USERNAME` / `_PASSWORD` | seed only | `chathura` / — | Portal user 1 |
-| `SEED_USER2_USERNAME` / `_PASSWORD` | seed only | `dilani` / — | Portal user 2 |
+| `SESSION_TTL_HOURS` | no | `12` | Absolute session lifetime from login, in hours |
+| `AUTH_MAX_FAILED_ATTEMPTS` | no | `0` | Failed attempts before an account locks. `0` = counted but not enforced |
+| `AUTH_LOCKOUT_DURATION_MINUTES` | no | `15` | How long a lock lasts after the last failure; also the window in which failures accumulate |
+| `USER_DEFAULT_PASSWORD` | **yes** | — (`12345` in `.example.env`) | Initial password for every created user, including the seeded administrator. No code fallback; never logged |
+| `SEED_ADMINISTRATOR_EMAIL` | seed only | — | Bootstrap administrator's email. Read only by `npm run seed:pg:run` |
+| `SEED_ADMINISTRATOR_FULL_NAME` | seed only | — | Bootstrap administrator's full name. Read only by `npm run seed:pg:run` |
+
+Sessions are opaque random tokens stored as SHA-256 hashes, so there is no session
+signing secret to set.
 
 ## 10.4 Azure OpenAI — chat
 
@@ -2135,8 +2405,7 @@ validate what they own, and `index.config.ts` composes them into a single frozen
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | no | `http://localhost:3000/api` | Upstream API base |
-| `SESSION_TOKEN_SECRET` | yes | — | **Must match the API's** — `proxy.ts` verifies the same HMAC |
+| `NEXT_PUBLIC_API_BASE_URL` | no | `http://localhost:3000/api` | Upstream API base — the web app's only variable. Sessions are validated by the API, so the web app holds no secret |
 
 ## 10.10 Parsing discipline
 
@@ -2150,9 +2419,13 @@ contact:
 Each throws `ConfigurationError` when a present value is invalid, so
 misconfiguration is a startup failure rather than a runtime surprise.
 
-Two config modules add checks of their own beyond those helpers:
+Config modules with checks worth knowing:
 
-- `auth.config.ts` — throws if `SESSION_TOKEN_SECRET === APPROVAL_TOKEN_SECRET`.
+- `user.config.ts` — `USER_DEFAULT_PASSWORD` is required; startup fails without it.
+- `postgres.config.ts` — `POSTGRES_URL` is required only when
+  `POSTGRES_REPOSITORY_BACKEND=postgres`.
+- `seed.config.ts` — builds the seed variables lazily, only inside the seed command,
+  so the server never requires them.
 - `mail.config.ts` — throws if `transport === "smtp"` and `tokenSecret === ""`. A dev
   default that leaves approval tokens unsigned is fine; a production SMTP deployment
   silently doing the same is not.
@@ -2269,7 +2542,10 @@ workflow.
 The prompt receives:
 - Each candidate's `retrieval_summary` (including **`not_for`**)
 - The conversation transcript so far
-- The `requester_context` (`faculty`, `department`, `actor_type`)
+
+The session's `requester_context` is stored on the session record but not sent to
+the model, so attributes such as faculty are asked as clarifying questions
+([§5.6](#56-retrieval--the-selector-agent)).
 
 And must return one of `matched` / `ambiguous` / `no_match`, with a question and
 options when ambiguous.
@@ -2320,7 +2596,8 @@ them for templates stored before the block existed.
 
 ## 12.1 Threat posture
 
-This is an internal institutional tool with a small, seeded user base and one
+This is an internal institutional tool with a small user base — a seeded bootstrap
+administrator, plus users created through the `user:manage` API — and one
 externally-reachable unauthenticated surface (the approval link). The security model
 is scaled to that, and the gaps are documented rather than implied.
 
@@ -2330,20 +2607,25 @@ is scaled to that, and the gaps are documented rather than implied.
 +------------------------------------------------------------------+
 |  SESSION AUTH                    |  APPROVAL TOKEN AUTH           |
 |                                  |                                |
-|  Who:  admin, portal users       |  Who:  approvers, no account   |
-|  Form: HMAC bearer token in an   |  Form: HMAC token in the URL   |
-|        httpOnly cookie           |        path                    |
-|  Key:  SESSION_TOKEN_SECRET      |  Key:  APPROVAL_TOKEN_SECRET   |
-|  TTL:  SESSION_TTL_HOURS (12)    |  TTL:  APPROVAL_TOKEN_TTL_DAYS |
-|  Scope: whole API except         |  Scope: exactly one step of    |
-|         /health and /approvals/* |         exactly one task       |
-|  Revoke: impossible (stateless)  |  Revoke: a DB write            |
+|  Who:  every user with an        |  Who:  approvers, no account   |
+|        account (email login)     |                                |
+|  Form: opaque random bearer      |  Form: HMAC token in the URL   |
+|        token in an httpOnly      |        path                    |
+|        cookie; only its SHA-256  |                                |
+|        hash is stored            |                                |
+|  Key:  none - looked up by hash  |  Key:  APPROVAL_TOKEN_SECRET   |
+|  TTL:  SESSION_TTL_HOURS (12),   |  TTL:  APPROVAL_TOKEN_TTL_DAYS |
+|        absolute                  |                                |
+|  Scope: guarded routes, then     |  Scope: exactly one step of    |
+|         per-route permissions    |         exactly one task       |
+|  Revoke: immediate - logout or   |  Revoke: a DB write            |
+|          revoke from /account    |                                |
 +------------------------------------------------------------------+
 ```
 
-**The two secrets must differ** — enforced at startup by `auth.config.ts`. If they
-were the same, a session token and an approval token would be interchangeable
-artifacts signed by the same key.
+The two mechanisms share nothing. A session token is random bytes checked against
+`user_sessions`; an approval token is a signed payload checked against the task. One
+can never be accepted in place of the other.
 
 ## 12.3 Approval token security model
 
@@ -2388,29 +2670,36 @@ untouched by design ([§5.7](#57-task-planning--requirement-collection)).
 
 | Control | Where |
 |---|---|
-| Passwords hashed with scrypt (memory-hard KDF) | `password.util.ts` |
+| Passwords hashed with scrypt (memory-hard KDF); unknown emails burn equivalent hash time | `password.util.ts`, `AuthenticationService` |
+| Session tokens stored only as SHA-256 hashes — a database read does not yield usable tokens | `user_sessions.token_hash` |
+| Sessions revocable immediately: logout, revoke one, revoke all others | `/auth/logout`, `/auth/sessions/*` |
+| A user can only see and revoke their **own** sessions | `user_id` filter in the session repository |
+| Optional account lockout, enforced even against the correct password | `AUTH_MAX_FAILED_ATTEMPTS`, `AUTH_LOCKOUT_DURATION_MINUTES` |
+| Least privilege per route — four permissions, checked by the API | `requireAnyPermission(...)` |
+| Tasks are owner-only, and another user's task is a `404`, not a `403` | Task-ownership guard |
 | httpOnly, `sameSite: lax`, `secure` in production cookie | `/api/auth/login` Route Handler |
 | Token never reaches JavaScript | Cookie set server-side; browser calls go through the proxy |
-| Route guard verifies **signature and expiry**, not mere cookie presence | `proxy.ts` |
 | Real error messages and stacks never sent to clients | `error-handler.middleware.ts` |
 | Request body cap (1 MB) | `json-body.middleware.ts` |
 | Single allowed CORS origin | `cors.middleware.ts` |
-| Case-insensitive unique usernames/emails | Postgres functional indexes |
+| Case-insensitive unique emails | Postgres functional index on `lower(email)` |
+| Every user holds at least one permission | Deferred constraint trigger + `UserService` |
 | Audit rows cannot be orphaned | `ON DELETE RESTRICT` |
-| Deletion requires typed confirmation, admin role, and writes a log first | `DELETE /workflows/:id` |
-| Config secrets validated at startup, never defaulted in production | `auth.config.ts`, `mail.config.ts` |
+| Deletion requires typed confirmation and `workflow:manage`, and writes a log first | `DELETE /workflows/:id` |
+| Required config validated at startup | `user.config.ts` (`USER_DEFAULT_PASSWORD`), `mail.config.ts` |
 
 ## 12.6 What is not protected — the honest list
 
 | Gap | Impact | Mitigation path |
 |---|---|---|
-| **No session revocation** | A stolen token is valid until it expires (≤12h) | Add a `sessions` table |
-| **No IP rate limiting on login** | Brute force is limited only by per-account counting, which is **off by default** | Set `AUTH_MAX_FAILED_ATTEMPTS`; add IP throttling |
-| **No password reset / change / self-registration** | Three seeded users, rotated via `npm run seed:auth --force` | Real user management |
+| **Every user's password is `USER_DEFAULT_PASSWORD`** | All accounts — the seeded administrator included — share one initial password, and with no change flow they keep it | Set a strong, non-default value per environment; add password change and reset |
+| **No password change, reset, or self-registration** | Users are created only through `POST /api/users` | Self-service password flows; SSO |
+| **No user update, disable, or delete endpoint** | Permissions cannot be changed after creation; `status = 'disabled'` is honoured at login and per request, but nothing sets it | Extend the user management API |
+| **No IP rate limiting on login** | Brute force is limited only by per-account lockout, which is **off by default** | Set `AUTH_MAX_FAILED_ATTEMPTS`; add IP throttling |
+| **`proxy.ts` checks cookie presence only** | A junk cookie renders a page shell, but every API call it makes returns `401` | By design — the API is the boundary |
 | **Unverified approver identity** | See §12.4 | Directory integration |
 | **No cross-database transaction** | A partial template deletion is possible (visible, not silent) | Accepted; write ordering mitigates |
 | **`SMTP_*` not validated at startup** | A misconfigured transport fails at send time | Caught and logged, not fatal — by design |
-| **`req.user` largely unused past auth routes** | `submitted_by` is always `null`; a requester's job list is not scoped to them | Small, contained follow-on now that identity is real |
 | **Malformed ObjectId → 500** | Noise, and a slightly leaky error class | Add an ObjectId guard to `request-validator.util.ts` |
 
 ---
@@ -2424,30 +2713,38 @@ npm test            # tests/unit/** + tests/integration/**   fast, no network
 npm run test:live   # tests/live/**                          slow, real Azure calls
 ```
 
-**43 backend test files.** Runner: Node's built-in `node:test` via `tsx` — no Jest,
+**63 backend test files.** Runner: Node's built-in `node:test` via `tsx` — no Jest,
 no Vitest on the backend.
 
-### `tests/unit/utils/` — 17 files
+### `tests/unit/utils/` — 23 files
 
 Schema validation, graph validation (with **mutation tests** per failure mode), alias
-boost, render-summary, request-validator, serializer, vector math, token utils,
-session tokens, password hashing, content hashing, requirement builder, value
-validator, computed evaluator, completion document, answer format, reference
-allocation.
+boost, render-summary, request-validator, serializer, vector math, approval-token
+utils, user-session tokens, bearer-token parsing, email normalisation, permission
+checks, Postgres error mapping, password hashing, content hashing, requirement
+builder, value validator, computed evaluator, completion document, answer format,
+reference allocation, migration and seed file names.
 
-### `tests/unit/services/` — 13 files
+### `tests/unit/services/` — 18 files
 
 Draft, workflow, retrieval, selection, selector, vector-store, task, execution,
-approval, notification, mailer, document, auth — each against fakes supplied through
+approval, notification, mailer, document, embedding, the LLM and embedding adapters,
+authentication, user session, and user — each against fakes supplied through
 constructor injection.
 
-### `tests/integration/` — 7 files
+### `tests/unit/repositories/`, `middlewares/`, `db/`, `errors/` — 7 files
 
-Full HTTP-level coverage of the draft, workflow, selection, task, approval, and auth
-routes plus the error handler, using an **in-process Express server**
-(`test-server.helper.ts`) and `mongodb-memory-server`.
+The three in-memory repositories (user, user session, template deletion), the
+`requireAnyPermission` guard, the migration and seed runners, and `BaseError`.
 
-`AUTH_STORE_BACKEND=memory` means these run with **no live PostgreSQL**.
+### `tests/integration/` — 10 files
+
+Full HTTP-level coverage of the auth, user-session, user, draft, workflow,
+selection, task, task-ownership and approval routes plus the error handler, using an
+**in-process Express server** (`test-server.helper.ts`) and `mongodb-memory-server`.
+
+The helpers build the app on the **in-memory** user and user-session repositories, so
+these run with **no live PostgreSQL**.
 
 ### `tests/live/` — 5 files
 
@@ -2459,16 +2756,17 @@ Network-dependent, CI-gated, run manually. See [§11.6](#116-evaluation-harness)
 |---|---|
 | `fake-model.helper.ts` | Model doubles |
 | `fake-vector-store.helper.ts` | An `IVectorStore` double |
+| `fake-migration-store.helper.ts` | An in-memory migration store for runner tests |
 | `in-memory-mongo.helper.ts` | `mongodb-memory-server` lifecycle |
 | `fixture.helper.ts` | Loads the gold sample files |
-| `test-server.helper.ts` | Mounts the real Express app in-process |
+| `test-server.helper.ts` | Mounts the real Express app in-process, with fixed test users, each with chosen permissions and a ready session token (`authHeaderFor(...)`) |
+| `auth-test-server.helper.ts` | Starts the app for login and session tests and signs users in through `POST /auth/login` |
 | `live.helper.ts` | Guards live tests behind real credentials |
 
 ## 13.3 Frontend tests
 
-Vitest, 3 files, targeting the pure logic that is worth pinning:
+Vitest, 2 files, targeting the pure logic that is worth pinning:
 
-- `lib/auth/token.test.ts` — session-token verification (the same HMAC the API mints)
 - `lib/utils/submit-error.test.ts` — error-message mapping
 - `lib/workflow/applyTaskProgress.test.ts` — plan-progress transform
 
@@ -2515,7 +2813,7 @@ because Next surfaces RSC/client-boundary violations at build time that
 |---|---|---|
 | Node.js | ≥ 18 | ESM, native test runner |
 | MongoDB | 7 | Local, Docker, or Atlas |
-| PostgreSQL | 17 | Skippable locally with `AUTH_STORE_BACKEND=memory` |
+| PostgreSQL | 17 | Needed to sign in. `npm test` runs without it (in-memory repositories) |
 | Azure OpenAI | — | A chat deployment (`gpt-4o`) |
 | Azure AI Foundry | — | An embeddings deployment (`text-embedding-3-small`), **separate resource** |
 | SMTP | — | Optional; `console` transport is the default |
@@ -2526,10 +2824,11 @@ because Next surfaces RSC/client-boundary violations at build time that
 # -- Backend ----------------------------------------------------
 cd unblock-ai-api
 npm install
-cp .example.env .env          # then fill in Azure + Mongo + Postgres credentials
+cp .example.env .env          # then fill in Azure + Mongo + Postgres credentials,
+                              # SEED_ADMINISTRATOR_EMAIL / _FULL_NAME and USER_DEFAULT_PASSWORD
 
 npm run migrate:up            # apply Postgres + Mongo migrations (tables, collections, indexes)
-npm run seed:auth             # seed 1 admin + 2 portal users from .env credentials
+npm run seed:pg:run           # create the bootstrap administrator (all four permissions)
 
 npm run smoke-test:azure      # verify the chat deployment answers
 npm run smoke-test:embeddings # verify embeddings and the 1536-dim assertion
@@ -2540,18 +2839,17 @@ npm run dev                   # tsx watch on :3000
 cd ../unblock-ai-web
 npm install
 # .env.local:
-#   NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/api
-#   SESSION_TOKEN_SECRET=<the SAME value as the API's>
+#   NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/api   (the only variable)
 npm run dev                   # Next dev on :3001
 ```
 
-Open http://localhost:3001 and sign in.
+Open http://localhost:3001 and sign in with `SEED_ADMINISTRATOR_EMAIL` and the
+`USER_DEFAULT_PASSWORD` value. You land on `/account`; the template dashboard is at
+`/admin` and the requester portal at `/portal`. Create further users with
+`POST /api/users` while signed in as the administrator.
 
 > **Port 3001 is fixed in `package.json`** because the API binds 3000 and its
 > default `CORS_ORIGIN` is `http://localhost:3001`.
->
-> **`SESSION_TOKEN_SECRET` must be identical in both projects** — `proxy.ts` verifies
-> the same HMAC the API mints.
 
 ## 14.3 Every npm script
 
@@ -2568,7 +2866,9 @@ Open http://localhost:3001 and sign in.
 | `npm run migrate:up` / `migrate:status` | Apply / inspect migrations on both databases |
 | `npm run migrate:pg:<up\|down\|reset\|status\|create\|unlock>` | Postgres migrations |
 | `npm run migrate:mongo:<up\|down\|reset\|status\|create\|unlock>` | MongoDB migrations |
-| `npm run seed:auth` | Seed users (`--force` to overwrite) |
+| `npm run seed:pg:run [-- --only <name>]` | Run the Postgres seeders (idempotent; skips what exists) |
+| `npm run seed:pg:list` | List the Postgres seeders |
+| `npm run seed:pg:create -- <name>` | Scaffold a new seeder file |
 | `npm run backfill:summaries` | Regenerate `retrieval_summary` for older templates |
 | `npm run evaluate:selection` | Score selection accuracy against labelled queries |
 | `npm run smoke-test:azure` | Chat connectivity |
@@ -2596,17 +2896,16 @@ Open http://localhost:3001 and sign in.
 | | Item |
 |---|---|
 | ☐ | `NODE_ENV=production` |
-| ☐ | `SESSION_TOKEN_SECRET` set to a strong value, **different** from `APPROVAL_TOKEN_SECRET` |
+| ☐ | `USER_DEFAULT_PASSWORD` set to a strong value — **not** the `.example.env` `12345` — **before** seeding or creating users. Each user's password is hashed from it at creation, the administrator's included |
 | ☐ | `APPROVAL_TOKEN_SECRET` set (**mandatory** once `MAIL_TRANSPORT=smtp`) |
-| ☐ | The same `SESSION_TOKEN_SECRET` in the web app |
 | ☐ | `MAIL_TRANSPORT=smtp` with working `SMTP_*` — verify with `npm run smoke-test:mail` |
 | ☐ | `APP_PUBLIC_URL` set to the real public origin (approval links are built from it) |
 | ☐ | `CORS_ORIGIN` set to the real web origin |
-| ☐ | `AUTH_STORE_BACKEND=postgres`, `POSTGRES_URL` set |
+| ☐ | `POSTGRES_REPOSITORY_BACKEND=postgres` (the default), `POSTGRES_URL` set |
 | ☐ | `npm run migrate:up` applied (check with `npm run migrate:status`) |
-| ☐ | `npm run seed:auth` run with **real** credentials, not the `.example.env` defaults |
+| ☐ | `SEED_ADMINISTRATOR_EMAIL` / `SEED_ADMINISTRATOR_FULL_NAME` set to a real administrator, then `npm run seed:pg:run` |
 | ☐ | Consider `VECTOR_BACKEND=atlas` with `ATLAS_VECTOR_INDEX` if the template library is large |
-| ☐ | `AUTH_MAX_FAILED_ATTEMPTS` set to a non-zero value |
+| ☐ | `AUTH_MAX_FAILED_ATTEMPTS` set to a non-zero value (and `AUTH_LOCKOUT_DURATION_MINUTES` reviewed) |
 | ☐ | HTTPS terminated in front of both services (the cookie is `secure` in production) |
 
 ## 14.5 Operational notes
@@ -2633,8 +2932,9 @@ Open http://localhost:3001 and sign in.
 
 Roles in use: `.route` `.controller` `.service` `.model` `.middleware` `.util`
 `.config` `.type` `.error` `.prompt` `.schema` `.constant` `.vocabulary` `.data`
-`.client` `.interface` `.script` `.test` `.document` `.mailer` `.auth-store`
-`.vector-store` `.definition` `.template`
+`.client` `.interface` `.script` `.test` `.document` `.mailer` `.vector-store`
+`.user-repository` `.user-session-repository` `.template-deletion-repository`
+`.migration` `.seeder` `.definition` `.template`
 
 Examples: `selection-session.model.ts`, `in-memory.vector-store.ts`,
 `graph-validator.util.ts`, `smoke-test-document.script.ts`.
@@ -2662,21 +2962,19 @@ The rule in practice:
 Representative examples from the source:
 
 ```ts
-// RESTRICT, not CASCADE: an audit row must never be orphaned or erased by
-// removing the admin who created it.
+// The candidate set from round one is deliberately frozen; re-running
+// retrieval here would let the candidate list drift out from under an
+// in-progress clarifying conversation.
 
-// Denormalised on purpose: the log stays readable if the admin is renamed.
+// Must precede "/workflows/:id" - otherwise "deletions" is captured as :id.
 
 cache: "no-store",   // this data is never safe to serve stale
 
-// A valid admin session previewing the requester surface is allowed
-// through deliberately - see Phase 5 §5.3 of the phase plan.
+// node-postgres emits 'error' on idle clients. With no listener, Node treats it
+// as an unhandled 'error' event and terminates the process.
 
 // 204/205/304 are null-body statuses - constructing a Response with even an
 // empty-string body for one of these throws.
-
-// Dev/test: a random per-process secret is fine - a restart invalidating
-// sessions beats ever shipping a default secret into a config file.
 ```
 
 These comments are **load-bearing**. Several encode decisions that a well-meaning
@@ -2713,7 +3011,7 @@ thing.
 
 | Pattern | Where it appears |
 |---|---|
-| **Interface + factory + config-selected implementation** | `IVectorStore`, `IMailer`, `IAuthStore`, `IDocumentRenderer` |
+| **Interface + factory + config-selected implementation** | `IVectorStore`, `IMailer`, `IDocumentRenderer`, `IUserRepository` / `IUserSessionRepository` / `ITemplateDeletionRepository` |
 | **Pure core, I/O shell** | `ExecutionService` / `ApprovalService`; `buildCompletionDocument` / `CompletionDocumentService`; `PlannerService` / `TaskService` |
 | **Never-throw at failure-isolation boundaries** | `NotificationService.dispatch()`, `CompletionDocumentService.generate()`, `computed-evaluator`, approval-token verification |
 | **Derive, don't store** | Flowchart layout, completion-document bytes, requirement lists |
@@ -2732,19 +3030,19 @@ thing.
 | **No directory / identity service** | Approver and requester emails are self-asserted and unverified | **The most important gap.** See [§12.4](#124-the-central-trust-gap-self-asserted-identity) |
 | **No runtime `condition` evaluation** | `WorkflowStep.condition` is extracted, validated, and rendered — but the execution engine does not evaluate it. A conditional step is dispatched like any other | The evaluator for `computed` already exists and is the natural foundation |
 | **No SLA, reminders, or escalation** | `WorkflowStep.sla` is carried in the schema and never read | Needs a scheduler |
-| **No self-registration, password reset, or password change** | Three seeded users, rotated via `npm run seed:auth --force` | |
-| **No session revocation** | Stateless tokens; no `sessions` table to delete from | |
-| **No IP rate limiting** | Only per-account counting, off by default | |
+| **No self-registration, password reset, or password change** | Every user keeps the `USER_DEFAULT_PASSWORD` they were created with | The most important auth gap — see [§12.6](#126-what-is-not-protected--the-honest-list) |
+| **No user update, disable, or delete** | The user API is create, list and get-by-id; permissions are fixed at creation | `status = 'disabled'` is already honoured at login and per request |
+| **`task:approve` gates nothing** | Approvers act through token links, not accounts | The permission is defined and grantable, ready for an approver sign-in flow |
+| **No user-management or redesigned dashboards in the web app** | `/account` is the only post-login page; `/admin` and `/portal` are reachable by URL only | Users are created through `POST /api/users` |
+| **No IP rate limiting** | Only per-account lockout, off by default | |
 | **No LLM assistance in the approval flow** | Question phrasing, context summarising, and reject-vs-more-info suggestions are plain data for the caller to render | Deliberate — see [§11.1](#111-where-the-llm-is-used--and-where-it-deliberately-is-not) |
-| **`req.user` largely unused past auth routes** | `submitted_by` is always `null`; a requester's job list is not scoped to them | Small, contained follow-on |
-| **No task DELETE route** | Task removal is handled through status transitions and the Mongo audit log | `DELETE /workflows/:id` is the only DELETE route |
 | **No metrics, tracing, or readiness probe** | `/health` is liveness only and stays green while Mongo is down | |
 
 ## 16.2 Known rough edges
 
 | Issue | Detail | Fix |
 |---|---|---|
-| **Malformed ObjectId → 500** | On `/drafts/:id*`, `/selection/sessions/:id*`, `/tasks/:id*`, an invalid ObjectId fails inside the driver as `DATABASE_ERROR` instead of `400`/`404`. The frontend works around it in `admin/templates/[id]/page.tsx` | An ObjectId-shape guard in `request-validator.util.ts` |
+| **Malformed ObjectId → 500** | On `/drafts/:id*` and `/selection/sessions/:id*`, an invalid ObjectId fails inside the driver as `DATABASE_ERROR` instead of `400`/`404`. The frontend works around it in `admin/templates/[id]/page.tsx` | An ObjectId-shape guard in `request-validator.util.ts` |
 | **Pre-`requester_email` workflows** | Templates saved before that input existed produce tasks that send no requester notifications — pull-only via `GET /tasks/:id/status` | Re-extract, or backfill the input |
 | **SMTP config unvalidated at startup** | A bad host surfaces only at send time | Intentional: caught and logged rather than crashing the process |
 | **`revalidate` is inert on API-backed pages** | The shared client sends `cache: "no-store"`, opting routes out of the Data Cache | Documented; `router.refresh()` is used instead |
@@ -2781,9 +3079,12 @@ against collected values, and `checkNamespacePaths` guarantees every path is val
 *Why it matters:* today, the fourteen-day Dean rule is *extracted, validated, and
 drawn on the flowchart* — but not enforced at runtime.
 
-**3. Real user management**
-Self-registration or SSO, password reset, a `sessions` table for revocation, IP rate
-limiting.
+**3. Complete user management**
+Password change and reset (every user currently keeps `USER_DEFAULT_PASSWORD`), user
+update / disable / delete endpoints, a user-management screen in the web app, SSO or
+self-registration, and IP rate limiting on login.
+*Foundation already present:* the `users` / `user_permissions` / `user_sessions`
+schema, `UserService`, the `user:manage` permission, and per-user session revocation.
 
 ### Tier 2 — Operational maturity
 
@@ -2800,9 +3101,10 @@ Close the 500-instead-of-400 rough edge.
 
 ### Tier 3 — Product depth
 
-**7. Scope requesters to their own data**
-`req.user` is real on every route now; `submitted_by` should be populated and the job
-list scoped to the caller.
+**7. Approver accounts and permission-aware dashboards**
+Put `task:approve` to work — approvers sign in to act on their steps instead of
+holding a bare token link — and redesign `/admin` and `/portal` so `/account` links to
+whichever surfaces the user's permissions allow.
 
 **8. Analytics on the corpus**
 Which workflows are used most, which steps bottleneck, which get rejected, average
@@ -2824,7 +3126,9 @@ scores.
 | A new vector backend (pgvector, Pinecone) | Implement `IVectorStore`, add a case to the factory | Callers depend on the interface only |
 | A new mail transport (SES, SendGrid) | Implement `IMailer`, add a case to the factory | `NotificationService` is transport-agnostic |
 | A new document format (DOCX, HTML) | Implement `IDocumentRenderer`, add a case to the factory | The builder is already format-independent |
-| A new auth backend | Implement `IAuthStore` | Already has two implementations |
+| A new user / session / deletion-log store | Implement `IUserRepository`, `IUserSessionRepository` or `ITemplateDeletionRepository`, add a case to its `index` factory | Services depend on the interfaces only; each already has two implementations |
+| A new permission | Add it to the `Permission` enum, insert the catalogue row in a new migration, guard routes with `requireAnyPermission(...)` | Permissions are data plus one guard, not a role hierarchy |
+| New seed data | `npm run seed:pg:create -- <name>`, write an idempotent seeder that goes through services | The seed runner discovers seeder files by name |
 | A new error type | Add a file to `src/errors/`, extend `BaseError`, export from the barrel | The handler reads `statusCode`/`toJSON()` off the instance |
 | A new graph invariant | Add a check function to `graph-validator.util.ts` + a mutation test | Checks are independent functions over the same document |
 | A new step type | Extend the schema enum, the prompt, and the flowchart node map | Schema-first change; expect the three-role fixture constraint to bite |
@@ -2850,6 +3154,7 @@ scores.
 | **Graph validation** | Eight semantic checks JSON Schema cannot express (cycles, reachability, dangling references, namespace paths, …) |
 | **`is_latest`** | A boolean marking the current version per `workflow_id`. Exactly one per id |
 | **Namespace path** | A dotted reference into the shared run data: `inputs.x`, `computed.y`, `steps.z.outcome`, `requester.a`, `system.today` |
+| **Permission** | A `resource:action` code a user holds — `workflow:manage`, `task:create`, `task:approve`, `user:manage`. Routes require one of a listed set; every user holds at least one |
 | **Publish gate** | `metadata.review_status` moving `pending_admin_review` → `confirmed`. Retrieval only ever sees `confirmed` |
 | **Reopen** | The "request more info" loop — an outcome that resets a step to `ready`, clears its token, and appends a `followup:*` requirement. Capped at 3 |
 | **Requirement** | One unit of the flat collection list: a template input, an unresolved actor, or a follow-up question |
@@ -2861,6 +3166,7 @@ scores.
 | **Task** | One instance of a workflow: the process a requester actually started |
 | **Template** | A stored, versioned workflow definition with its embedding |
 | **Terminal rejection** | `outcomes.rejected.action === "terminate_workflow"` — checked before dispatch, so no email goes out for a dead branch |
+| **User session** | A server-side `user_sessions` row created at login, identified by the SHA-256 hash of an opaque bearer token. Absolute expiry; revocable immediately |
 | **Version pinning** | A task recording the exact `{ workflow_id, version }` it was created from, so template edits cannot reshape a running chain |
 
 ---
@@ -2875,36 +3181,43 @@ scores.
 app.ts                     builds the Express app; no listen()
 server.ts                  entry point: DI wiring, listen, graceful shutdown
 
-routes/                    index · health · auth · workflow · draft · selection
-                           · task · approval
-controllers/               health · auth · workflow · draft · selection · task
-                           · approval
+routes/                    index · health · auth · user-session · user · workflow
+                           · draft · selection · task · approval
+controllers/               health · auth · user-session · user · workflow · draft
+                           · selection · task · approval
 services/
   draft · extraction · validation · workflow · embedding
   retrieval · selector · selection
   planner · task · execution · approval · notification
-  completion-document · auth · audit · deletion-log
+  completion-document · audit · template-deletion-log
+  authentication · user-session · user
   azure-openai.client · azure-embedding.client
   vector-store/    interface · in-memory · atlas · index
   mailer/          interface · console · smtp · index
-  auth-store/      interface · in-memory · postgres · index
   document/        interface · text · pdf · index
 models/                    draft · template · selection-session · task
                            · audit-log · index
-config/                    env · server · db · postgres · auth · azure-openai
+repositories/              each: interface · in-memory · postgres · index
+  user-repository/  ·  user-session-repository/  ·  template-deletion-repository/
+config/                    env · server · db · postgres · auth · user · seed · azure-openai
                            · azure-embedding · retrieval · mail · document · index
 middlewares/               request-id · request-logger · cors · json-body
-                           · authenticate · require-auth · async-handler
+                           · authenticate · require-authentication
+                           · require-permission · require-task-ownership
+                           · async-handler
                            · not-found · error-handler · index
 utils/
   shared/                  logger · hash · object-id · assert · env-parse · password
   workflow/                schema-validator · graph-validator · namespace-path
                            · computed-evaluator
   retrieval/               vector-math · alias-boost · render-summary
-  http/                    request-validator · serializer · actor
+  http/                    request-validator · serializer · actor · auth-context
+                           · auth-serializer · bearer-token · user-serializer
   task/                    requirement-builder · value-validator · reference
   approval/                token · outcome-resolver · answer-format
-  auth/                    session-token
+  auth/                    user-session-token · permission · authenticated-user
+  user/                    email
+  database/                postgres-error
   document/                completion-document · document-format · pdf-layout
 data/
   prompts/                 extraction · extraction-few-shot · selector
@@ -2912,28 +3225,32 @@ data/
   schemas/                 workflow.schema.json · workflow-schema.data
                            · decision.schema · retrieval-summary.schema
   vocabulary/              role.vocabulary
-  constants/               collection · status · model
+  constants/               collection · status · permission · user · user-session
+                           · auth · user-error · repository · postgres · seed · time
   templates/               approval-email.template
   samples/                 input/ · expected/ · selection/ · demo-drafts/
 lib/types/                 workflow/ · draft/ · template/ · selection/ · retrieval/
-                           · task/ · approval/ · audit/ · auth/ · document/
+                           · task/ · approval/ · audit/ · auth/ · user/
+                           · user-session/ · template-deletion/ · document/
                            · config/ · http/ · index
 errors/                    base · validation · unauthorized · forbidden · not-found
                            · conflict · extraction · selection · embedding
-                           · database · configuration · index
+                           · database · configuration · migration · seed · index
 db/                        mongo.client · postgres.client
                            · migration/{core, postgres, mongo}
+                           · seed/{core, postgres, postgres/seeders}
 ```
 
 ### Frontend — `unblock-ai-web/src/`
 
 ```
-proxy.ts                   route guard (Next 16's renamed middleware)
+proxy.ts                   route guard: session cookie present (Next 16's renamed middleware)
 app/
   layout.tsx · globals.css · page.tsx (session-based redirect)
   login/page.tsx
+  account/ layout · page
   admin/  layout · page · deletions/page · templates/new/page · templates/[id]/page
-  portal/ layout · page · login/page · jobs/new/page · jobs/[id]/page
+  portal/ layout · page · jobs/new/page · jobs/[id]/page
   approvals/ layout · [token]/{page,loading,not-found}
   api/    auth/login · auth/logout · proxy/[...path]
 components/
@@ -2945,17 +3262,20 @@ components/
              · JobList · JobRow · JobStatusView · EmptyJobs · DeleteRequestDialog
              · TopBar
   approvals/ ApproverView · ApproverList · ReasonDialog
+  account/   AccountProfileCard · PermissionBadgeList · ActiveSessionList
+             · ActiveSessionRow
   auth/      LoginForm · SignOutButton
   ui/        Badge · Button · Card · ConfirmDialog · DateTime · EmptyState
              · SearchInput · Spinner
 lib/
   api/       client (THE chokepoint) · auth · workflows · drafts · selection
-             · tasks · approvals · health
-  auth/      session · session-cookie · token
+             · tasks · approvals · user-sessions · health
+  auth/      session · session-cookie · auth-error-message · permission-label
+  routing/   route-path
   hooks/     useSelectionSession · useTaskCollection
   workflow/  toFlowGraph · toPlanNodes · applyTaskProgress · editorState
   utils/     cn · format · submit-error
-types/       workflow · task · selection · approval · draft · auth
+types/       workflow · task · selection · approval · draft · auth · permission
 ```
 
 ## Appendix B — Documentation index
@@ -2969,7 +3289,7 @@ types/       workflow · task · selection · approval · draft · auth
 | `task-planner-implementation-plan.md` | Area G build plan |
 | `approval-execution-design.md` | Area H design: the pure-engine split |
 | `approval-execution-implementation-plan.md` | Area H build plan |
-| `auth-and-deletion-tracking-phase-plan.md` | Area A: full design + phase log (1069 lines) |
+| `user-access-and-session-management-phase-plan.md` | Area A: users, permissions, server-side sessions, user management, seed pack, task ownership, `/account` — decisions, contracts and phase log (1246 lines) |
 | `completion-document-email-phase-plan.md` | Area I design + phase log |
 | `requester-contact-gap.md` · `requester-contact-implementation-plan.md` | The `requester_email` gap and its resolution |
 | `web-task-approval-phase-plan.md` · `web-task-approval-implementation-plan.md` | The frontend approval surface |
@@ -2985,9 +3305,11 @@ types/       workflow · task · selection · approval · draft · auth
 | `architecture/folder-structure.md` | The complete target tree and per-folder contracts — **the layout source of truth** |
 | `architecture/error-handling.md` | The `BaseError` hierarchy in full |
 | `architecture/rag-implementation-guide.md` · `rag-mongodb-azure-search.md` | Historical RAG design explorations |
-| `api/api-documentation.md` | **All 34 endpoints** with request/response bodies (1870 lines) |
+| `api/api-documentation.md` | **Every endpoint** with request/response bodies |
 | `guides/running-the-app.md` | Full local setup and troubleshooting |
 | `guides/configuration.md` | Every environment variable |
+| `guides/database-migrations.md` | The Postgres and MongoDB migration packs and commands |
+| `guides/database-seeding.md` | The Postgres seed pack, its commands, and the bootstrap administrator seeder |
 | `postman/` | Runnable collection + environment that chains ids automatically |
 | `plans/` | Four historical plans, pre-restructure |
 
@@ -3003,11 +3325,15 @@ types/       workflow · task · selection · approval · draft · auth
 
 A 10-minute end-to-end walkthrough that exercises every functional area.
 
-**Setup:** `MAIL_TRANSPORT=console`, both servers running, terminal visible.
+**Setup:** `MAIL_TRANSPORT=console`, both servers running, terminal visible, and the
+bootstrap administrator seeded (`npm run seed:pg:run`). That account holds all four
+permissions, so it can drive both the authoring and the requester parts.
 
 ### 1 · Admin authoring (3 min)
 
-1. Sign in at `/login` as the admin.
+1. Sign in at `/login` with the seeded administrator's email and password. You land
+   on `/account` — point out the permission badges and the active-sessions list —
+   then open `/admin`.
 2. **Create new template.** Paste the overseas-leave policy paragraph — plain
    English, no structure.
 3. Click **Generate template**. *Talking point: this is one Azure OpenAI call with a
@@ -3027,7 +3353,8 @@ A 10-minute end-to-end walkthrough that exercises every functional area.
 
 ### 2 · Requester selection (2 min)
 
-1. Sign in at `/portal/login` as a portal user.
+1. Open `/portal` with the same session. *Talking point: there is one login; what a
+   user can reach is decided by their permissions, checked by the API on every call.*
 2. **New Request** → type something deliberately vague: *"I need to go to a
    conference in Singapore next month."*
 3. *Talking point: that query was embedded, matched against published templates by
@@ -3079,6 +3406,8 @@ A 10-minute end-to-end walkthrough that exercises every functional area.
 
 - `/admin/deletions` — the audit log, with the `Incomplete` badge explained: it means
   the log row landed but the Mongo delete didn't. Visible, not silent.
+- `/account` — sign in from a second browser, then **Sign out of other sessions**: the
+  other browser's next request is rejected. Sessions are server-side and revocable.
 - `npm run evaluate:selection` — scored selection accuracy against labelled queries.
 - `npm run test:live` — the model asserted against specific structural details of the
   gold fixtures.
@@ -3098,6 +3427,7 @@ A 10-minute end-to-end walkthrough that exercises every functional area.
 | Admin performance | `d7ebd3e` → `87cb820` (4 phases) | Single-round-trip template open, deferred flowchart bundle |
 | Auth + deletion tracking | `800e651` → `143d2bf` (7 phases) | PostgreSQL, real login, the deletion audit log |
 | Completion documents | `b47746d` → `b98f6bd` (9 phases) | The PDF record, end to end |
+| User access & sessions | 8 phases (see `docs/user-access-and-session-management-phase-plan.md`) | One `users` table with permissions, server-side revocable sessions, the user management API, the Postgres seed pack, owner-only tasks, the single `/login` and `/account` page |
 
 Every feature followed the same pattern: a design or phase-plan commit, then one
 commit per shippable phase. The `docs/` folder preserves all of it.

@@ -23,8 +23,7 @@ export interface ChatMessage {
  * `requesterContext` is read from the session cookie server-side and handed
  * down as a prop from the page - `getSession()`/`getRequesterContext()` are
  * Server Component-only (they call `next/headers` `cookies()`), so this
- * client hook cannot call them itself. See Finding 0.4 in
- * docs/auth-and-deletion-tracking-phase-plan.md.
+ * client hook cannot call them itself.
  */
 export function useSelectionSession(requesterContext?: Record<string, unknown>) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);

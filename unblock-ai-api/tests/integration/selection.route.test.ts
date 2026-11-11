@@ -6,7 +6,12 @@ import { SelectionController } from "../../src/controllers/selection.controller.
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { ConflictError } from "../../src/errors/conflict.error.js";
-import { portalAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import {
+  authHeaderFor,
+  TestIdentity,
+  startTestServer,
+  type TestServer,
+} from "../helpers/test-server.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { DraftService } from "../../src/services/draft.service.js";
@@ -16,6 +21,8 @@ import type { SelectionResponseDto } from "../../src/lib/types/selection/session
 import type { WorkflowDefinition } from "../../src/lib/types/workflow/workflow.type.js";
 import type { ApprovalController } from "../../src/controllers/approval.controller.js";
 import type { AuthController } from "../../src/controllers/auth.controller.js";
+import type { UserSessionController } from "../../src/controllers/user-session.controller.js";
+import type { UserController } from "../../src/controllers/user.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 interface FakeSelectionServiceOptions {
@@ -69,6 +76,8 @@ async function buildServer(selectionService: SelectionService): Promise<TestServ
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: {} as ApprovalController,
     authController: {} as AuthController,
+    userSessionController: {} as UserSessionController,
+    userController: {} as UserController,
   };
 
   return startTestServer(controllers);
@@ -79,7 +88,7 @@ test("POST /api/selection/sessions rejects an empty query", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ query: "" }),
     });
     assert.equal(res.status, 400);
@@ -104,7 +113,7 @@ test("POST /api/selection/sessions starts a session and returns the decision", a
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ query: "I want to apply for overseas leave" }),
     });
     assert.equal(res.status, 201);
@@ -125,7 +134,7 @@ test("POST /api/selection/sessions/:id/answer rejects an empty answer", async ()
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/answer`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ answer: "" }),
     });
     assert.equal(res.status, 400);
@@ -150,7 +159,7 @@ test("POST /api/selection/sessions/:id/answer forwards to the service", async ()
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/answer`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ answer: "Information Technology" }),
     });
     assert.equal(res.status, 200);
@@ -169,7 +178,7 @@ test("POST /api/selection/sessions/:id/choose rejects a missing workflow_id", as
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/choose`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 400);
@@ -186,7 +195,7 @@ test("POST /api/selection/sessions/:id/choose forwards to the service", async ()
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/choose`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ workflow_id: "wf_1" }),
     });
     assert.equal(res.status, 200);
@@ -203,7 +212,7 @@ test("GET /api/selection/sessions/:id/workflow returns 409 before a match", asyn
   const server = await buildServer(selectionService);
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/workflow`, {
-      headers: portalAuthHeader(),
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 409);
   } finally {
@@ -217,7 +226,7 @@ test("GET /api/selection/sessions/:id/workflow returns the matched workflow", as
   const server = await buildServer(selectionService);
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/workflow`, {
-      headers: portalAuthHeader(),
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { workflow_id: string };

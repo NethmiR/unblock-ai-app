@@ -24,3 +24,7 @@ export interface ChooseResponse {
   decision: SelectionDecision;
   workflow_id: string;
 }
+
+export enum RequesterActorType {
+  STAFF = "staff",
+}

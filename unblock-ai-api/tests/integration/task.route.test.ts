@@ -10,12 +10,13 @@ import { ValidationError } from "../../src/errors/validation.error.js";
 import { NotFoundError } from "../../src/errors/not-found.error.js";
 import { TASK_STATUS, REQUIREMENT_STATUS } from "../../src/data/constants/status.constant.js";
 import {
-  adminAuthHeader,
-  portalAuthHeader,
+  authHeaderFor,
+  TestIdentity,
   startTestServer,
-  TEST_PORTAL_ROW,
+  TEST_USERS,
   type TestServer,
 } from "../helpers/test-server.helper.js";
+import { AuthErrorCode } from "../../src/data/constants/auth.constant.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { DraftService } from "../../src/services/draft.service.js";
@@ -23,6 +24,8 @@ import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { ApprovalController } from "../../src/controllers/approval.controller.js";
 import type { AuthController } from "../../src/controllers/auth.controller.js";
+import type { UserSessionController } from "../../src/controllers/user-session.controller.js";
+import type { UserController } from "../../src/controllers/user.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 import type { TaskDocument, NextRequirementDto } from "../../src/lib/types/task/task.type.js";
 import type { RenderedDocument } from "../../src/lib/types/document/document.type.js";
@@ -119,6 +122,8 @@ async function buildServer(taskService: TaskService): Promise<TestServer> {
     taskController: new TaskController({ taskService }),
     approvalController: {} as ApprovalController,
     authController: {} as AuthController,
+    userSessionController: {} as UserSessionController,
+    userController: {} as UserController,
   };
 
   return startTestServer(controllers);
@@ -129,7 +134,7 @@ test("POST /api/tasks rejects a missing session_id", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 400);
@@ -145,7 +150,7 @@ test("POST /api/tasks on an unmatched session returns 409", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ session_id: "s1" }),
     });
     assert.equal(res.status, 409);
@@ -159,7 +164,7 @@ test("POST /api/tasks happy path returns 201 with id, reference, and status", as
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ session_id: "s1" }),
     });
     assert.equal(res.status, 201);
@@ -172,27 +177,38 @@ test("POST /api/tasks happy path returns 201 with id, reference, and status", as
   }
 });
 
-test("GET /api/tasks as a portal user forces created_by to their own id, ignoring any client-supplied value", async () => {
+test("GET /api/tasks forces created_by to the caller's own id, ignoring any client-supplied value", async () => {
   let receivedFilters: { created_by?: string; session_id?: string; status?: string } | undefined;
   const server = await buildServer(fakeTaskService({ onList: (filters) => (receivedFilters = filters) }));
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks?created_by=someone-else`, {
-      headers: portalAuthHeader(),
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 200);
-    assert.equal(receivedFilters?.created_by, TEST_PORTAL_ROW.id);
+    assert.equal(receivedFilters?.created_by, TEST_USERS[TestIdentity.TASK_CREATOR].id);
   } finally {
     await server.close();
   }
 });
 
-test("GET /api/tasks as an admin is not scoped to a single requester", async () => {
+test("GET /api/tasks for an administrator is still scoped to the caller", async () => {
   let receivedFilters: { created_by?: string; session_id?: string; status?: string } | undefined;
   const server = await buildServer(fakeTaskService({ onList: (filters) => (receivedFilters = filters) }));
   try {
-    const res = await fetch(`${server.baseUrl}/api/tasks`, { headers: adminAuthHeader() });
+    const res = await fetch(`${server.baseUrl}/api/tasks`, { headers: authHeaderFor(TestIdentity.ADMINISTRATOR) });
     assert.equal(res.status, 200);
-    assert.equal(receivedFilters?.created_by, undefined);
+    assert.equal(receivedFilters?.created_by, TEST_USERS[TestIdentity.ADMINISTRATOR].id);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/tasks without task:create returns 403 PERMISSION_DENIED", async () => {
+  const server = await buildServer(fakeTaskService({}));
+  try {
+    const res = await fetch(`${server.baseUrl}/api/tasks`, { headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER) });
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, AuthErrorCode.PERMISSION_DENIED);
   } finally {
     await server.close();
   }
@@ -214,7 +230,7 @@ test("GET /api/tasks/:id/next returns 200 with a requirement", async () => {
   const server = await buildServer(fakeTaskService({ nextResult: { requirement, complete: false } }));
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/next`, {
-      headers: portalAuthHeader(),
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { requirement: { key: string } | null; complete: boolean };
@@ -230,7 +246,7 @@ test("POST /api/tasks/:id/values rejects a missing key", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/values`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ value: "2026-09-01" }),
     });
     assert.equal(res.status, 400);
@@ -248,7 +264,7 @@ test("POST /api/tasks/:id/finalize with unfilled requirements returns 400", asyn
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/finalize`, {
       method: "POST",
-      headers: portalAuthHeader(),
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 400);
   } finally {
@@ -261,7 +277,7 @@ test("PATCH /api/tasks/:id/status rejects a bad status", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/status`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ status: "completed" }),
     });
     assert.equal(res.status, 400);
@@ -274,7 +290,7 @@ test("GET /api/tasks/:id/document returns the PDF with the right headers", async
   const server = await buildServer(fakeTaskService());
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
-      headers: portalAuthHeader(),
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "application/pdf");
@@ -294,7 +310,7 @@ test("GET /api/tasks/:id/document on a task not yet completed returns 409", asyn
   );
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
-      headers: portalAuthHeader(),
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 409);
   } finally {
@@ -308,7 +324,7 @@ test("GET /api/tasks/:id/document for an unknown task returns 404", async () => 
   );
   try {
     const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
-      headers: portalAuthHeader(),
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 404);
   } finally {

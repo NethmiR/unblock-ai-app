@@ -19,7 +19,8 @@ src/db/migration/
 │  ├─ postgres.migration-template.ts
 │  ├─ postgres.migration-engine.ts
 │  └─ migrations/
-│     └─ 20261111000000_initial-schema.migration.ts
+│     ├─ 20261111000000_initial-schema.migration.ts
+│     └─ 20261111015501_unified-users-permissions-and-sessions.migration.ts
 └─ mongo/
    ├─ mongo.migration-store.ts            tracking collection, lock document
    ├─ mongo.migration-template.ts
@@ -36,7 +37,7 @@ Supporting pieces:
 
 - Types live in `src/lib/types/migration/`.
 - Constants live in `src/data/constants/migration.constant.ts`.
-- Filename helpers live in `src/utils/migration/migration-file.util.ts`.
+- Filename helpers live in `src/utils/migration/migration-file.util.ts`, built on the shared `src/utils/shared/timestamped-file-name.util.ts`.
 - `MigrationError` lives in `src/errors/migration.error.ts`.
 
 ## Commands
@@ -72,8 +73,10 @@ npm run migrate:up
 ```
 
 ```bash
-npm run seed:auth
+npm run seed:pg:run
 ```
+
+Seeding is a separate pack with its own commands; see [database-seeding.md](./database-seeding.md).
 
 ## Writing a migration
 
@@ -88,11 +91,11 @@ import type { PostgresMigration } from "../../../../lib/types/migration/index.ty
 
 const migration: PostgresMigration = {
   async up({ client }) {
-    await client.query(`ALTER TABLE portal_users ADD COLUMN priority INTEGER`);
+    await client.query(`ALTER TABLE template_deletions ADD COLUMN priority INTEGER`);
   },
 
   async down({ client }) {
-    await client.query(`ALTER TABLE portal_users DROP COLUMN priority`);
+    await client.query(`ALTER TABLE template_deletions DROP COLUMN priority`);
   },
 };
 
@@ -131,3 +134,20 @@ Rules:
 - **Missing files.** `status` flags applied migrations whose file no longer exists as `missing`. `down` refuses to revert them.
 - **Build output.** Migrations are TypeScript and compile into `dist/` with the rest of the code. The loader picks `.ts` or `.js` to match whatever runtime it is running under.
 - **Atlas vector index.** It is not part of the initial migration, because every environment currently runs `VECTOR_BACKEND=memory`. When switching to `atlas`, add a Mongo migration that calls `db.collection("templates").createSearchIndex(...)` on `retrieval.embedding`.
+
+## Postgres schema
+
+| Migration | What it does |
+|---|---|
+| `20261111000000_initial-schema` | Creates the first user tables and `template_deletions` |
+| `20261111015501_unified-users-permissions-and-sessions` | Replaces the first user tables with `permissions`, `users`, `user_permissions` and `user_sessions`, and points `template_deletions` at `users` |
+
+After both migrations the Postgres schema is:
+
+- `permissions` — the permission catalogue (`workflow:manage`, `task:create`, `task:approve`, `user:manage`), inserted by the migration as reference data.
+- `users` — one row per person who can sign in. `email` is stored lower-cased and is unique; `status` is `active` or `disabled`.
+- `user_permissions` — which permissions each user holds. A deferred constraint trigger (`enforce_user_has_permission`) rejects, at commit, any transaction that leaves a user with no permission.
+- `user_sessions` — one row per signed-in session. Only the SHA-256 hash of the session token is stored; `revoked_at` and `revocation_reason` record sign-outs.
+- `template_deletions` — the template deletion log, attributed through `deleted_by_user_id` and `deleted_by_email`.
+
+MongoDB holds no user data; `tasks.created_by` stores the creating user's id as a string.

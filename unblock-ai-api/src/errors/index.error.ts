@@ -10,3 +10,4 @@ export { ConfigurationError } from "./configuration.error.js";
 export { UnauthorizedError } from "./unauthorized.error.js";
 export { ForbiddenError } from "./forbidden.error.js";
 export { MigrationError } from "./migration.error.js";
+export { SeedError } from "./seed.error.js";

@@ -263,8 +263,8 @@ export interface TemplateDeletion {
   versions_removed: number;
   institution_type: string | null;
   review_status: string | null;
-  deleted_by_admin_id: string;
-  deleted_by_username: string;
+  deleted_by_user_id: string;
+  deleted_by_email: string;
   reason: string | null;
   request_id: string | null;
   snapshot: Record<string, unknown>;

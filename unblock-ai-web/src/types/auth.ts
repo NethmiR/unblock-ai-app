@@ -1,32 +1,50 @@
-/**
- * TypeScript mirror of unblock-ai-api/src/lib/types/auth/auth.type.ts.
- *
- * WHEN THE SCHEMA CHANGES, CHANGE THIS FILE IN THE SAME COMMIT.
- * There is no codegen step; this is a hand-maintained contract, and a drifted
- * contract produces `undefined` at runtime with no compile error.
- */
-export type AuthAudience = "admin" | "portal";
+import type { Permission } from "./permission";
 
-/** What a request actually gets back - never includes password_hash. */
-export interface AuthUser {
-  id: string;
-  audience: AuthAudience;
-  username: string;
-  email: string;
-  full_name: string;
-  department: string | null;
-  organisation: string | null;
-  faculty: string | null;
+export enum AuthErrorCode {
+  INVALID_CREDENTIALS = "INVALID_CREDENTIALS",
+  ACCOUNT_LOCKED = "ACCOUNT_LOCKED",
+  ACCOUNT_DISABLED = "ACCOUNT_DISABLED",
+  AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED",
+  PERMISSION_DENIED = "PERMISSION_DENIED",
+  USER_SESSION_NOT_FOUND = "USER_SESSION_NOT_FOUND",
 }
 
-export interface LoginCredentials {
-  audience: AuthAudience;
-  username: string;
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
+  full_name: string;
+  permissions: Permission[];
+}
+
+export interface LoginRequest {
+  email: string;
   password: string;
 }
 
-export interface LoginResult {
+export interface LoginResponse {
   token: string;
   expires_at: string;
-  user: AuthUser;
+  user: AuthenticatedUser;
+}
+
+export interface CurrentUserResponse {
+  user: AuthenticatedUser;
+  session: { id: string; expires_at: string };
+}
+
+export interface UserSession {
+  id: string;
+  user_agent: string | null;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  is_current: boolean;
+}
+
+export interface UserSessionListResponse {
+  sessions: UserSession[];
+}
+
+export interface RevokeOtherUserSessionsResponse {
+  revoked_count: number;
 }

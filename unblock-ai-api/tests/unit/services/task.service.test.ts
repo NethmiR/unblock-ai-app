@@ -94,7 +94,7 @@ function build({
 const LEAVE_WORKFLOW = loadExpectedFixture("it_faculty_overseas_leave.json");
 
 /** No login yet, so an unauthenticated delete still has to be representable. */
-const ANONYMOUS_ACTOR = { id: null, email: null, role: null };
+const ANONYMOUS_ACTOR = { id: null, email: null };
 
 test("create() from an unmatched session throws ConflictError", async () => {
   const taskModel = new FakeTaskModel();
@@ -370,7 +370,7 @@ test("delete() removes a completed task and records who did it", async () => {
   const task = await service.create("session-1", "user-1");
   await taskModel.setStatus(task._id, "completed");
 
-  await service.delete(task._id, { id: "u-1", email: "dean@uni.edu", role: "requester" }, "req-9");
+  await service.delete(task._id, { id: "u-1", email: "dean@uni.edu" }, "req-9");
 
   assert.equal(await taskModel.findById(task._id), null);
 

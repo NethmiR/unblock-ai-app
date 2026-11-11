@@ -1,18 +1,14 @@
 import { MIGRATION_FILE } from "../../data/constants/migration.constant.js";
 import { MigrationError } from "../../errors/migration.error.js";
+import { toFileSlug, toFileTimestamp } from "../shared/timestamped-file-name.util.js";
 import type { ParsedMigrationFileName } from "../../lib/types/migration/migration.type.js";
 
 export function toMigrationSlug(input: string): string {
-  return input
-    .trim()
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return toFileSlug(input);
 }
 
 export function toMigrationTimestamp(date: Date): string {
-  return date.toISOString().replace(/\D/g, "").slice(0, 14);
+  return toFileTimestamp(date);
 }
 
 export function buildMigrationFileName(input: string, date: Date): string {

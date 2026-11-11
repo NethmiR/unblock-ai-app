@@ -7,6 +7,7 @@ import { extraction } from "./extraction.config.js";
 import { retrieval } from "./retrieval.config.js";
 import { mail } from "./mail.config.js";
 import { auth } from "./auth.config.js";
+import { user } from "./user.config.js";
 import { document } from "./document.config.js";
 import type { AppConfig } from "../lib/types/config/config.type.js";
 
@@ -20,5 +21,6 @@ export const config: AppConfig = Object.freeze({
   retrieval,
   mail,
   auth,
+  user,
   document,
 });

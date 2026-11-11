@@ -1,24 +1,16 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { RoutePath } from "@/lib/routing/route-path";
 
-interface Props {
-  /**
-   * Where to land after the cookie is cleared. The two portals have separate
-   * sign-in pages, so an admin must not be dropped on the requester login and
-   * vice versa - each top bar passes its own.
-   */
-  redirectTo: string;
-}
-
-export function SignOutButton({ redirectTo }: Props) {
+export function SignOutButton() {
   const router = useRouter();
   const [isBusy, setIsBusy] = useState(false);
 
   async function handleSignOut() {
     setIsBusy(true);
     await fetch("/api/auth/logout", { method: "POST" });
-    router.replace(redirectTo);
+    router.replace(RoutePath.LOGIN);
     router.refresh();
   }
 

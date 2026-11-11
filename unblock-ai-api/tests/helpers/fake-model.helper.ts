@@ -224,6 +224,10 @@ export class FakeTaskModel {
     return Promise.resolve(this.tasks.get(String(id)) ?? null);
   }
 
+  findCreatorById(id: string | ObjectId): Promise<string | null> {
+    return Promise.resolve(this.tasks.get(String(id))?.created_by ?? null);
+  }
+
   findAll(filters: {
     created_by?: string;
     session_id?: string;

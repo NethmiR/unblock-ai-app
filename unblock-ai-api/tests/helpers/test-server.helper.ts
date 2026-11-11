@@ -1,98 +1,141 @@
 import type { AddressInfo } from "node:net";
 import { createApp } from "../../src/app.js";
-import { createAuthStore } from "../../src/services/auth-store/index.auth-store.js";
-import { AuthService } from "../../src/services/auth.service.js";
-import { issueSessionToken } from "../../src/utils/auth/session-token.util.js";
-import type { ApiControllers } from "../../src/routes/index.route.js";
-import type { AppConfig } from "../../src/lib/types/config/config.type.js";
-import type { AuthAudience, AuthUser, AuthUserRow } from "../../src/lib/types/auth/auth.type.js";
+import { createRequireTaskOwnership } from "../../src/middlewares/require-task-ownership.middleware.js";
+import { AuthenticationService } from "../../src/services/authentication.service.js";
+import { UserSessionService } from "../../src/services/user-session.service.js";
+import { InMemoryUserRepository } from "../../src/repositories/user-repository/in-memory.user-repository.js";
+import { InMemoryUserSessionRepository } from "../../src/repositories/user-session-repository/in-memory.user-session-repository.js";
+import { hashUserSessionToken } from "../../src/utils/auth/user-session-token.util.js";
+import { AUTHORIZATION_SCHEME } from "../../src/data/constants/auth.constant.js";
+import { PERMISSIONS, Permission } from "../../src/data/constants/permission.constant.js";
+import { UserStatus } from "../../src/data/constants/user.constant.js";
+import type { ApiControllers, ApiRouteGuards } from "../../src/routes/index.route.js";
+import type { AuthConfig } from "../../src/lib/types/config/config.type.js";
+import type { UserCredentialRecord } from "../../src/lib/types/user/user.type.js";
+import type { UserSessionRecord } from "../../src/lib/types/user-session/user-session.type.js";
 
 export interface TestServer {
   baseUrl: string;
   close: () => Promise<void>;
 }
 
-const TEST_SESSION_SECRET = "test-session-secret";
-
-/** Seeded rows the default in-memory auth store carries, so route tests can
- *  authenticate without a live Postgres (D-5). Not connected to any test's
- *  own fake stores - only used for req.user identity via the bearer token. */
-export const TEST_ADMIN_ROW: AuthUserRow = {
-  id: "00000000-0000-0000-0000-000000000001",
-  username: "test-admin",
-  email: "test-admin@example.com",
-  full_name: "Test Admin",
-  department: "Registrar's Office",
-  organisation: null,
-  faculty: null,
-  password_hash: "unused-in-tests",
-  is_active: true,
-  last_login_at: null,
-  failed_attempt_count: 0,
-  last_failed_attempt_at: null,
-  created_at: new Date("2026-01-01T00:00:00Z"),
-  updated_at: new Date("2026-01-01T00:00:00Z"),
-};
-
-export const TEST_PORTAL_ROW: AuthUserRow = {
-  id: "00000000-0000-0000-0000-000000000002",
-  username: "test-portal",
-  email: "test-portal@example.com",
-  full_name: "Test Portal User",
-  department: "Department of Information Technology",
-  organisation: null,
-  faculty: "Information Technology",
-  password_hash: "unused-in-tests",
-  is_active: true,
-  last_login_at: null,
-  failed_attempt_count: 0,
-  last_failed_attempt_at: null,
-  created_at: new Date("2026-01-01T00:00:00Z"),
-  updated_at: new Date("2026-01-01T00:00:00Z"),
-};
-
-/** No real Postgres needed for route tests - the in-memory store backs auth (D-5). */
-function defaultAuthService(): AuthService {
-  const authConfig: AppConfig["auth"] = {
-    sessionTokenSecret: TEST_SESSION_SECRET,
-    sessionTtlHours: 12,
-    maxFailedAttempts: 0,
-    storeBackend: "memory",
-  };
-  const authStore = createAuthStore("memory", { adminUsers: [TEST_ADMIN_ROW], portalUsers: [TEST_PORTAL_ROW] });
-  return new AuthService({ authStore, config: { auth: authConfig } as AppConfig });
+export enum TestIdentity {
+  WORKFLOW_MANAGER = "workflow-manager",
+  TASK_CREATOR = "task-creator",
+  USER_MANAGER = "user-manager",
+  ADMINISTRATOR = "administrator",
 }
 
-function rowToAuthUser(row: AuthUserRow, audience: AuthAudience): AuthUser {
+export const TEST_AUTH_CONFIG: AuthConfig = {
+  sessionTtlHours: 12,
+  maxFailedAttempts: 0,
+  lockoutDurationMinutes: 15,
+};
+
+const CREATED_AT = new Date("2026-01-01T00:00:00Z");
+const SESSION_EXPIRY = new Date("2099-01-01T00:00:00Z");
+
+function testUser(id: string, identity: TestIdentity, fullName: string, permissions: Permission[]): UserCredentialRecord {
   return {
-    id: row.id,
-    audience,
-    username: row.username,
-    email: row.email,
-    full_name: row.full_name,
-    department: row.department,
-    organisation: row.organisation,
-    faculty: row.faculty,
+    id,
+    email: `${identity}@example.com`,
+    fullName,
+    passwordHash: "unused-in-tests",
+    status: UserStatus.ACTIVE,
+    permissions,
+    failedLoginCount: 0,
+    lastFailedLoginAt: null,
+    lastLoginAt: null,
+    createdByUserId: null,
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
   };
 }
 
-/** Bearer header for the seeded admin, valid against `defaultAuthService()`'s store. */
-export function adminAuthHeader(): Record<string, string> {
-  const { token } = issueSessionToken(rowToAuthUser(TEST_ADMIN_ROW, "admin"), TEST_SESSION_SECRET, 12);
-  return { Authorization: `Bearer ${token}` };
+export const TEST_USERS: Record<TestIdentity, UserCredentialRecord> = {
+  [TestIdentity.WORKFLOW_MANAGER]: testUser(
+    "00000000-0000-4000-8000-000000000001",
+    TestIdentity.WORKFLOW_MANAGER,
+    "Test Workflow Manager",
+    [Permission.WORKFLOW_MANAGE],
+  ),
+  [TestIdentity.TASK_CREATOR]: testUser(
+    "00000000-0000-4000-8000-000000000002",
+    TestIdentity.TASK_CREATOR,
+    "Test Task Creator",
+    [Permission.TASK_CREATE],
+  ),
+  [TestIdentity.USER_MANAGER]: testUser(
+    "00000000-0000-4000-8000-000000000003",
+    TestIdentity.USER_MANAGER,
+    "Test User Manager",
+    [Permission.USER_MANAGE],
+  ),
+  [TestIdentity.ADMINISTRATOR]: testUser(
+    "00000000-0000-4000-8000-000000000004",
+    TestIdentity.ADMINISTRATOR,
+    "Test Administrator",
+    [...PERMISSIONS],
+  ),
+};
+
+export const TEST_SESSION_TOKENS: Record<TestIdentity, string> = {
+  [TestIdentity.WORKFLOW_MANAGER]: "test-session-token-workflow-manager",
+  [TestIdentity.TASK_CREATOR]: "test-session-token-task-creator",
+  [TestIdentity.USER_MANAGER]: "test-session-token-user-manager",
+  [TestIdentity.ADMINISTRATOR]: "test-session-token-administrator",
+};
+
+function testSession(identity: TestIdentity, index: number): UserSessionRecord {
+  return {
+    id: `00000000-0000-4000-9000-00000000000${index + 1}`,
+    userId: TEST_USERS[identity].id,
+    tokenHash: hashUserSessionToken(TEST_SESSION_TOKENS[identity]),
+    userAgent: null,
+    createdAt: CREATED_AT,
+    lastSeenAt: new Date(),
+    expiresAt: SESSION_EXPIRY,
+    revokedAt: null,
+    revocationReason: null,
+  };
 }
 
-/** Bearer header for the seeded portal user - proves the wrong-role 403 case on admin routes. */
-export function portalAuthHeader(): Record<string, string> {
-  const { token } = issueSessionToken(rowToAuthUser(TEST_PORTAL_ROW, "portal"), TEST_SESSION_SECRET, 12);
-  return { Authorization: `Bearer ${token}` };
+export interface TestAuthentication {
+  userRepository: InMemoryUserRepository;
+  userSessionRepository: InMemoryUserSessionRepository;
+  userSessionService: UserSessionService;
+  authenticationService: AuthenticationService;
+}
+
+export function createTestAuthentication(
+  options: { users?: UserCredentialRecord[]; authConfig?: AuthConfig } = {},
+): TestAuthentication {
+  const authConfig = options.authConfig ?? TEST_AUTH_CONFIG;
+  const identities = Object.values(TestIdentity);
+  const userRepository = new InMemoryUserRepository({
+    users: [...identities.map((identity) => TEST_USERS[identity]), ...(options.users ?? [])],
+  });
+  const userSessionRepository = new InMemoryUserSessionRepository({
+    sessions: identities.map((identity, index) => testSession(identity, index)),
+  });
+  const userSessionService = new UserSessionService({ userSessionRepository, authConfig });
+  const authenticationService = new AuthenticationService({ userRepository, userSessionService, authConfig });
+  return { userRepository, userSessionRepository, userSessionService, authenticationService };
+}
+
+export function authHeaderFor(identity: TestIdentity): Record<string, string> {
+  return { Authorization: `${AUTHORIZATION_SCHEME} ${TEST_SESSION_TOKENS[identity]}` };
 }
 
 export async function startTestServer(
   controllers: ApiControllers,
-  deps: { authService?: AuthService } = {},
+  deps: { authenticationService?: AuthenticationService; routeGuards?: ApiRouteGuards } = {},
 ): Promise<TestServer> {
-  const app = createApp(controllers, { authService: deps.authService ?? defaultAuthService() });
+  const authenticationService = deps.authenticationService ?? createTestAuthentication().authenticationService;
+  const routeGuards = deps.routeGuards ?? {
+    requireTaskOwnership: createRequireTaskOwnership({ taskService: { isOwnedBy: async () => true } }),
+  };
+  const app = createApp(controllers, { authenticationService, routeGuards });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const { port } = server.address() as AddressInfo;

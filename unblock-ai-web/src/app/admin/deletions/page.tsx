@@ -26,7 +26,7 @@ export default async function DeletionLogPage() {
       </div>
 
       {isEmpty ? (
-        <EmptyState title="Nothing here yet" body="Deleted templates and the admin who removed them will show up here." />
+        <EmptyState title="Nothing here yet" body="Deleted templates and the user who removed them will show up here." />
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -47,7 +47,7 @@ export default async function DeletionLogPage() {
                       <div className="font-medium text-ink">{deletion.template_title}</div>
                       <div className="font-mono text-[11px] text-faint">{deletion.workflow_id}</div>
                     </td>
-                    <td className="px-5 py-3.5 text-ink">{deletion.deleted_by_username}</td>
+                    <td className="px-5 py-3.5 text-ink">{deletion.deleted_by_email}</td>
                     <td className="px-5 py-3.5 text-muted">
                       <DateTime iso={deletion.deleted_at} />
                     </td>

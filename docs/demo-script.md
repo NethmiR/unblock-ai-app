@@ -17,20 +17,44 @@ selector agent ask a clarifying question in Act 2.
 |---|---|
 | MongoDB running | `mongosh --eval "db.runCommand({ping:1})"` |
 | PostgreSQL running | `psql "$POSTGRES_URL" -c "select 1"` |
-| Seed users exist | `cd unblock-ai-api && npm run seed:auth` |
+| Migrations applied | `cd unblock-ai-api && npm run migrate:up` |
+| Bootstrap admin exists | `cd unblock-ai-api && npm run seed:pg:run` (safe to re-run — skips an existing user) |
 | API up (port 3000) | `cd unblock-ai-api && npm run dev` → `curl localhost:3000/api/health` |
 | Web up (port 3001) | `cd unblock-ai-web && npm run dev` |
 
-Credentials are in `unblock-ai-api/.env` (`SEED_ADMIN_*`, `SEED_USER1_*`).
-Usernames: **`admin`** (admin portal), **`chathura`** / **`dilani`** (portal).
+### Accounts
+
+Everyone signs in at **`/login`** with **email + password**.
+
+- **Administrator** — created by `npm run seed:pg:run` with all four permissions. Email is
+  `SEED_ADMINISTRATOR_EMAIL` in `unblock-ai-api/.env`; password is `USER_DEFAULT_PASSWORD`
+  (`12345` by default).
+- **Requester** — create one once with the administrator's token. It needs `task:create`
+  (and it starts with the same `USER_DEFAULT_PASSWORD`):
+
+```bash
+# 1. Log in as the administrator and copy "token" from the response
+curl -s localhost:3000/api/auth/login -H "Content-Type: application/json" \
+  -d '{"email":"<SEED_ADMINISTRATOR_EMAIL>","password":"12345"}'
+
+# 2. Create the requester
+curl -s localhost:3000/api/users -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"email":"chathura@example.com","full_name":"Chathura Perera","permissions":["task:create"]}'
+```
+
+A `409 EMAIL_ALREADY_REGISTERED` just means the requester already exists from a previous run.
 
 ### Browser setup — the one thing that will break the demo
 
-There is a **single `ua_session` cookie**. Logging into the portal *replaces* the admin
-session in the same browser profile. Set up **two separate windows**:
+There is a **single `ua_session` cookie**. Logging in as the requester *replaces* the
+administrator's session in the same browser profile. Set up **two separate windows**:
 
-- **Window A** (normal profile) → logged in as `admin`, sitting on `/admin`
-- **Window B** (incognito / second profile) → logged in as `chathura`, sitting on `/portal`
+- **Window A** (normal profile) → sign in as the administrator. Login lands on `/account`;
+  then type `/admin` in the address bar (the dashboards are reachable by URL but not linked
+  from `/account` yet)
+- **Window B** (incognito / second profile) → sign in as `chathura@example.com`, then go to
+  `/portal`
 - **Window B, second tab** → your email inbox, for approval links
 
 Log both in *before* you start talking. Do not log in on camera.
@@ -81,7 +105,7 @@ Point at the list.
 
 Click **Deletion log** in the top bar for about five seconds.
 
-> "And every removal is audited to a named admin. This is a governance surface, not a wiki."
+> "And every removal is audited to a named user. This is a governance surface, not a wiki."
 
 Back to `/admin`.
 

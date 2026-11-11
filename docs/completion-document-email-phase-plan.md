@@ -485,7 +485,7 @@ const completionDocumentService = new CompletionDocumentService({ renderer: docu
 So the requester can fetch the record again from the portal, and so a lost attachment is not a
 lost document.
 
-**Route:** `GET /api/tasks/:id/document` — `requireAuth()`, registered **above** `GET /tasks/:id`
+**Route:** `GET /api/tasks/:id/document` — requires `task:create` and the task-ownership guard (like every `/tasks/:id*` route), registered **above** `GET /tasks/:id`
 in `task.route.ts` to keep Express's matching order unambiguous.
 
 **Controller:** `TaskController.getTaskDocument` — the one place in this feature that touches
@@ -590,7 +590,7 @@ to end with `MAIL_TRANSPORT=console`, then download the PDF from the portal.
 | R-1 | **PDF generation throws inside the decision path**, rolling back a recorded approval | D-9: `generate()` never throws; the decision is written before generation is attempted |
 | R-2 | **Requester email is unverified** (overview §3) — we now mail a document containing every answer to a self-asserted address | Pre-existing trust boundary, unchanged but *raised in stakes*. Flag it; closing it properly is the directory-integration work (Option C), still unscheduled |
 | R-3 | **A workflow with `completion.required_steps: []`** makes `evaluateCompletion` return `true` from `every()` on an empty array, so `advance()` reports `completed` at start time | `start()` hard-codes `IN_PROGRESS` today, so no email fires and no document is generated — the request silently never completes. Pre-existing, not introduced here; worth a separate ticket, and Phase 7's 409 correctly refuses a document for it |
-| R-4 | **Any authenticated portal user can fetch any task's document** — `submitted_by` is always `null`, so nothing scopes a task to its requester | Real gap, and this feature sharpens it: the document concentrates personal data behind one URL. Recommend scoping `GET /tasks` and `/tasks/:id*` by `req.user` as a follow-on; the endpoint is `requireAuth()`-guarded in the meantime |
+| R-4 | **Any signed-in user could fetch any task's document** — nothing scoped a task to its requester | Real gap at the time, and this feature sharpened it: the document concentrates personal data behind one URL. **Resolved** by the user-access work ([user-access-and-session-management-phase-plan.md](user-access-and-session-management-phase-plan.md), Phase 6): `GET /tasks` is filtered by the caller and every `/tasks/:id*` route, this one included, returns `404` for another user's task |
 | R-5 | **Re-render drift** — a code change to the builder or layout alters an already-issued record | The stored `sha256` makes drift detectable (Phase 7); the log warning is the alarm. Accepted over storing bytes |
 | R-6 | **Long free-text answers** (a `text` input with 4,000 characters) blow the layout | pdfkit flows and paginates text; layout helpers must use its height measurement rather than fixed row heights. Covered by a Phase 4 test with an oversized value |
 | R-7 | **Attachment size** on a mail server with a small cap | `maxAttachmentBytes` (default 5 MB) drops the attachment and leaves the download link. Realistically inert — `file`-typed inputs are labels today, with no upload path |

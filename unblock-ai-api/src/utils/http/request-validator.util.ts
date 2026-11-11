@@ -1,4 +1,5 @@
 import { ValidationError } from "../../errors/validation.error.js";
+import { UUID_PATTERN } from "../../data/constants/identifier.constant.js";
 
 export function requireNonEmptyString(body: unknown, field: string, message?: string): string {
   const value = (body as Record<string, unknown> | null | undefined)?.[field];
@@ -46,4 +47,19 @@ export function optionalPositiveInt(value: unknown, field: string): number | und
     throw new ValidationError(`${field} must be a positive integer`);
   }
   return parsed;
+}
+
+export function requireStringArray(body: unknown, field: string): string[] {
+  const value = (body as Record<string, unknown> | null | undefined)?.[field];
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
+    throw new ValidationError(`Body must include a '${field}' array of strings`);
+  }
+  return value;
+}
+
+export function requireUuid(value: unknown, field: string): string {
+  if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
+    throw new ValidationError(`${field} must be a valid UUID`);
+  }
+  return value;
 }

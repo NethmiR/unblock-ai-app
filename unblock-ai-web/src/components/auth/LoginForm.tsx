@@ -2,51 +2,42 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
-import type { AuthAudience } from "@/types/auth";
+import { messageForAuthError } from "@/lib/auth/auth-error-message";
+import { NEXT_QUERY_PARAMETER, RoutePath, safeRedirectPath } from "@/lib/routing/route-path";
 
-interface Props {
-  audience: AuthAudience;
-  /** Where a successful login lands when there is no `?next=` in the URL. */
-  defaultRedirect: string;
-}
+const INPUT_CLASS =
+  "w-full rounded-control border border-line-admin bg-surface px-3.5 py-2.5 text-[13.5px] text-ink placeholder:text-faint focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:text-faint";
 
-/**
- * Shared between /login (admin) and /portal/login (requester) - the only
- * difference between the two audiences is which endpoint they authenticate
- * against and where they land, both passed in as props.
- *
- * Posts to THIS app's own `/api/auth/login` Route Handler, never to the API
- * directly - the Route Handler is what turns the response into an httpOnly
- * cookie (D-4). `next` is read from `window.location` inside the handler,
- * not via `useSearchParams()`, so this component needs no Suspense boundary.
- */
-export function LoginForm({ audience, defaultRedirect }: Props) {
+export function LoginForm() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
     setError(null);
     setIsBusy(true);
+
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audience, username, password }),
+        body: JSON.stringify({ email, password }),
       });
-      const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(payload?.error ?? "Invalid username or password");
+        const payload: { code?: string } | null = await response.json().catch(() => null);
+        setError(messageForAuthError(payload?.code));
+        setIsBusy(false);
+        return;
       }
 
-      const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(next && next.startsWith("/") ? next : defaultRedirect);
+      const next = new URLSearchParams(window.location.search).get(NEXT_QUERY_PARAMETER);
+      router.replace(safeRedirectPath(next, RoutePath.ACCOUNT));
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    } catch {
+      setError(messageForAuthError(undefined));
       setIsBusy(false);
     }
   }
@@ -54,17 +45,18 @@ export function LoginForm({ audience, defaultRedirect }: Props) {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div>
-        <label htmlFor="username" className="mb-1.5 block text-[12.5px] font-medium text-muted">
-          Username
+        <label htmlFor="email" className="mb-1.5 block text-[12.5px] font-medium text-muted">
+          Email
         </label>
         <input
-          id="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          autoComplete="username"
+          id="email"
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          autoComplete="email"
           autoFocus
           disabled={isBusy}
-          className="w-full rounded-control border border-line-admin bg-surface px-3.5 py-2.5 text-[13.5px] text-ink placeholder:text-faint focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:text-faint"
+          className={INPUT_CLASS}
         />
       </div>
 
@@ -76,20 +68,20 @@ export function LoginForm({ audience, defaultRedirect }: Props) {
           id="password"
           type="password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(event) => setPassword(event.target.value)}
           autoComplete="current-password"
           disabled={isBusy}
-          className="w-full rounded-control border border-line-admin bg-surface px-3.5 py-2.5 text-[13.5px] text-ink placeholder:text-faint focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:text-faint"
+          className={INPUT_CLASS}
         />
       </div>
 
       {error && (
-        <div className="rounded-control border border-danger/40 bg-danger/5 px-3.5 py-2.5 text-[12.5px] text-ink">
+        <div role="alert" className="rounded-control border border-danger/40 bg-danger/5 px-3.5 py-2.5 text-[12.5px] text-ink">
           {error}
         </div>
       )}
 
-      <Button type="submit" disabled={isBusy || !username || !password} className="mt-1 w-full">
+      <Button type="submit" disabled={isBusy || !email || !password} className="mt-1 w-full">
         {isBusy ? "Signing in…" : "Sign in"}
       </Button>
     </form>

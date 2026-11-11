@@ -6,7 +6,6 @@ import { SelectionChat } from "@/components/portal/SelectionChat";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 interface Props {
-  /** From `getRequesterContext(session)` - fetched server-side in page.tsx. */
   requesterContext: Record<string, unknown>;
 }
 

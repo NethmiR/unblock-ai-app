@@ -5,7 +5,7 @@ manual testing in Postman.
 
 - **Server entry point:** `src/server.ts`
 - **App builder:** `src/app.ts`
-- **Route modules:** `src/routes/health.route.ts`, `src/routes/auth.route.ts`, `src/routes/workflow.route.ts`, `src/routes/draft.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`, `src/routes/approval.route.ts`
+- **Route modules:** `src/routes/health.route.ts`, `src/routes/auth.route.ts`, `src/routes/user-session.route.ts`, `src/routes/user.route.ts`, `src/routes/workflow.route.ts`, `src/routes/draft.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`, `src/routes/approval.route.ts`
 
 ---
 
@@ -26,8 +26,10 @@ The port comes from the `PORT` environment variable and defaults to `3000`.
 | Variable        | Example value               |
 | --------------- | ---------------------------- |
 | `baseUrl`       | `http://localhost:3000/api` |
-| `adminToken`    | (filled in from `POST /auth/login`, audience `admin`) |
-| `portalToken`   | (filled in from `POST /auth/login`, audience `portal`) |
+| `loginEmail`    | the seeded administrator's email (`SEED_ADMINISTRATOR_EMAIL`) |
+| `loginPassword` | `USER_DEFAULT_PASSWORD` from `.env` |
+| `authToken`     | (filled in from `POST /auth/login`) |
+| `userId`        | (filled in from `POST /users`) |
 | `draftId`       | (filled in from a response) |
 | `workflowId`    | (filled in from a response) |
 | `sessionId`     | (filled in from a response) |
@@ -40,11 +42,20 @@ The runnable Postman collection and environment ship at [../postman/](../postman
 
 ```bash
 npm install
-npm run migrate:up  # applies pending Postgres + Mongo migrations
+npm run migrate:up   # applies pending Postgres + Mongo migrations
+npm run seed:pg:run  # creates the bootstrap administrator (safe to re-run)
 npm run dev          # tsx watch, or: npm run build && npm start
 ```
 
-The process refuses to start unless the required variables are set — see
+`npm run seed:pg:run` creates one user from `SEED_ADMINISTRATOR_EMAIL` /
+`SEED_ADMINISTRATOR_FULL_NAME` holding **every** permission (§1 *Permissions*).
+Its password is `USER_DEFAULT_PASSWORD`, the same initial password every user
+created through `POST /api/users` (§13.1) gets. Re-running it skips the user
+when that email is already registered. See
+[../guides/database-seeding.md](../guides/database-seeding.md).
+
+The process refuses to start unless the required variables are set
+(`USER_DEFAULT_PASSWORD` among them) — see
 [../guides/configuration.md](../guides/configuration.md) for the full list, or
 `src/config/env.config.ts` / `src/config/index.config.ts` for how they are read and validated.
 
@@ -53,25 +64,44 @@ The process refuses to start unless the required variables are set — see
 | Header          | Value               | When                                                    |
 | --------------- | ------------------- | -------------------------------------------------------- |
 | `Content-Type`  | `application/json`  | On every `POST`/`PUT`/`PATCH`                            |
-| `Authorization` | `Bearer <token>`    | On every route below marked `auth` or `admin` in §2      |
+| `Authorization` | `Bearer <token>`    | On every route whose Auth column in §2 is not `none`     |
+| `User-Agent`    | any                 | Optional; recorded on the session created by `POST /api/auth/login` |
 
 Most routes require a bearer session token, obtained from `POST /api/auth/login`
-(see §12). `src/middlewares/authenticate.middleware.ts` parses the token and
-populates `req.user` when present, but never rejects by itself; the per-route
-guards in `src/middlewares/require-auth.middleware.ts` do the rejecting:
+(§12). `src/middlewares/authenticate.middleware.ts` looks the token up and
+populates `req.auth` (the user plus the session) when it belongs to an active
+session of an active user, but never rejects by itself. The per-route guards
+do the rejecting:
 
-| Guard | Requires | Failure |
-| --- | --- | --- |
-| `requireAuth()` | any valid session, either audience | `401` with no/invalid token |
-| `requireRole("admin")` | a valid session with `audience: "admin"` | `401` with no/invalid token, `403` for a `portal` token |
+| Guard | Source | Requires | Failure |
+| --- | --- | --- | --- |
+| `requireAuthentication()` | `require-authentication.middleware.ts` | any active session | `401 AUTHENTICATION_REQUIRED` |
+| `requireAnyPermission(...)` | `require-permission.middleware.ts` | an active session whose user holds **at least one** of the listed permissions | `401 AUTHENTICATION_REQUIRED` with no usable token; `403 PERMISSION_DENIED` when the user holds none of them |
+| task ownership | `require-task-ownership.middleware.ts` | the caller created the task named by `:id` | `404 NOT_FOUND` — identical to a missing task (§7) |
+
+A missing, malformed, unknown, expired or revoked token is never an error on
+its own; it simply leaves `req.auth` unset, so a guarded route answers
+`401 AUTHENTICATION_REQUIRED`. The same is true of a still-unexpired session
+whose user has since been disabled.
 
 `/api/health` and all of `/api/approvals/*` have **no** guard — approval links
 are authenticated by their own per-step token (§8), not a session, and must
 keep working for an approver with no account at all.
 
-Without a valid token, `req.user` is `undefined` and `submitted_by` on a draft
-stays `null` regardless of guard — nothing currently reads `req.user` to
-populate it (tracked as a follow-on, not part of this slice).
+**Permissions.** Every user holds one or more of these (never zero):
+
+| Permission | Grants |
+| --- | --- |
+| `workflow:manage` | Create, edit, review and delete workflow templates and drafts |
+| `task:create` | Find a workflow (selection) and create, complete and manage **their own** tasks |
+| `task:approve` | Can be granted, but currently gates no endpoint — approvers act through approval links (§8) |
+| `user:manage` | Create and view users and their permissions (§13) |
+
+A user with several permissions passes any guard that lists one of them. The
+bootstrap administrator from `npm run seed:pg:run` holds all four.
+
+`POST /api/drafts` records the authenticated user's id as the draft's
+`submitted_by` (stored, not returned in the draft response).
 
 Request bodies are capped at **1 MB** (`express.json({ limit: "1mb" })`, `src/middlewares/json-body.middleware.ts`).
 
@@ -87,43 +117,54 @@ only affects browsers; Postman ignores it.
 | # | Method | Path | Purpose | Auth |
 | - | ------ | ---- | ------- | ---- |
 | 1 | `GET`    | `/api/health`                          | Liveness check | none |
-| 2 | `POST`   | `/api/auth/login`                      | Log in, either audience — returns a bearer token (§12.1) | none |
-| 3 | `GET`    | `/api/auth/me`                         | Get the caller's own identity from their token (§12.2) | `requireAuth()` |
-| 4 | `POST`   | `/api/auth/logout`                     | No-op `204` — sessions are stateless (§12.3) | none |
-| 5 | `POST`   | `/api/workflows/extract`               | Extract a workflow JSON from prose (does **not** save) | `admin` |
-| 6 | `POST`   | `/api/workflows`                       | Save a workflow document as a new version | `admin` |
-| 7 | `GET`    | `/api/workflows`                       | List latest workflow summaries | `requireAuth()` |
-| 8 | `GET`    | `/api/workflows/:id`                   | Get one workflow document | `requireAuth()` |
-| 9 | `PUT`    | `/api/workflows/:id`                   | Update a workflow (saves a new version) | `admin` |
-| 10 | `POST`  | `/api/workflows/:id/validate`          | Validate a workflow without saving | `admin` |
-| 11 | `DELETE` | `/api/workflows/:id`                  | Permanently delete a template; logs the deleting admin (§4.7) | `admin` |
-| 12 | `GET`   | `/api/workflows/deletions`             | The template deletion log, newest first (§4.8) | `admin` |
-| 13 | `POST`  | `/api/drafts`                          | Save raw prose as a draft (idempotent) | `admin` |
-| 14 | `GET`   | `/api/drafts`                          | List drafts | `admin` |
-| 15 | `GET`   | `/api/drafts/:id`                      | Get one draft | `admin` |
-| 16 | `POST`  | `/api/drafts/:id/extract`              | Generate + save a template from a draft | `admin` |
-| 17 | `GET`   | `/api/workflows/:id/record`            | Get the full stored row (admin editor) | `requireAuth()` |
-| 18 | `PATCH` | `/api/workflows/:id/review`            | Publish / reject a template | `admin` |
-| 19 | `POST`  | `/api/selection/sessions`              | Start a selection conversation (round 1) | `requireAuth()` |
-| 20 | `POST`  | `/api/selection/sessions/:id/answer`   | Answer a clarifying question (round 2+) | `requireAuth()` |
-| 21 | `POST`  | `/api/selection/sessions/:id/choose`   | Pick a workflow manually | `requireAuth()` |
-| 22 | `GET`   | `/api/selection/sessions/:id/workflow` | Get the matched workflow document | `requireAuth()` |
-| 23 | `POST`  | `/api/tasks`                           | Create a task from a matched selection session | `requireAuth()` |
-| 24 | `GET`   | `/api/tasks`                           | List tasks (filter by `session_id` / `status`) | `requireAuth()` |
-| 25 | `GET`   | `/api/tasks/:id`                       | Get one task | `requireAuth()` |
-| 26 | `GET`   | `/api/tasks/:id/next`                  | Get the next unfilled requirement | `requireAuth()` |
-| 27 | `POST`  | `/api/tasks/:id/values`                | Submit a value for a requirement | `requireAuth()` |
-| 28 | `POST`  | `/api/tasks/:id/finalize`              | Finalize a task once all required values are filled | `requireAuth()` |
-| 29 | `PATCH` | `/api/tasks/:id/status`                | Cancel a task | `requireAuth()` |
-| 30 | `POST`  | `/api/tasks/:id/start`                 | Start the approval chain — dispatches the first step(s) and sends email | `requireAuth()` |
-| 31 | `GET`   | `/api/tasks/:id/status`                | Requester-facing status timeline | `requireAuth()` |
-| 32 | `GET`   | `/api/tasks/:id/document`              | Download the completion-document PDF record (§7.10) | `requireAuth()` |
-| 33 | `GET`   | `/api/approvals/:token`                | Approver view — the decision page's data | none — the approval token IS the auth |
-| 34 | `POST`  | `/api/approvals/:token/decision`       | Submit an approve / reject / request-more-info decision | none — the approval token IS the auth |
+| 2 | `POST`   | `/api/auth/login`                      | Log in with email + password — returns a bearer token (§12.1) | none |
+| 3 | `GET`    | `/api/auth/me`                         | The caller's user and current session (§12.2) | authenticated |
+| 4 | `POST`   | `/api/auth/logout`                     | Revoke the current session (§12.3) | authenticated |
+| 5 | `GET`    | `/api/auth/sessions`                   | List the caller's active sessions (§12.4) | authenticated |
+| 6 | `DELETE` | `/api/auth/sessions/others`            | Revoke every session except the current one (§12.5) | authenticated |
+| 7 | `DELETE` | `/api/auth/sessions/:sessionId`        | Revoke one of the caller's sessions (§12.6) | authenticated |
+| 8 | `POST`   | `/api/users`                           | Create a user (§13.1) | `user:manage` |
+| 9 | `GET`    | `/api/users`                           | List users (§13.2) | `user:manage` |
+| 10 | `GET`   | `/api/users/:userId`                   | Get one user (§13.3) | `user:manage` |
+| 11 | `POST`  | `/api/workflows/extract`               | Extract a workflow JSON from prose (does **not** save) | `workflow:manage` |
+| 12 | `POST`  | `/api/workflows`                       | Save a workflow document as a new version | `workflow:manage` |
+| 13 | `GET`   | `/api/workflows`                       | List latest workflow summaries | `workflow:manage` or `task:create` |
+| 14 | `GET`   | `/api/workflows/:id`                   | Get one workflow document | `workflow:manage` or `task:create` |
+| 15 | `PUT`   | `/api/workflows/:id`                   | Update a workflow (saves a new version) | `workflow:manage` |
+| 16 | `POST`  | `/api/workflows/:id/validate`          | Validate a workflow without saving | `workflow:manage` |
+| 17 | `PATCH` | `/api/workflows/:id/title`             | Rename a template | `workflow:manage` |
+| 18 | `DELETE` | `/api/workflows/:id`                  | Permanently delete a template; logs the deleting user (§4.7) | `workflow:manage` |
+| 19 | `GET`   | `/api/workflows/deletions`             | The template deletion log, newest first (§4.8) | `workflow:manage` |
+| 20 | `POST`  | `/api/drafts`                          | Save raw prose as a draft (idempotent) | `workflow:manage` |
+| 21 | `GET`   | `/api/drafts`                          | List drafts | `workflow:manage` |
+| 22 | `GET`   | `/api/drafts/:id`                      | Get one draft | `workflow:manage` |
+| 23 | `POST`  | `/api/drafts/:id/extract`              | Generate + save a template from a draft | `workflow:manage` |
+| 24 | `GET`   | `/api/workflows/:id/record`            | Get the full stored row (template editor) | `workflow:manage` or `task:create` |
+| 25 | `PATCH` | `/api/workflows/:id/review`            | Publish / reject a template | `workflow:manage` |
+| 26 | `POST`  | `/api/selection/sessions`              | Start a selection conversation (round 1) | `task:create` |
+| 27 | `POST`  | `/api/selection/sessions/:id/answer`   | Answer a clarifying question (round 2+) | `task:create` |
+| 28 | `POST`  | `/api/selection/sessions/:id/choose`   | Pick a workflow manually | `task:create` |
+| 29 | `GET`   | `/api/selection/sessions/:id/workflow` | Get the matched workflow document | `task:create` |
+| 30 | `POST`  | `/api/tasks`                           | Create a task from a matched selection session | `task:create` |
+| 31 | `GET`   | `/api/tasks`                           | List the caller's own tasks (filter by `session_id` / `status`) | `task:create` |
+| 32 | `GET`   | `/api/tasks/:id`                       | Get one task | `task:create` + owner |
+| 33 | `GET`   | `/api/tasks/:id/next`                  | Get the next unfilled requirement | `task:create` + owner |
+| 34 | `POST`  | `/api/tasks/:id/values`                | Submit a value for a requirement | `task:create` + owner |
+| 35 | `POST`  | `/api/tasks/:id/finalize`              | Finalize a task once all required values are filled | `task:create` + owner |
+| 36 | `PATCH` | `/api/tasks/:id/status`                | Cancel a task | `task:create` + owner |
+| 37 | `POST`  | `/api/tasks/:id/start`                 | Start the approval chain — dispatches the first step(s) and sends email | `task:create` + owner |
+| 38 | `GET`   | `/api/tasks/:id/status`                | Requester-facing status timeline | `task:create` + owner |
+| 39 | `GET`   | `/api/tasks/:id/document`              | Download the completion-document PDF record (§7.10) | `task:create` + owner |
+| 40 | `DELETE` | `/api/tasks/:id`                      | Permanently delete a finished or never-started task | `task:create` + owner |
+| 41 | `GET`   | `/api/approvals/:token`                | Approver view — the decision page's data | none — the approval token IS the auth |
+| 42 | `POST`  | `/api/approvals/:token/decision`       | Submit an approve / reject / request-more-info decision | none — the approval token IS the auth |
 
-34 total route bindings. `admin` means `requireRole("admin")` — a `portal`
-token gets `403`, no token gets `401`. `requireAuth()` accepts either
-audience. See §1 for what each guard means in practice.
+42 route bindings. **authenticated** means `requireAuthentication()` — any
+active session, whatever its permissions. A permission name means
+`requireAnyPermission(...)`; "`workflow:manage` or `task:create`" passes with
+either. **+ owner** adds the task-ownership guard: a task created by another
+user answers `404`, exactly like one that does not exist. See §1 for what each
+guard returns on failure.
 
 > `GET /api/tasks/:id/status` and `GET /api/tasks/:id/document` are both
 > registered **before** the bare `GET /api/tasks/:id` pattern in
@@ -454,11 +495,11 @@ the `:id` path parameter is **not used** by the handler — any value works.
 ### 4.7 `DELETE /api/workflows/:id`
 
 Permanently deletes every version of a template and writes a `template_deletions`
-row (Postgres) naming which admin did it. `admin` only — a `portal` token gets
-`403`.
+row (Postgres) naming which user did it. Requires `workflow:manage` — any
+other caller gets `403 PERMISSION_DENIED`.
 
 Deliberately gated on a **typed confirmation**, re-checked server-side so the
-guard survives a caller that skips the admin UI:
+guard survives a caller that skips the web UI:
 
 ```json
 { "confirmation": "delete", "confirm_title": "Overseas Leave Request" }
@@ -495,7 +536,7 @@ guard survives a caller that skips the admin UI:
 
 ### 4.8 `GET /api/workflows/deletions`
 
-The template deletion log, newest first. `admin` only.
+The template deletion log, newest first. Requires `workflow:manage`.
 
 | Parameter     | In    | Required | Notes |
 | ------------- | ----- | -------- | ----- |
@@ -516,8 +557,8 @@ The template deletion log, newest first. `admin` only.
     "versions_removed": 3,
     "institution_type": "faculty",
     "review_status": "confirmed",
-    "deleted_by_admin_id": "3f9a1e2b-...",
-    "deleted_by_username": "admin",
+    "deleted_by_user_id": "3f9a1e2b-...",
+    "deleted_by_email": "ops.lead@example.edu",
     "reason": null,
     "request_id": null,
     "snapshot": { "title": "Overseas Leave Request", "latest_version": 3 },
@@ -526,14 +567,16 @@ The template deletion log, newest first. `admin` only.
 ]
 ```
 
-`deleted_by_username` is denormalised onto the row at delete time, so the log
-stays readable even if the admin account is later renamed.
+`deleted_by_user_id` references the `users` row of the caller who deleted the
+template. `deleted_by_email` is that user's email, copied onto the row at
+delete time so the log stays readable without a join.
 
 ---
 
-## 5. Draft endpoints (admin write path)
+## 5. Draft endpoints (template authoring path)
 
-The admin flow is: **save draft → extract → review → publish.**
+Every route in this section requires `workflow:manage`. The authoring flow is:
+**save draft → extract → review → publish.**
 
 ### 5.1 `POST /api/drafts`
 
@@ -604,7 +647,7 @@ query string — the limit is a store default).
 
 ### 5.4 `POST /api/drafts/:id/extract`
 
-The core admin action, "Generate template". It extracts the workflow from the
+The core authoring action, "Generate template". It extracts the workflow from the
 draft's `raw_text`, saves it as a new version with its embedding, and links the
 draft to the resulting `workflow_id`.
 
@@ -646,7 +689,7 @@ Same latency caveat as §4.1 — allow up to a minute.
 
 ### 5.5 `GET /api/workflows/:id/record`
 
-The full stored row rather than the bare document. The admin editor needs
+The full stored row rather than the bare document. The template editor needs
 `draft_id` so it can load the original prose beside the generated template.
 
 | Parameter | In    | Required | Notes |
@@ -715,6 +758,8 @@ document's `metadata.review_status`.
 ---
 
 ## 6. Selection endpoints (end-user read path)
+
+Every route in this section requires `task:create`.
 
 A multi-round conversation that maps a plain-language request onto one
 confirmed template. The agent returns one of four decisions:
@@ -933,6 +978,16 @@ The full document for the matched workflow — this drives the plan preview.
 
 ## 7. Task endpoints (requirement collection)
 
+Every route in this section requires `task:create`. A task belongs to the user
+who created it (`POST /api/tasks` stores the caller's id as its creator), and
+only that user can see or act on it:
+
+- `GET /api/tasks` (§7.3) always returns only the caller's own tasks.
+- Every `/api/tasks/:id*` route first checks that the caller created the task.
+  A task created by someone else answers `404 NOT_FOUND` ("Task '<id>' not
+  found"), exactly like a task that does not exist, so the response never
+  reveals that another user's task id is real.
+
 A task walks a requester through supplying the values a matched workflow needs, then
 finalizes into a runnable plan. It is created from a **matched** selection session
 (§6), and moves through a small status machine:
@@ -1099,6 +1154,9 @@ Save `id` into `{{taskId}}`.
 ---
 
 ### 7.3 `GET /api/tasks` (list)
+
+Only ever returns tasks the caller created. There is no parameter to list
+another user's tasks.
 
 **Query parameters**
 
@@ -1415,7 +1473,7 @@ the download.
 ## 8. Approval endpoints (approver decision path)
 
 Token-authenticated, not session-authenticated — a different mechanism from the rest
-of the API (which has no auth at all). The token is the credential; anyone holding the
+of the API (which uses bearer sessions, §1). The token is the credential; anyone holding the
 link in an approval email can act as that approver. `src/controllers/approval.controller.ts`
 + `src/routes/approval.route.ts`.
 
@@ -1548,10 +1606,10 @@ hierarchy) instead of maintaining a separate status lookup table:
 | Status | Shape | Raised by |
 | ------ | ----- | --------- |
 | `400`  | `{ "error", "code": "VALIDATION_ERROR", "details" }` | `ValidationError` — per-route body checks |
-| `401`  | `{ "error", "code": "UNAUTHORIZED", "details": null }` | `UnauthorizedError` — no/invalid token on a guarded route, or a bad login (§12.1) |
-| `403`  | `{ "error", "code": "FORBIDDEN", "details": null }` | `ForbiddenError` — right token, wrong audience for `requireRole("admin")`; also a disabled account or a locked-out login |
-| `404`  | `{ "error", "code": "NOT_FOUND", "details" }` | `NotFoundError` — missing draft, workflow, or session |
-| `409`  | `{ "error", "code": "CONFLICT", "details" }` | `ConflictError` — §6.4 on an unmatched session, §4.7 on an in-progress-requests delete |
+| `401`  | `{ "error", "code": "AUTHENTICATION_REQUIRED" \| "INVALID_CREDENTIALS", "details": null }` | `UnauthorizedError` — no usable session on a guarded route (§1), or a bad login (§12.1) |
+| `403`  | `{ "error", "code": "PERMISSION_DENIED" \| "ACCOUNT_LOCKED" \| "ACCOUNT_DISABLED", "details": null }` | `ForbiddenError` — authenticated but missing every permission the route accepts; or a login refused for a locked or disabled account (§12.1) |
+| `404`  | `{ "error", "code": "NOT_FOUND" \| "USER_NOT_FOUND" \| "USER_SESSION_NOT_FOUND", "details" }` | `NotFoundError` — missing draft, workflow, selection session or task (including another user's task, §7); unknown user (§13.3); a session id that is not one of the caller's active sessions (§12.6) |
+| `409`  | `{ "error", "code": "CONFLICT" \| "EMAIL_ALREADY_REGISTERED", "details" }` | `ConflictError` — §6.4 on an unmatched session, §4.7 on an in-progress-requests delete, §13.1 on a duplicate email |
 | `422`  | `{ "error", "code": "EXTRACTION_ERROR", "details": <errors\|null> }` | `ExtractionError` only — the model could not produce a valid workflow |
 | `500`  | `{ "error": "Internal server error", "code": "INTERNAL_ERROR", "details": null }` | Anything untyped — details are logged, never returned |
 | `502`  | `{ "error", "code": "SELECTION_ERROR" \| "EMBEDDING_ERROR", "details": <cause\|null> }` | `SelectionError`, `EmbeddingError` — upstream Azure failure |
@@ -1591,6 +1649,10 @@ not an ObjectId, and an invalid one is a clean 404 (§8.1) rather than a 500:
 | 24 hex chars, no matching row | `404` | `{ "error": "Draft '<id>' not found", "code": "NOT_FOUND" }` |
 | Anything else (`not-an-objectid`, `123`) | `500` | `{ "error": "Failed to look up draft by id", "code": "DATABASE_ERROR" }` |
 
+`/tasks/:id*` routes are the exception: the ownership guard (§1) validates the id
+before any lookup, so a malformed task id returns `400` with
+`{ "error": "'<id>' is not a valid id", "code": "VALIDATION_ERROR" }`.
+
 The malformed case fails inside the driver before any not-found check runs, so it is
 reported as a database fault rather than the 400 the input actually deserves. Nothing
 sensitive leaks — the generic message is all the client sees — but when testing, read a
@@ -1611,10 +1673,17 @@ Collection Runner pass needs no manual variable entry.
 | Folder | Call | Capture |
 | --- | ---- | ------- |
 | Health | `GET /health` | confirm `status: "ok"` |
-| Auth | `POST /auth/login` with `audience: "admin"` (seeded credentials, §12.1) | `token` → `{{adminToken}}` |
-| Auth | `POST /auth/login` with `audience: "portal"` | `token` → `{{portalToken}}` |
-| Auth | `GET /auth/me` with `Authorization: Bearer {{adminToken}}` | confirm the token round-trips to the right `user` |
-| Drafts | `POST /drafts` with prose from `src/data/samples/demo-drafts/it_overseas_leave.txt` (send `Authorization: Bearer {{adminToken}}` — every remaining `admin`-guarded call below does the same) | `id` → `{{draftId}}` |
+| Auth | `POST /auth/login` with `{{loginEmail}}` / `{{loginPassword}}` (the seeded administrator, §12.1) | `token` → `{{authToken}}` |
+| Auth | `GET /auth/me` with `Authorization: Bearer {{authToken}}` | confirm the `user` and its four `permissions` |
+| Auth | `POST /auth/login` again | `token` → `{{secondAuthToken}}` — a second concurrent session |
+| Auth | `GET /auth/sessions` | the newest session with `is_current: false` → `{{otherUserSessionId}}` |
+| Auth | `DELETE /auth/sessions/{{otherUserSessionId}}` | `204`; `{{secondAuthToken}}` now gets `401` |
+| Auth | `DELETE /auth/sessions/others` | `revoked_count` (sessions left over from earlier runs) |
+| Auth | `POST /auth/logout` with a throwaway session | `204`; that token now gets `401` — `{{authToken}}` is untouched |
+| Users | `POST /users` with a unique email | `user.id` → `{{userId}}` |
+| Users | `GET /users` | the new user appears in the list |
+| Users | `GET /users/{{userId}}` | the same `UserDto` |
+| Drafts | `POST /drafts` with prose from `src/data/samples/demo-drafts/it_overseas_leave.txt` (send `Authorization: Bearer {{authToken}}` — every call below does the same) | `id` → `{{draftId}}` |
 | Drafts | `GET /drafts` | confirm the array includes the new draft |
 | Drafts | `GET /drafts/{{draftId}}` | confirm `status: "pending"` |
 | Drafts | `POST /drafts/{{draftId}}/extract` | `workflow_id` → `{{workflowId}}`, `version` → `{{templateVersion}}` (slow) |
@@ -1645,11 +1714,19 @@ Collection Runner pass needs no manual variable entry.
 | Tasks | `PATCH /tasks/{{taskId}}/status` with `{"status":"cancelled"}` | only on a scratch task **before** `start` — this is terminal |
 | Error cases | one request per error class (400, 404, 409, 422) | asserts `{ error, code, details }` |
 
-Selection, Tasks, and the `GET /workflows*` rows above all accept either
-`{{adminToken}}` or `{{portalToken}}` (`requireAuth()`, §1) — use
-`{{portalToken}}` for those to exercise the requester-facing audience; every
-`POST/PUT/PATCH/DELETE /workflows*` and every `/drafts*` row needs
-`{{adminToken}}` specifically, or it 403s.
+The seeded administrator holds every permission, so one `{{authToken}}` drives
+the whole sequence. To exercise the permission guards, create a user with only
+`task:create` (§13.1), log in as them (their password is
+`USER_DEFAULT_PASSWORD`), and use that token: Selection, Tasks and the
+`GET /workflows*` rows still pass, while every
+`POST/PUT/PATCH/DELETE /workflows*`, every `/drafts*` and every `/users*` row
+answers `403 PERMISSION_DENIED`. Tasks are visible only to the user who created
+them (§7), so switch tokens before creating a task, not halfway through one.
+
+**Do not log out of `{{authToken}}` mid-run.** Logout (and revoking the current
+session through §12.6) really revokes the session, so every later request would
+answer `401`. The collection's Logout request logs in a throwaway session first
+and logs that one out instead.
 
 Repeat the Drafts/Workflows folders with a second template
 (`src/data/samples/demo-drafts/workshop_event.txt`) so the selector has something to
@@ -1657,12 +1734,14 @@ disambiguate between — with one candidate it will rarely return `ambiguous`.
 
 **Postman scripting** — the collection uses `pm.collectionVariables.set(...)` in each
 request's *Tests* tab rather than environment variables, so the chain works the same way
-whether or not an environment is selected. For example, `POST /auth/login` (audience
-`admin`):
+whether or not an environment is selected. For example, `POST /auth/login`:
 
 ```javascript
-pm.collectionVariables.set("adminToken", pm.response.json().token);
+pm.collectionVariables.set("authToken", pm.response.json().token);
 ```
+
+The collection-level auth is `Bearer {{authToken}}`, so every request after
+Login authenticates without a manual header.
 
 and `POST /drafts`:
 
@@ -1772,99 +1851,352 @@ JSON) when you want a specific answer rather than a placeholder.
 
 ## 12. Auth endpoints
 
-Two independent user populations — `admin_users` and `portal_users` in
-PostgreSQL — sharing one login shape. Sessions are stateless HMAC-signed
-bearer tokens (no `sessions` table, no server-side revocation): `POST
-/auth/login` returns a token, every other route checks it via the
-`Authorization: Bearer <token>` header, and `POST /auth/logout` is a `204`
-no-op because there is nothing server-side to invalidate.
+`src/routes/auth.route.ts` (login, me, logout) and
+`src/routes/user-session.route.ts` (session management).
+
+**Users.** There is one `users` table in PostgreSQL. A user signs in with their
+email, which is stored trimmed and lower-cased and is unique regardless of
+case. Each user has a `status` (`active` or `disabled`) and holds one or more
+permissions (§1). Users are created through §13 or, for the first
+administrator, by `npm run seed:pg:run` (§1).
+
+**Sessions.** Sessions are server-side rows in the `user_sessions` table:
+
+- `POST /auth/login` issues an opaque random token: 32 random bytes, base64url
+  encoded, so 43 characters. Only its SHA-256 hash is stored, so the token
+  itself is shown exactly once, in the login response.
+- Send it on every guarded request as `Authorization: Bearer <token>`.
+- A session expires `SESSION_TTL_HOURS` (default `12`) after login. This is an
+  absolute lifetime: using the session does **not** extend it.
+- A user can hold many sessions at once, for example one per browser or device.
+- `POST /auth/logout` and the revoke endpoints (§12.5, §12.6) revoke a session
+  immediately. The very next request with that token answers
+  `401 AUTHENTICATION_REQUIRED`.
+- Each session records the login request's `User-Agent`, `created_at`,
+  `expires_at` and `last_seen_at`. `last_seen_at` is refreshed at most once
+  every 5 minutes.
+- Each successful login also deletes that user's already-expired sessions.
+
+**Lockout.** Every wrong password against a registered email increments the
+user's `failed_login_count` and stamps `last_failed_login_at`. If the previous
+failure is older than `AUTH_LOCKOUT_DURATION_MINUTES` (default `15`), the count
+restarts at 1. A successful login resets both. An unknown email changes
+nothing, because there is no row to update.
+
+When `AUTH_MAX_FAILED_ATTEMPTS` is greater than `0`:
+
+- The failed attempt that reaches the limit answers `403 ACCOUNT_LOCKED`.
+- Every login attempt for that account answers `403 ACCOUNT_LOCKED` until
+  `AUTH_LOCKOUT_DURATION_MINUTES` have passed since the last failure. This
+  includes attempts with the **correct** password.
+
+`AUTH_MAX_FAILED_ATTEMPTS` defaults to `0`. At `0`, failures are still counted
+but nothing is ever locked.
+
+All auth errors use the standard body `{ "error", "code", "details": null }`
+(§9). The codes are:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| `400` | `VALIDATION_ERROR` | Missing or blank login fields; a `:sessionId` that is not a UUID |
+| `401` | `INVALID_CREDENTIALS` | Unknown email or wrong password |
+| `401` | `AUTHENTICATION_REQUIRED` | No usable session on a guarded route |
+| `403` | `ACCOUNT_LOCKED` | Login refused by the lockout above |
+| `403` | `ACCOUNT_DISABLED` | Correct password, but the account's `status` is `disabled` |
+| `403` | `PERMISSION_DENIED` | Authenticated, but the user holds none of the permissions the route accepts |
+| `404` | `USER_SESSION_NOT_FOUND` | §12.6 with a session id that does not exist, belongs to another user, or is already revoked or expired |
 
 ### 12.1 `POST /api/auth/login`
 
-No auth required — this is how you get a token.
+No auth required — this is how you get a token. The request's `User-Agent`
+header, if any, is stored on the new session.
 
 **Request body**
 
 ```json
-{ "audience": "admin", "username": "admin", "password": "Admin@12345" }
+{ "email": "ops.lead@example.edu", "password": "your-password" }
 ```
 
-| Field      | Required | Notes |
-| ---------- | -------- | ----- |
-| `audience` | yes      | `"admin"` or `"portal"` — selects which table is checked |
-| `username` | yes      | Case-insensitive |
-| `password` | yes      | Checked against a scrypt hash |
+| Field      | Type   | Required | Notes |
+| ---------- | ------ | -------- | ----- |
+| `email`    | string | yes      | Non-blank. Trimmed and lower-cased before lookup, so case does not matter |
+| `password` | string | yes      | Non-blank. Checked against a scrypt hash |
 
 **200 OK**
 
 ```json
 {
-  "token": "eyJzdWIiOi...ZTIn.9f2a...",
-  "expires_at": "2026-08-28T21:00:00.000Z",
+  "token": "q3Zt0mR8Yc1vN5pW2xH7kL9sD4fG6jB0aE3uT8oI1yQ",
+  "expires_at": "2026-11-11T21:00:00.000Z",
   "user": {
-    "id": "3f9a1e2b-...",
-    "audience": "admin",
-    "username": "admin",
-    "email": "admin@unblock-ai.local",
+    "id": "3f9a1e2b-7c4d-4e5f-8a6b-1c2d3e4f5a6b",
+    "email": "ops.lead@example.edu",
     "full_name": "Nadeesha Perera",
-    "department": "Registrar's Office",
-    "organisation": null,
-    "faculty": null
+    "permissions": ["workflow:manage", "task:create", "task:approve", "user:manage"]
   }
 }
 ```
 
-Save `{{adminToken}}` / `{{portalToken}}` from `token` here — a Postman test
-script on this request can do it automatically (§10).
+`expires_at` is the session's absolute expiry (login time plus
+`SESSION_TTL_HOURS`). Save `token` into `{{authToken}}`; the collection's Login
+request does this automatically (§10).
 
-**401 Unauthorized** — wrong password **or** unknown username, same status and
-same message either way (so a caller can't use the response to enumerate
-valid usernames):
+**Errors**
 
-```json
-{ "error": "Invalid username or password", "code": "UNAUTHORIZED", "details": null }
-```
+| Status | Body |
+| ------ | ---- |
+| `400`  | `{ "error": "Body must include a non-empty 'email' field", "code": "VALIDATION_ERROR", "details": null }` (or `'password'`) |
+| `401`  | `{ "error": "Invalid email or password", "code": "INVALID_CREDENTIALS", "details": null }` |
+| `403`  | `{ "error": "Account locked after too many failed attempts", "code": "ACCOUNT_LOCKED", "details": null }` |
+| `403`  | `{ "error": "Account is disabled", "code": "ACCOUNT_DISABLED", "details": null }` |
 
-A wrong password against a *known* username also increments that account's
-`failed_attempt_count` and stamps `last_failed_attempt_at` — visible only via
-direct DB inspection, not in this response. A wrong password against an
-*unknown* username increments nothing (there is no row to increment).
+An unknown email and a wrong password get the same `401` with the same message,
+so the response cannot be used to find out which emails are registered.
 
-**403 Forbidden** — the account exists and the password is right, but:
+The checks run in this order:
 
-- the account is disabled (`is_active = false`), or
-- `AUTH_MAX_FAILED_ATTEMPTS > 0` and this account just hit the limit.
-
-`AUTH_MAX_FAILED_ATTEMPTS` defaults to `0` (tracked, not enforced) — see the
-root [phase plan](../../../docs/auth-and-deletion-tracking-phase-plan.md), D-7.
-
-**400 Bad Request** — missing/blank `audience`, `username`, or `password`, or
-an `audience` outside `"admin" | "portal"`.
+1. The password is always verified first, so response timing does not reveal
+   whether an account is locked.
+2. A locked account answers `ACCOUNT_LOCKED`, whether or not the password
+   matched.
+3. A wrong password answers `INVALID_CREDENTIALS` and counts toward the
+   lockout. This applies to disabled accounts too.
+4. A correct password on a disabled account answers `ACCOUNT_DISABLED`.
 
 ---
 
 ### 12.2 `GET /api/auth/me`
 
-Returns the caller's own identity from their token. Useful for confirming a
-saved `{{adminToken}}` / `{{portalToken}}` is still valid before running the
+Requires an active session. Returns the caller's user and current session.
+Useful for confirming a saved `{{authToken}}` is still valid before running the
 rest of a Postman folder.
 
-`GET {{baseUrl}}/auth/me` with `Authorization: Bearer {{adminToken}}`
+`GET {{baseUrl}}/auth/me` with `Authorization: Bearer {{authToken}}`
 
-**200 OK** — `{ "user": { ... } }`, same `user` shape as §12.1.
-
-**401 Unauthorized** — missing, malformed, expired, or tampered token:
+**200 OK**
 
 ```json
-{ "error": "Invalid or expired session", "code": "UNAUTHORIZED", "details": null }
+{
+  "user": {
+    "id": "3f9a1e2b-7c4d-4e5f-8a6b-1c2d3e4f5a6b",
+    "email": "ops.lead@example.edu",
+    "full_name": "Nadeesha Perera",
+    "permissions": ["workflow:manage", "task:create", "task:approve", "user:manage"]
+  },
+  "session": {
+    "id": "8b1c2d3e-4f5a-4b6c-9d7e-0f1a2b3c4d5e",
+    "expires_at": "2026-11-11T21:00:00.000Z"
+  }
+}
+```
+
+`user` has the same shape as in §12.1. `permissions` is read fresh on every
+request, so a change to the user's permissions shows up here without logging in
+again.
+
+**401 Unauthorized** — no token, or one that is unknown, expired or revoked, or
+whose user is now disabled:
+
+```json
+{ "error": "Authentication required", "code": "AUTHENTICATION_REQUIRED", "details": null }
 ```
 
 ---
 
 ### 12.3 `POST /api/auth/logout`
 
-**204 No Content**, always — no body, no auth required. Sessions are
-stateless (no `sessions` table to delete a row from), so this exists only for
-API symmetry; the actual "log out" is the caller discarding its token. The web
-app additionally clears its own httpOnly cookie on this path (`unblock-ai-web/src/app/api/auth/logout/route.ts`) —
-see the root [phase plan](../../../docs/auth-and-deletion-tracking-phase-plan.md), D-4, for the cookie flow.
+Requires an active session. Revokes the session the request was made with. The
+token stops working immediately. Other sessions of the same user are not
+affected.
+
+**204 No Content** — no body.
+
+**401 Unauthorized** — `AUTHENTICATION_REQUIRED`, as in §12.2. Calling logout
+twice with the same token therefore gets `204` and then `401`.
+
+---
+
+### 12.4 `GET /api/auth/sessions`
+
+Requires an active session. Lists the caller's active sessions (not revoked,
+not expired), newest `created_at` first. The session the request was made with
+has `is_current: true`.
+
+**200 OK**
+
+```json
+{
+  "sessions": [
+    {
+      "id": "8b1c2d3e-4f5a-4b6c-9d7e-0f1a2b3c4d5e",
+      "user_agent": "PostmanRuntime/7.39.0",
+      "created_at": "2026-11-11T09:00:00.000Z",
+      "last_seen_at": "2026-11-11T09:40:12.000Z",
+      "expires_at": "2026-11-11T21:00:00.000Z",
+      "is_current": true
+    },
+    {
+      "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "user_agent": null,
+      "created_at": "2026-11-11T07:15:00.000Z",
+      "last_seen_at": "2026-11-11T07:15:00.000Z",
+      "expires_at": "2026-11-11T19:15:00.000Z",
+      "is_current": false
+    }
+  ]
+}
+```
+
+`user_agent` is `null` when the login request sent no `User-Agent` header. The
+token itself is never returned here.
+
+**401 Unauthorized** — `AUTHENTICATION_REQUIRED`.
+
+---
+
+### 12.5 `DELETE /api/auth/sessions/others`
+
+Requires an active session. Revokes every other active session of the caller
+and keeps the current one, for example to "sign out everywhere else". This
+includes sessions in other browsers or devices, such as the web app.
+
+**200 OK**
+
+```json
+{ "revoked_count": 2 }
+```
+
+`revoked_count` is `0` when there was nothing else to revoke.
+
+**401 Unauthorized** — `AUTHENTICATION_REQUIRED`.
+
+---
+
+### 12.6 `DELETE /api/auth/sessions/:sessionId`
+
+Requires an active session. Revokes one of the caller's own sessions, taken from
+§12.4. Revoking the current session is allowed and behaves exactly like logout
+(§12.3).
+
+| Parameter   | In   | Required | Notes |
+| ----------- | ---- | -------- | ----- |
+| `sessionId` | path | yes      | A session `id` (UUID) |
+
+**204 No Content** — revoked. No body.
+
+**Errors**
+
+| Status | Body |
+| ------ | ---- |
+| `400`  | `{ "error": "sessionId must be a valid UUID", "code": "VALIDATION_ERROR", "details": null }` |
+| `401`  | `AUTHENTICATION_REQUIRED` |
+| `404`  | `{ "error": "User session '<id>' not found", "code": "USER_SESSION_NOT_FOUND", "details": null }` — no such session, a session that belongs to another user, or one that is already revoked or expired |
+
+A session belonging to another user answers the same `404` as one that does not
+exist, so the response never confirms that another user's session id is real.
+
+---
+
+## 13. User endpoints
+
+`src/routes/user.route.ts`. Every route here requires the `user:manage`
+permission:
+
+- No usable session answers `401 AUTHENTICATION_REQUIRED`.
+- A user without `user:manage` answers
+  `{ "error": "Insufficient permissions", "code": "PERMISSION_DENIED", "details": null }`
+  with status `403`.
+
+Each user is returned as a `UserDto`:
+
+```json
+{
+  "id": "5d6e7f80-1a2b-4c3d-8e9f-a0b1c2d3e4f5",
+  "email": "kasun.silva@example.edu",
+  "full_name": "Kasun Silva",
+  "status": "active",
+  "permissions": ["task:create"],
+  "last_login_at": null,
+  "created_by_user_id": "3f9a1e2b-7c4d-4e5f-8a6b-1c2d3e4f5a6b",
+  "created_at": "2026-11-11T10:05:00.000Z",
+  "updated_at": "2026-11-11T10:05:00.000Z"
+}
+```
+
+| Field | Notes |
+| --- | --- |
+| `status` | `active` or `disabled`. A disabled user cannot log in (§12.1), and their existing sessions stop authenticating |
+| `permissions` | One or more of `workflow:manage`, `task:create`, `task:approve`, `user:manage` (§1). Never empty |
+| `last_login_at` | Time of the last successful login; `null` until the first one |
+| `created_by_user_id` | The user who created this one through §13.1; `null` for the seeded administrator |
+
+The password hash, failed-login counters and sessions are never part of a
+`UserDto`.
+
+### 13.1 `POST /api/users`
+
+Creates a user. Their initial password is the server's `USER_DEFAULT_PASSWORD`.
+Share it with them out of band. The response never contains it.
+
+**Request body**
+
+| Field         | Type     | Required | Notes |
+| ------------- | -------- | -------- | ----- |
+| `email`       | string   | yes      | Trimmed and lower-cased. Must be a valid address of at most 254 characters, and not already registered (case-insensitive) |
+| `full_name`   | string   | yes      | Trimmed. 1–200 characters |
+| `permissions` | string[] | yes      | Non-empty, each a known permission (§1), no duplicates |
+
+```json
+{
+  "email": "Kasun.Silva@example.edu",
+  "full_name": "Kasun Silva",
+  "permissions": ["task:create"]
+}
+```
+
+**201 Created** — `{ "user": UserDto }`, with the email stored lower-cased
+(`kasun.silva@example.edu`) and `created_by_user_id` set to the caller.
+
+**Errors**
+
+| Status | Body |
+| ------ | ---- |
+| `400`  | `{ "error": "Body must include a non-empty 'email' field", "code": "VALIDATION_ERROR", "details": null }` (likewise `'full_name'`) |
+| `400`  | `{ "error": "Body must include a 'permissions' array of strings", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | `{ "error": "email must be a valid address of at most 254 characters", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | `{ "error": "full_name must contain between 1 and 200 characters", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | `{ "error": "permissions must contain at least one permission", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | `{ "error": "permissions contains unknown values: <values>", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | `{ "error": "permissions must not contain duplicates", "code": "VALIDATION_ERROR", "details": null }` |
+| `401`  | `AUTHENTICATION_REQUIRED` |
+| `403`  | `PERMISSION_DENIED` |
+| `409`  | `{ "error": "A user with email '<email>' already exists", "code": "EMAIL_ALREADY_REGISTERED", "details": null }` |
+
+---
+
+### 13.2 `GET /api/users`
+
+Lists every user, ordered by `full_name` (case-insensitive).
+
+**200 OK** — `{ "users": [UserDto, ...] }`
+
+**Errors** — `401 AUTHENTICATION_REQUIRED`; `403 PERMISSION_DENIED`.
+
+---
+
+### 13.3 `GET /api/users/:userId`
+
+| Parameter | In   | Required | Notes |
+| --------- | ---- | -------- | ----- |
+| `userId`  | path | yes      | A user `id` (UUID) |
+
+**200 OK** — `{ "user": UserDto }`
+
+**Errors**
+
+| Status | Body |
+| ------ | ---- |
+| `400`  | `{ "error": "userId must be a valid UUID", "code": "VALIDATION_ERROR", "details": null }` |
+| `401`  | `AUTHENTICATION_REQUIRED` |
+| `403`  | `PERMISSION_DENIED` |
+| `404`  | `{ "error": "User '<id>' not found", "code": "USER_NOT_FOUND", "details": null }` |

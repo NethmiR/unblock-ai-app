@@ -12,3 +12,7 @@ export * from "./auth/index.type.js";
 export * from "./document/index.type.js";
 export * from "./ai/index.type.js";
 export * from "./migration/index.type.js";
+export * from "./user/index.type.js";
+export * from "./user-session/index.type.js";
+export * from "./template-deletion/index.type.js";
+export * from "./seed/index.type.js";

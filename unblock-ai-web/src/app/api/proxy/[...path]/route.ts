@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { SESSION_COOKIE_NAME } from "@/lib/auth/token";
+import { SESSION_COOKIE_NAME } from "@/lib/auth/session-cookie";
 
 const UPSTREAM_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 
@@ -11,12 +11,8 @@ interface RouteContext {
 /**
  * Forwards every `/api/proxy/*` call to the real backend, attaching the
  * bearer token read from the httpOnly session cookie along the way.
- *
- * This is what `client.ts`'s `apiRequest` relies on to keep every existing
- * client-component call site working after Phase 4 added `requireAuth()`/
- * `requireRole()` guards to the API: a browser fetch can never read an
- * httpOnly cookie to set its own Authorization header, but this Route
- * Handler - always server-side - can.
+ * A browser fetch can never read an httpOnly cookie to set its own
+ * Authorization header, but this Route Handler - always server-side - can.
  */
 async function forward(request: Request, context: RouteContext): Promise<Response> {
   const { path } = await context.params;

@@ -4,8 +4,8 @@ import { TemplateModel } from "../../src/models/template.model.js";
 import { WorkflowService } from "../../src/services/workflow.service.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { ValidationService } from "../../src/services/validation.service.js";
-import { DeletionLogService } from "../../src/services/deletion-log.service.js";
-import { InMemoryAuthStore } from "../../src/services/auth-store/in-memory.auth-store.js";
+import { TemplateDeletionLogService } from "../../src/services/template-deletion-log.service.js";
+import { InMemoryTemplateDeletionRepository } from "../../src/repositories/template-deletion-repository/in-memory.template-deletion-repository.js";
 import { CompletionDocumentService } from "../../src/services/completion-document.service.js";
 import { createDocumentRenderer } from "../../src/services/document/index.document.js";
 import { config } from "../../src/config/index.config.js";
@@ -30,7 +30,7 @@ async function smokeTest(): Promise<void> {
     taskModel,
     // This script never deletes templates - an in-memory store avoids pulling
     // in a live Postgres connection just to satisfy the constructor.
-    deletionLog: new DeletionLogService({ authStore: new InMemoryAuthStore() }),
+    templateDeletionLog: new TemplateDeletionLogService({ templateDeletionRepository: new InMemoryTemplateDeletionRepository() }),
   });
   const workflow = await workflowService.getDocument(task.workflow_id, task.version);
 

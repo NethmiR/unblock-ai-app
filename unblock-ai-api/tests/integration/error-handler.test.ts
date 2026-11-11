@@ -6,7 +6,12 @@ import { SelectionController } from "../../src/controllers/selection.controller.
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
-import { portalAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import {
+  authHeaderFor,
+  TestIdentity,
+  startTestServer,
+  type TestServer,
+} from "../helpers/test-server.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { DraftService } from "../../src/services/draft.service.js";
@@ -14,6 +19,8 @@ import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { ApprovalController } from "../../src/controllers/approval.controller.js";
 import type { AuthController } from "../../src/controllers/auth.controller.js";
+import type { UserSessionController } from "../../src/controllers/user-session.controller.js";
+import type { UserController } from "../../src/controllers/user.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 async function buildServer(selectionService: SelectionService): Promise<TestServer> {
@@ -34,6 +41,8 @@ async function buildServer(selectionService: SelectionService): Promise<TestServ
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: {} as ApprovalController,
     authController: {} as AuthController,
+    userSessionController: {} as UserSessionController,
+    userController: {} as UserController,
   };
 
   return startTestServer(controllers);
@@ -49,7 +58,7 @@ test("a BaseError subclass responds with its own statusCode and toJSON body", as
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ query: "anything" }),
     });
     assert.equal(res.status, 400);
@@ -72,7 +81,7 @@ test("an unknown error responds 500 with a generic body and does not leak the or
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ query: "anything" }),
     });
     assert.equal(res.status, 500);

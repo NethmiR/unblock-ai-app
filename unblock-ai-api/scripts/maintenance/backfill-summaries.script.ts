@@ -4,8 +4,8 @@ import { WorkflowService } from "../../src/services/workflow.service.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { ExtractionService } from "../../src/services/extraction.service.js";
 import { ValidationService } from "../../src/services/validation.service.js";
-import { DeletionLogService } from "../../src/services/deletion-log.service.js";
-import { InMemoryAuthStore } from "../../src/services/auth-store/in-memory.auth-store.js";
+import { TemplateDeletionLogService } from "../../src/services/template-deletion-log.service.js";
+import { InMemoryTemplateDeletionRepository } from "../../src/repositories/template-deletion-repository/in-memory.template-deletion-repository.js";
 import { closeDb } from "../../src/db/mongo.client.js";
 
 const templateModel = new TemplateModel();
@@ -19,7 +19,7 @@ const workflowService = new WorkflowService({
   taskModel: new TaskModel(),
   // This script never deletes templates - an in-memory store avoids pulling
   // in a live Postgres connection just to satisfy the constructor.
-  deletionLog: new DeletionLogService({ authStore: new InMemoryAuthStore() }),
+  templateDeletionLog: new TemplateDeletionLogService({ templateDeletionRepository: new InMemoryTemplateDeletionRepository() }),
 });
 
 const summaries = await workflowService.list({});

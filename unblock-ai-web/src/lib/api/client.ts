@@ -20,11 +20,6 @@ import { SESSION_COOKIE_NAME } from "@/lib/auth/session-cookie";
  *   instead (same origin, so the cookie rides along automatically) - see
  *   `app/api/proxy/[...path]/route.ts`, which reads the cookie server-side
  *   and forwards the Authorization header upstream.
- *
- * That is what keeps every existing client-component call site
- * (TemplateEditor, DeleteTemplateDialog, useSelectionSession, ...) working
- * unchanged now that the API guards most routes with `requireAuth()`/
- * `requireRole()`.
  */
 const DIRECT_API_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 const PROXY_URL = "/api/proxy";

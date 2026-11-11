@@ -1,8 +1,8 @@
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { BaseError } from "../../../errors/base.error.js";
 import { MigrationError } from "../../../errors/migration.error.js";
 import { MigrationCommand } from "../../../data/constants/migration.constant.js";
+import { describeError } from "../../../utils/shared/error-description.util.js";
 import type { MigrationEngine } from "./migration.engine.js";
 import type { MigrationStatusEntry } from "../../../lib/types/migration/migration.type.js";
 
@@ -21,15 +21,6 @@ function parseStep(raw: string | undefined): number | undefined {
     throw new MigrationError(`--step must be a positive integer, received "${raw}"`);
   }
   return step;
-}
-
-function describeError(err: unknown): string {
-  const messages: string[] = [];
-  for (let current: unknown = err; current; current = current instanceof Error ? current.cause : undefined) {
-    messages.push(current instanceof Error ? current.message : String(current));
-  }
-  const details = err instanceof BaseError && err.details ? `\n  details: ${JSON.stringify(err.details)}` : "";
-  return `${messages.join("\n  caused by: ")}${details}`;
 }
 
 function printStatus(label: string, entries: MigrationStatusEntry[]): void {

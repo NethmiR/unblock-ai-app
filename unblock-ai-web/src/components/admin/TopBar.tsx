@@ -25,17 +25,16 @@ export async function TopBar() {
       </div>
 
       <div className="flex items-center gap-[18px]">
-        <div className="text-[12.5px] text-muted">{session?.user.organisation ?? ""}</div>
         <div className="flex items-center gap-2.5 rounded-full border border-line-admin py-[5px] pl-1.5 pr-2.5">
           <div className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-ink text-[11px] font-semibold text-white">
             {session?.initials ?? "?"}
           </div>
           <div className="flex flex-col leading-tight">
             <span className="text-[12.5px] font-semibold">{session?.user.full_name ?? "Signed out"}</span>
-            <span className="text-[10.5px] text-muted">{session?.user.department ?? ""} · Admin</span>
+            <span className="text-[10.5px] text-muted">{session?.user.email ?? ""}</span>
           </div>
         </div>
-        <SignOutButton redirectTo="/login" />
+        <SignOutButton />
       </div>
     </header>
   );

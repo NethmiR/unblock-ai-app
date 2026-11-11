@@ -16,6 +16,7 @@
 | --- | --- |
 | [guides/running-the-app.md](./guides/running-the-app.md) | Full local setup: MongoDB, environment variables, installing dependencies, running backend and frontend together, troubleshooting. |
 | [guides/database-migrations.md](./guides/database-migrations.md) | The Postgres and MongoDB migration engine: layout, npm commands, writing migrations, tracking and locking. |
+| [guides/database-seeding.md](./guides/database-seeding.md) | The Postgres seed pack: the bootstrap administrator seeder, `seed:pg:run` / `seed:pg:list` / `seed:pg:create`, and writing new seeders. |
 | [guides/configuration.md](./guides/configuration.md) | Every environment variable, its default, whether it's required, and which config module owns it. |
 
 ## API reference

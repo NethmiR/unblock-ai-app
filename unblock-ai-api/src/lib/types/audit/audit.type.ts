@@ -4,28 +4,16 @@ import type { ObjectId } from "mongodb";
  * What was acted on. One entry per deletion; extend as more auditable actions
  * appear.
  *
- * Template deletions moved to Postgres's `template_deletions` table as of the
- * auth/deletion-tracking work (D-2) - they can join to `admin_users`, which a
- * Mongo collection cannot. This type only permits `"task"` from that point
- * forward; historical Mongo documents with `resource: "template"` still exist
- * and remain readable (Mongo is schemaless, and `findByResource` takes a
- * plain string) - don't be confused by seeing that value in old data.
+ * Template deletions are logged in Postgres's `template_deletions` table,
+ * where they join to `users`; this collection only records task deletions.
  */
 export type AuditResource = "task";
 
 export type AuditAction = "deleted";
 
-/**
- * Who performed the action.
- *
- * There is no authentication yet, so every field is nullable and the server
- * fills what it can. Once login ships, the middleware populates `id`/`email`
- * from the session instead of leaving them null - nothing else has to change.
- */
 export interface AuditActor {
   id: string | null;
   email: string | null;
-  role: string | null;
 }
 
 /**

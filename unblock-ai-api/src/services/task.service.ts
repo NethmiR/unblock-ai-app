@@ -103,6 +103,10 @@ export class TaskService {
     return task;
   }
 
+  async isOwnedBy(id: string | ObjectId, userId: string): Promise<boolean> {
+    return (await this.taskModel.findCreatorById(id)) === userId;
+  }
+
   async nextRequirement(id: string | ObjectId): Promise<NextRequirementDto> {
     const task = await this.get(id);
 

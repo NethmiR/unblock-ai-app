@@ -1,18 +1,18 @@
 import { rawEnv } from "./env.config.js";
-import { requireString, optionalString, parseNumber } from "../utils/shared/env-parse.util.js";
+import { requireString, optionalString, parseEnum, parseNumber } from "../utils/shared/env-parse.util.js";
+import { REPOSITORY_BACKENDS, RepositoryBackend } from "../data/constants/repository.constant.js";
 import type { PostgresConfig } from "../lib/types/config/config.type.js";
 
-// Mirrors AUTH_STORE_BACKEND's own default in auth.config.ts. Read from rawEnv
-// directly (rather than importing auth.config.ts) to avoid coupling load order
-// between the two config modules.
-const authStoreBackend = rawEnv.AUTH_STORE_BACKEND || "postgres";
+const repositoryBackend = parseEnum(
+  "POSTGRES_REPOSITORY_BACKEND",
+  rawEnv.POSTGRES_REPOSITORY_BACKEND,
+  REPOSITORY_BACKENDS,
+  RepositoryBackend.POSTGRES,
+);
 
 export const postgres: PostgresConfig = Object.freeze({
-  // POSTGRES_URL is only mandatory when the auth store actually talks to
-  // Postgres - AUTH_STORE_BACKEND=memory (e.g. tests, offline dev) must never
-  // need a database, matching getDb()'s own lazy-connect behaviour.
   url:
-    authStoreBackend === "postgres"
+    repositoryBackend === RepositoryBackend.POSTGRES
       ? requireString("POSTGRES_URL", rawEnv.POSTGRES_URL)
       : optionalString("POSTGRES_URL", rawEnv.POSTGRES_URL, ""),
   poolMax: parseNumber("POSTGRES_POOL_MAX", rawEnv.POSTGRES_POOL_MAX, 10),
@@ -21,4 +21,5 @@ export const postgres: PostgresConfig = Object.freeze({
     rawEnv.POSTGRES_CONNECTION_TIMEOUT_MS,
     5000,
   ),
+  repositoryBackend,
 });

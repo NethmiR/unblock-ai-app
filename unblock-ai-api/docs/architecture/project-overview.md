@@ -30,8 +30,8 @@ Actually **executing** a workflow (sending real emails, collecting real approval
 - **Web framework**: Express 5 ([src/app.ts](../../src/app.ts), [src/server.ts](../../src/server.ts))
 - **LLM and embedding providers**: pluggable via the adapter pattern. Services depend only on `ILlmAdapter` ([src/services/llm-adapter/](../../src/services/llm-adapter/)) and `IEmbeddingAdapter` ([src/services/embedding-adapter/](../../src/services/embedding-adapter/)); `LLM_PROVIDER` and `EMBEDDING_PROVIDER` independently select Azure OpenAI (official `openai` SDK) or Google AI Studio Gemini (official `@google/genai` SDK)
 - **Schema validation**: AJV (2020-12 dialect) + `ajv-formats` ([src/utils/workflow/schema-validator.util.ts](../../src/utils/workflow/schema-validator.util.ts))
-- **Persistence**: MongoDB via the official `mongodb` driver ([src/db/mongo.client.ts](../../src/db/mongo.client.ts), [src/models/](../../src/models/)) for workflows/drafts/tasks, **plus PostgreSQL** via `pg` ([src/db/postgres.client.ts](../../src/db/postgres.client.ts)) for auth and the template deletion log — see §8.1
-- **Auth**: HMAC-signed stateless session tokens (`node:crypto` scrypt for password hashing, no `bcrypt`/`argon2` dependency) — see §8.1
+- **Persistence**: MongoDB via the official `mongodb` driver ([src/db/mongo.client.ts](../../src/db/mongo.client.ts), [src/models/](../../src/models/)) for workflows/drafts/tasks, **plus PostgreSQL** via `pg` ([src/db/postgres.client.ts](../../src/db/postgres.client.ts)) for users, permissions, sessions and the template deletion log — see §8.1
+- **Auth**: email + password login, opaque server-side session tokens (SHA-256 hash stored in Postgres) and permission-based route guards (`node:crypto` scrypt for password hashing, no `bcrypt`/`argon2` dependency) — see §8.1
 - **Testing**: Node's built-in `node:test` runner, executed via `tsx` — split into `tests/unit/`, `tests/integration/`, and `tests/live/` (calls the configured live AI provider)
 - **Config**: `dotenv`, loaded and validated once at startup ([src/config/env.config.ts](../../src/config/env.config.ts))
 
@@ -46,7 +46,8 @@ unblock-ai-api/
 │  ├─ server.ts             # entry point: config load, DI wiring, listen, shutdown
 │  ├─ routes/                # one file per route group; no business logic
 │  ├─ controllers/           # parses/validates HTTP, calls services, maps to responses
-│  ├─ services/               # all business logic, DB access via models, external calls
+│  ├─ services/               # all business logic, DB access via models/repositories, external calls
+│  ├─ repositories/           # Postgres data access: user, user-session, template-deletion (postgres + in-memory)
 │  ├─ models/                 # one model per MongoDB collection
 │  ├─ config/                 # typed config modules; only place that reads process.env
 │  ├─ middlewares/            # cors, json-body, request-id, logging, error handling, auth
@@ -54,8 +55,8 @@ unblock-ai-api/
 │  ├─ data/                   # prompts, JSON Schemas, vocabulary, constants, samples
 │  ├─ lib/types/              # central TypeScript type directory
 │  ├─ errors/                 # BaseError + one subclass per error category
-│  └─ db/                     # Mongo + Postgres clients, migration engine + per-database migrations
-├─ scripts/                   # CLI scripts: db/ (migrate-postgres, migrate-mongo, seed), maintenance/ (backfill), copy-assets
+│  └─ db/                     # Mongo + Postgres clients, migration engine + per-database migrations, Postgres seed pack
+├─ scripts/                   # CLI scripts: db/ (migrate-postgres, migrate-mongo, seed-postgres), maintenance/ (backfill), copy-assets
 ├─ tests/                      # unit/, integration/, live/, helpers/, smoke/, evaluation/, perf/
 ├─ docs/                        # api/, architecture/, guides/, plans/, postman/
 ├─ dist/                        # build output, git-ignored
@@ -120,18 +121,21 @@ Schema + graph validation is exposed independently of extraction via [src/servic
 - **`src/models/selection-session.model.ts`** — the `selection_sessions` collection: multi-round clarifying-question conversations.
 - Models own the collection name, the document interface, and thin typed CRUD operations. Versioning policy (bumping the version number, demoting the previous `is_latest`) and the embedding call live in [src/services/workflow.service.ts](../../src/services/workflow.service.ts) and [src/services/embedding.service.ts](../../src/services/embedding.service.ts), not in the model.
 
-### 8.1 A second database: PostgreSQL for auth + deletion tracking
+### 8.1 A second database: PostgreSQL for users, sessions + deletion tracking
 
-Auth (`admin_users`, `portal_users`) and the template deletion log
+Users and their permissions (`users`, `permissions`, `user_permissions`),
+server-side sessions (`user_sessions`) and the template deletion log
 (`template_deletions`) live in **PostgreSQL**, not Mongo — deliberately making
 this a **polyglot-persistence** service rather than pushing everything into
 one store. The reasoning, and the consequences it forces:
 
-- **Why a second database at all.** Auth data is relational, has hard
-  uniqueness constraints (`lower(username)`, `lower(email)`), and
-  `template_deletions.deleted_by_admin_id` benefits from a real foreign key
+- **Why a second database at all.** User data is relational: a hard
+  uniqueness constraint (`lower(email)`), a permission catalogue joined to
+  users by foreign keys, a deferred constraint trigger that rejects any
+  transaction leaving a user with no permissions, and
+  `template_deletions.deleted_by_user_id` benefits from a real foreign key
   (`ON DELETE RESTRICT` — an audit row can never be silently orphaned or
-  erased by removing the admin who created it). None of that is natural to
+  erased by removing the user who created it). None of that is natural to
   express against a schemaless Mongo collection.
 - **No cross-database transaction exists.** A template deletion touches
   Postgres (the log row) and Mongo (the template documents) with no shared
@@ -140,9 +144,7 @@ one store. The reasoning, and the consequences it forces:
   starting at `0` and only updated once the Mongo delete confirms — so a row
   still reading `versions_removed: 0` means the log landed but the delete
   didn't, which is a recoverable, visible failure state rather than a silent
-  gap. Write ordering is the only atomicity available; see
-  [../../../docs/auth-and-deletion-tracking-phase-plan.md](../../../docs/auth-and-deletion-tracking-phase-plan.md)
-  for the full rationale.
+  gap. Write ordering is the only atomicity available.
 - **Two connection lifecycles.** [src/db/postgres.client.ts](../../src/db/postgres.client.ts)
   mirrors [src/db/mongo.client.ts](../../src/db/mongo.client.ts): a lazily-created pool
   (the process starts even if Postgres is down) with its own `closePool()`,
@@ -151,35 +153,65 @@ one store. The reasoning, and the consequences it forces:
   holds one shared engine plus independent Postgres and MongoDB migration sets,
   each tracked in its own `migrations` table/collection with up/down support
   (see [../guides/database-migrations.md](../guides/database-migrations.md)).
-  `npm run migrate:up` applies them; `npm run
-  seed:auth` seeds the (small, fixed) set of admin/portal users from `.env`
-  credentials, idempotently (`ON CONFLICT DO NOTHING`, or `DO UPDATE` with
-  `--force`).
-- **Data access is behind `IAuthStore`** ([src/services/auth-store/](../../src/services/auth-store/)),
-  with `postgres` and `memory` implementations — the same pattern already used
-  for `IVectorStore` and `IMailer`. The `memory` backend
-  (`AUTH_STORE_BACKEND=memory`) is what lets `npm test` run with no live
-  Postgres at all, the way `mongodb-memory-server` already does for Mongo.
+  `npm run migrate:up` applies them. The Postgres set is
+  `20261111000000_initial-schema` followed by
+  `20261111015501_unified-users-permissions-and-sessions`.
+- **A seed pack mirrors the migration pack** — [src/db/seed/](../../src/db/seed/)
+  holds a core runner/loader/generator/CLI plus timestamped Postgres seeders in
+  [src/db/seed/postgres/seeders/](../../src/db/seed/postgres/seeders/). Seeders are
+  idempotent and untracked (every run re-checks and skips what exists) and go
+  through services such as `UserService`, so business rules apply. The only seeder
+  creates the bootstrap administrator (`SEED_ADMINISTRATOR_EMAIL`,
+  `SEED_ADMINISTRATOR_FULL_NAME`, password `USER_DEFAULT_PASSWORD`, all four
+  permissions). `npm run seed:pg:run` runs them, `seed:pg:list` lists them and
+  `seed:pg:create -- <name>` scaffolds a new one (see
+  [../guides/database-seeding.md](../guides/database-seeding.md)).
+- **Data access is behind three repositories** in [src/repositories/](../../src/repositories/) —
+  `user-repository/`, `user-session-repository/` and `template-deletion-repository/`,
+  each with an interface, a `postgres` and an `in-memory` implementation and an
+  `index` factory — the same pattern already used for `IVectorStore` and `IMailer`.
+  `POSTGRES_REPOSITORY_BACKEND` selects the backend for all three; `memory` is what
+  lets `npm test` run with no live Postgres at all, the way `mongodb-memory-server`
+  already does for Mongo.
 - **Passwords are hashed with `node:crypto`'s scrypt** ([src/utils/shared/password.util.ts](../../src/utils/shared/password.util.ts)),
   not `bcrypt`/`argon2` — both need a native build toolchain (painful on
   Windows), while scrypt is a memory-hard KDF already in the stdlib.
-- **Sessions are stateless HMAC-signed bearer tokens**
-  ([src/utils/auth/session-token.util.ts](../../src/utils/auth/session-token.util.ts)),
-  mirroring the existing approval-token pattern in
-  [src/utils/approval/token.util.ts](../../src/utils/approval/token.util.ts) — no
-  `sessions` table, no server-side revocation, which is an acceptable
-  trade-off for three seeded users and gets revisited if real user management
-  ships.
+- **Sessions are opaque and stored server-side** in `user_sessions`
+  ([src/services/user-session.service.ts](../../src/services/user-session.service.ts),
+  [src/utils/auth/user-session-token.util.ts](../../src/utils/auth/user-session-token.util.ts)).
+  Login returns a random 256-bit token (base64url); only its SHA-256 hash is
+  stored. Expiry is absolute (`SESSION_TTL_HOURS`, no sliding renewal), a user can
+  hold any number of concurrent sessions, logout revokes the current session
+  immediately, and a user can list their own sessions and revoke one or all others.
+  Only the `User-Agent` is recorded, no IP address.
+- **Login is by email** ([src/services/authentication.service.ts](../../src/services/authentication.service.ts)).
+  Failed attempts are counted per account; when `AUTH_MAX_FAILED_ATTEMPTS > 0` an
+  account is locked for `AUTH_LOCKOUT_DURATION_MINUTES` and rejected even with the
+  correct password. Users are created by `user:manage` holders through
+  `POST /api/users` ([src/services/user.service.ts](../../src/services/user.service.ts))
+  with the initial password `USER_DEFAULT_PASSWORD`.
+- **Permissions, not roles.** Each user holds one or more of `workflow:manage`,
+  `task:create`, `task:approve` and `user:manage`
+  ([src/data/constants/permission.constant.ts](../../src/data/constants/permission.constant.ts)).
+  `task:approve` is grantable but gates nothing yet.
 
 ## 9. HTTP API
 
 All routes are mounted under `/api` (see [src/routes/index.route.ts](../../src/routes/index.route.ts) and [src/app.ts](../../src/app.ts)). See [../api/api-documentation.md](../api/api-documentation.md) for the full endpoint reference, request/response bodies, and error shapes.
 
 **Auth**: [src/middlewares/authenticate.middleware.ts](../../src/middlewares/authenticate.middleware.ts)
-parses a bearer token and populates `req.user` on every request but never
-rejects by itself; [src/middlewares/require-auth.middleware.ts](../../src/middlewares/require-auth.middleware.ts)'s
-`requireAuth()` / `requireRole("admin")` do the actual gating, applied
-per-route. The split matters because `/api/approvals/*` is authenticated by a
+reads the Bearer session token, resolves it through `AuthenticationService` and
+populates `req.auth` on every request but never rejects by itself.
+[src/middlewares/require-authentication.middleware.ts](../../src/middlewares/require-authentication.middleware.ts)
+(`requireAuthentication()`, `401`) and
+[src/middlewares/require-permission.middleware.ts](../../src/middlewares/require-permission.middleware.ts)
+(`requireAnyPermission(...)`, `403` when the user holds none of the listed
+permissions) do the actual gating, applied per-route:
+`workflow:manage` for workflow writes, the deletion log and `/drafts`;
+`workflow:manage` or `task:create` for reading workflows; `task:create` for
+`/selection` and `/tasks`; `user:manage` for `/users`.
+[src/middlewares/require-task-ownership.middleware.ts](../../src/middlewares/require-task-ownership.middleware.ts)
+limits `/tasks/:id*` to the task's creator and answers `404` for anyone else's task. The split matters because `/api/approvals/*` is authenticated by a
 *different* mechanism (a per-step approval token) and must keep working for
 an approver with no session at all — so authentication and authorization are
 deliberately two separate middleware layers, not one.
@@ -260,9 +292,9 @@ These live under [src/data/samples/](../../src/data/samples/) (`input/`, `expect
 ## 14. What is explicitly out of scope / not yet built
 
 - **No workflow execution engine** — nothing runs a saved workflow instance, resolves actors against a real directory, evaluates conditions against real data, or sends real notifications. The schema is designed to support this later, but none of it exists yet.
-- **No self-registration, password reset, or password change.** Three seeded users (one admin, two portal), changed by re-running `npm run seed:auth --force`.
-- **No session revocation** ("log out everywhere") — a consequence of stateless bearer tokens (§8.1). Would need a `sessions` table.
-- **No rate limiting by IP** — only per-account failed-attempt counting (§8.1), and lockout enforcement itself is off by default (`AUTH_MAX_FAILED_ATTEMPTS=0`).
+- **No self-registration, password reset, or password change.** Every user starts with `USER_DEFAULT_PASSWORD` and keeps it. The user API covers create, list and get-by-id only — no update, deactivate or delete yet.
+- **`task:approve` gates nothing yet** — approval links stay public and token-based; requiring approvers to sign in is a later revamp.
+- **No rate limiting by IP** — only per-account failed-attempt lockout (§8.1), and that enforcement is off by default (`AUTH_MAX_FAILED_ATTEMPTS=0`).
 - **No directory/identity service integration** (needed to actually resolve `dynamic`/`static` actors to real people/offices) — this is unrelated to and not fixed by the auth work in §8.1, which authenticates *who is calling the API*, not who a workflow's actors resolve to.
 
 ## 15. Quick reference — how to run it
@@ -273,8 +305,8 @@ See [../guides/running-the-app.md](../guides/running-the-app.md) for the full se
 npm install
 cp .example.env .env   # then fill in AI provider + MongoDB + PostgreSQL credentials
 npm run migrate:up            # apply Postgres + Mongo migrations (tables, collections, indexes)
-npm run seed:auth             # seed the admin + two portal users from .env credentials
+npm run seed:pg:run           # create the bootstrap administrator (SEED_ADMINISTRATOR_EMAIL, password USER_DEFAULT_PASSWORD)
 npm run dev                   # tsx watch, or: npm run build && npm start
-npm test                      # fast unit + integration tests (AUTH_STORE_BACKEND=memory needs no Postgres)
+npm test                      # fast unit + integration tests (in-memory repositories, no Postgres needed)
 npm run test:live             # slow tests that call the configured AI provider (needs valid .env)
 ```

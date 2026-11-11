@@ -130,16 +130,31 @@ Once MongoDB and PostgreSQL are reachable, run this from `unblock-ai-api/`:
 npm run migrate:up
 ```
 
-This applies every pending Postgres migration (auth and deletion-log tables) and Mongo migration (collections and indexes). Re-running it applies nothing new. Check where each database stands with `npm run migrate:status`.
+This applies every pending Postgres migration (users, permissions, user sessions and the template deletion log) and Mongo migration (collections and indexes). Re-running it applies nothing new. Check where each database stands with `npm run migrate:status`.
 
 Expected output on a fresh database:
 
 ```
 [postgres] applied  20261111000000_initial-schema
+[postgres] applied  20261111015501_unified-users-permissions-and-sessions
 [mongo] applied  20261111000000_initial-schema
 ```
 
 See [database-migrations.md](./database-migrations.md) for rolling back, writing new migrations and every migration command.
+
+### Seed the bootstrap administrator
+
+Set `SEED_ADMINISTRATOR_EMAIL`, `SEED_ADMINISTRATOR_FULL_NAME` and `USER_DEFAULT_PASSWORD` in `.env`, then run:
+
+```bash
+npm run seed:pg:run
+```
+
+```
+[postgres] 20261111021734_administrator-user user admin@example.com -> created
+```
+
+This creates one user holding all four permissions. Sign in with that email and `USER_DEFAULT_PASSWORD`; further users are created through `POST /api/users`. Re-running the command reports `skipped`. See [database-seeding.md](./database-seeding.md).
 
 ### Inspecting the data in Compass
 

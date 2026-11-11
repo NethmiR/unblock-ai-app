@@ -3,7 +3,7 @@ import { TemplateModel } from "../models/template.model.js";
 import { TaskModel } from "../models/task.model.js";
 import { EmbeddingService } from "./embedding.service.js";
 import { ValidationService } from "./validation.service.js";
-import { DeletionLogService } from "./deletion-log.service.js";
+import { TemplateDeletionLogService } from "./template-deletion-log.service.js";
 import { renderForEmbedding, renderAliasesLower } from "../utils/retrieval/render-summary.util.js";
 import { serializeTemplateSummary } from "../utils/http/serializer.util.js";
 import { logger } from "../utils/shared/logger.util.js";
@@ -13,7 +13,8 @@ import { ConflictError } from "../errors/conflict.error.js";
 import { ValidationError } from "../errors/validation.error.js";
 import type { ReviewStatus, WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
 import type { SaveResult, TemplateDocument, TemplateSummary } from "../lib/types/template/template.type.js";
-import type { AuthUser, TemplateDeletionRecord } from "../lib/types/auth/auth.type.js";
+import type { AuthenticatedUser } from "../lib/types/auth/auth.type.js";
+import type { TemplateDeletionRecord } from "../lib/types/template-deletion/template-deletion.type.js";
 import type { TaskStatus } from "../lib/types/task/task.type.js";
 
 /** Long enough for a real institutional process name, short enough to stay a title. */
@@ -28,7 +29,7 @@ export interface WorkflowServiceOptions {
    * on this service, so taking it as a dependency here would close a cycle.
    */
   taskModel: TaskModel;
-  deletionLog: DeletionLogService;
+  templateDeletionLog: TemplateDeletionLogService;
 }
 
 export interface SaveOptions {
@@ -40,20 +41,20 @@ export class WorkflowService {
   private readonly embeddingService: EmbeddingService;
   private readonly validationService: ValidationService;
   private readonly taskModel: TaskModel;
-  private readonly deletionLog: DeletionLogService;
+  private readonly templateDeletionLog: TemplateDeletionLogService;
 
   constructor({
     templateModel,
     embeddingService,
     validationService,
     taskModel,
-    deletionLog,
+    templateDeletionLog,
   }: WorkflowServiceOptions) {
     this.templateModel = templateModel;
     this.embeddingService = embeddingService;
     this.validationService = validationService;
     this.taskModel = taskModel;
-    this.deletionLog = deletionLog;
+    this.templateDeletionLog = templateDeletionLog;
   }
 
   async save(workflow: WorkflowDefinition, options: SaveOptions = {}): Promise<SaveResult> {
@@ -191,7 +192,7 @@ export class WorkflowService {
    * recoverable, visible failure rather than a silent gap. Do not reorder
    * this to delete-then-log.
    */
-  async delete(workflowId: string, actor: AuthUser, requestId?: string | null): Promise<void> {
+  async delete(workflowId: string, actor: AuthenticatedUser, requestId?: string | null): Promise<void> {
     const record = await this.getRecord(workflowId);
 
     const live: TaskStatus[] = [TASK_STATUS.COLLECTING, TASK_STATUS.READY, TASK_STATUS.IN_PROGRESS];
@@ -203,15 +204,16 @@ export class WorkflowService {
       );
     }
 
-    const entry = await this.deletionLog.record({
+    const entry = await this.templateDeletionLog.record({
       workflowId,
       templateTitle: record.title,
       latestVersion: record.version,
       institutionType: record.institution_type,
       reviewStatus: record.review_status,
-      adminId: actor.id,
-      adminUsername: actor.username,
-      requestId,
+      deletedByUserId: actor.id,
+      deletedByEmail: actor.email,
+      reason: null,
+      requestId: requestId ?? null,
       snapshot: {
         title: record.title,
         description: record.description,
@@ -225,14 +227,14 @@ export class WorkflowService {
     const removed = await this.templateModel.deleteAllVersions(workflowId);
     if (removed === 0) throw NotFoundError.of("Workflow", workflowId);
 
-    await this.deletionLog.markCompleted(entry.id, removed);
+    await this.templateDeletionLog.markCompleted(entry.id, removed);
 
     logger.info("template deleted", { workflowId, title: record.title, versions: removed });
   }
 
-  /** `GET /workflows/deletions` - the admin-facing deletion log, newest first. */
+  /** `GET /workflows/deletions` - the template deletion log, newest first. */
   listDeletions(limit: number, workflowId?: string): Promise<TemplateDeletionRecord[]> {
-    return this.deletionLog.list(limit, workflowId);
+    return this.templateDeletionLog.list(limit, workflowId);
   }
 
   async setReviewStatus(

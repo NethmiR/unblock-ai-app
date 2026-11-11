@@ -6,10 +6,15 @@ import { SelectionController } from "../../src/controllers/selection.controller.
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { ApprovalController } from "../../src/controllers/approval.controller.js";
 import type { AuthController } from "../../src/controllers/auth.controller.js";
+import type { UserSessionController } from "../../src/controllers/user-session.controller.js";
+import type { UserController } from "../../src/controllers/user.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { NotFoundError } from "../../src/errors/not-found.error.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
-import { startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import {
+  startTestServer,
+  type TestServer,
+} from "../helpers/test-server.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
 import type { DraftService } from "../../src/services/draft.service.js";
@@ -89,6 +94,8 @@ async function buildServer(approvalService: ApprovalService): Promise<TestServer
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: new ApprovalController({ approvalService }),
     authController: {} as AuthController,
+    userSessionController: {} as UserSessionController,
+    userController: {} as UserController,
   };
 
   return startTestServer(controllers);

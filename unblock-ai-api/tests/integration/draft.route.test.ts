@@ -6,7 +6,12 @@ import { SelectionController } from "../../src/controllers/selection.controller.
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { HealthController } from "../../src/controllers/health.controller.js";
 import { DraftService } from "../../src/services/draft.service.js";
-import { adminAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import {
+  authHeaderFor,
+  TestIdentity,
+  startTestServer,
+  type TestServer,
+} from "../helpers/test-server.helper.js";
 import { FakeDraftModel } from "../helpers/fake-model.helper.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
 import type { WorkflowService } from "../../src/services/workflow.service.js";
@@ -14,6 +19,8 @@ import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { ApprovalController } from "../../src/controllers/approval.controller.js";
 import type { AuthController } from "../../src/controllers/auth.controller.js";
+import type { UserSessionController } from "../../src/controllers/user-session.controller.js";
+import type { UserController } from "../../src/controllers/user.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 interface BuildOptions {
@@ -44,6 +51,8 @@ async function buildServer(options: BuildOptions = {}): Promise<TestServer> {
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: {} as ApprovalController,
     authController: {} as AuthController,
+    userSessionController: {} as UserSessionController,
+    userController: {} as UserController,
   };
 
   return startTestServer(controllers);
@@ -54,7 +63,7 @@ test("POST /api/drafts rejects an empty text body", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/drafts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ text: "  " }),
     });
     assert.equal(res.status, 400);
@@ -68,7 +77,7 @@ test("POST /api/drafts creates a draft and GET /api/drafts lists it", async () =
   try {
     const createRes = await fetch(`${server.baseUrl}/api/drafts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ text: "Staff must obtain approval before travelling abroad." }),
     });
     assert.equal(createRes.status, 201);
@@ -76,7 +85,7 @@ test("POST /api/drafts creates a draft and GET /api/drafts lists it", async () =
     assert.equal(created.status, "pending");
     assert.ok(created.id);
 
-    const listRes = await fetch(`${server.baseUrl}/api/drafts`, { headers: adminAuthHeader() });
+    const listRes = await fetch(`${server.baseUrl}/api/drafts`, { headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER) });
     assert.equal(listRes.status, 200);
     const list = (await listRes.json()) as Array<{ id: string }>;
     assert.equal(list.length, 1);
@@ -90,7 +99,7 @@ test("GET /api/drafts/:id returns 404 for an unknown draft", async () => {
   const server = await buildServer();
   try {
     const res = await fetch(`${server.baseUrl}/api/drafts/64b64b64b64b64b64b64b64b`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(res.status, 404);
   } finally {
@@ -127,14 +136,14 @@ test("POST /api/drafts/:id/extract applies the caller's title over the extracted
   try {
     const createRes = await fetch(`${server.baseUrl}/api/drafts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ text: "Staff must obtain approval before travelling abroad." }),
     });
     const created = (await createRes.json()) as { id: string };
 
     const res = await fetch(`${server.baseUrl}/api/drafts/${created.id}/extract`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ title: "  Overseas Leave (IT Faculty)  " }),
     });
     assert.equal(res.status, 201);
@@ -164,14 +173,14 @@ test("POST /api/drafts/:id/extract keeps the model's title when none is supplied
   try {
     const createRes = await fetch(`${server.baseUrl}/api/drafts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ text: "Staff must obtain approval before travelling abroad." }),
     });
     const created = (await createRes.json()) as { id: string };
 
     const res = await fetch(`${server.baseUrl}/api/drafts/${created.id}/extract`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 201);

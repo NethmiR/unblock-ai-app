@@ -13,6 +13,16 @@ configs into a single frozen `config` object that every other module imports.
 | `CORS_ORIGIN` | no | `http://localhost:3001` | `src/config/server.config.ts` | `config.server.corsOrigins` (comma-separated) — `src/middlewares/cors.middleware.ts`; ignored when `NODE_ENV=development`, which allows any origin |
 | `MONGODB_URI` | **yes** | — | `src/config/db.config.ts` | `config.db.uri` — `src/db/mongo.client.ts` |
 | `MONGODB_DB` | no | `unblock_ai` | `src/config/db.config.ts` | `config.db.dbName` |
+| `POSTGRES_URL` | \*\* | — | `src/config/postgres.config.ts` | `config.postgres.url` — `src/db/postgres.client.ts`; **required when `POSTGRES_REPOSITORY_BACKEND=postgres`** |
+| `POSTGRES_POOL_MAX` | no | `10` | `src/config/postgres.config.ts` | `config.postgres.poolMax` — max pooled connections |
+| `POSTGRES_CONNECTION_TIMEOUT_MS` | no | `5000` | `src/config/postgres.config.ts` | `config.postgres.connectionTimeoutMs` |
+| `POSTGRES_REPOSITORY_BACKEND` | no | `postgres` | `src/config/postgres.config.ts` | `config.postgres.repositoryBackend` — `postgres` \| `memory`, selects the user, user-session and template-deletion repositories at composition root |
+| `SEED_ADMINISTRATOR_EMAIL` | seed only | — | `src/config/seed.config.ts` | `loadSeedConfig().administratorEmail` — read only by `npm run seed:pg:run`; never loaded by the server |
+| `SEED_ADMINISTRATOR_FULL_NAME` | seed only | — | `src/config/seed.config.ts` | `loadSeedConfig().administratorFullName` — read only by `npm run seed:pg:run` |
+| `SESSION_TTL_HOURS` | no | `12` | `src/config/auth.config.ts` | `config.auth.sessionTtlHours` — absolute lifetime of a user session |
+| `AUTH_MAX_FAILED_ATTEMPTS` | no | `0` | `src/config/auth.config.ts` | `config.auth.maxFailedAttempts` — failed logins before the account locks; `0` disables lockout (failures are still counted) |
+| `AUTH_LOCKOUT_DURATION_MINUTES` | no | `15` | `src/config/auth.config.ts` | `config.auth.lockoutDurationMinutes` — how long a lockout lasts after the last failed attempt |
+| `USER_DEFAULT_PASSWORD` | **yes** | — | `src/config/user.config.ts` | `config.user.defaultPassword` — initial password of every created user (`UserService.createUser`); never logged or returned |
 | `LLM_PROVIDER` | no | `azure-openai` | `src/config/llm.config.ts` | `config.llm.provider` — `azure-openai` \| `gemini`, selects the `ILlmAdapter` used for every generation task (extraction, retrieval summaries, selection) |
 | `AZURE_OPENAI_ENDPOINT` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.endpoint` — **required when `LLM_PROVIDER=azure-openai`** |
 | `AZURE_OPENAI_API_KEY` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.apiKey` — **required when `LLM_PROVIDER=azure-openai`** |
@@ -45,12 +55,14 @@ configs into a single frozen `config` object that every other module imports.
 | `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | `src/config/document.config.ts` | `config.document.institutionName` — printed in the record's footer |
 | `DOCUMENT_MAX_ATTACHMENT_BYTES` | no | `5000000` | `src/config/document.config.ts` | `config.document.maxAttachmentBytes` — above this size the record is download-only, dropped from the email attachment |
 
-36 variables total (\* = required, throws at startup if missing/empty; \*\* =
-`APPROVAL_TOKEN_SECRET` and `BREVO_API_KEY` are conditionally required, both only
+46 variables total (\* = required, throws at startup if missing/empty; \*\* =
+conditionally required: `POSTGRES_URL` only when `POSTGRES_REPOSITORY_BACKEND=postgres`;
+`APPROVAL_TOKEN_SECRET` and `BREVO_API_KEY` only
 when `MAIL_TRANSPORT=brevo` — both throw `ConfigurationError` at startup in that
-case, in `src/config/mail.config.ts`. A misconfigured Brevo API key that is merely
+case, in `src/config/mail.config.ts`. The two `SEED_ADMINISTRATOR_*` variables are
+required only by the seed command, which throws if either is empty). A misconfigured Brevo API key that is merely
 non-empty but wrong still only surfaces as a send failure, caught and logged by
-`notification.service.ts` rather than crashing the process). The `AZURE_OPENAI_*` and
+`notification.service.ts` rather than crashing the process. The `AZURE_OPENAI_*` and
 `GEMINI_*` provider variables are likewise conditionally required: only the keys of
 the provider selected by `LLM_PROVIDER` / `EMBEDDING_PROVIDER` are validated, in
 `src/config/llm.config.ts` and `src/config/embedding.config.ts`.

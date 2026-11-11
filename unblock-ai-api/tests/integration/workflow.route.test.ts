@@ -9,10 +9,17 @@ import { HealthController } from "../../src/controllers/health.controller.js";
 import { WorkflowService } from "../../src/services/workflow.service.js";
 import { ValidationService } from "../../src/services/validation.service.js";
 import { DraftService } from "../../src/services/draft.service.js";
-import { adminAuthHeader, portalAuthHeader, startTestServer, type TestServer } from "../helpers/test-server.helper.js";
+import {
+  authHeaderFor,
+  TestIdentity,
+  TEST_USERS,
+  startTestServer,
+  type TestServer,
+} from "../helpers/test-server.helper.js";
 import { FakeDraftModel, FakeTaskModel, FakeTemplateModel } from "../helpers/fake-model.helper.js";
-import { DeletionLogService } from "../../src/services/deletion-log.service.js";
-import { InMemoryAuthStore } from "../../src/services/auth-store/in-memory.auth-store.js";
+import { TemplateDeletionLogService } from "../../src/services/template-deletion-log.service.js";
+import { InMemoryTemplateDeletionRepository } from "../../src/repositories/template-deletion-repository/in-memory.template-deletion-repository.js";
+import { AuthErrorCode } from "../../src/data/constants/auth.constant.js";
 import { loadExpectedFixture } from "../helpers/fixture.helper.js";
 import type { EmbeddingService } from "../../src/services/embedding.service.js";
 import type { ExtractionService } from "../../src/services/extraction.service.js";
@@ -20,6 +27,8 @@ import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { ApprovalController } from "../../src/controllers/approval.controller.js";
 import type { AuthController } from "../../src/controllers/auth.controller.js";
+import type { UserSessionController } from "../../src/controllers/user-session.controller.js";
+import type { UserController } from "../../src/controllers/user.controller.js";
 import type { ApiControllers } from "../../src/routes/index.route.js";
 
 const fixture = loadExpectedFixture("it_faculty_overseas_leave.json");
@@ -37,19 +46,19 @@ async function buildServer(): Promise<
     close: () => Promise<void>;
     templateModel: FakeTemplateModel;
     draftModel: FakeDraftModel;
-    deletionStore: InMemoryAuthStore;
+    templateDeletionRepository: InMemoryTemplateDeletionRepository;
   }
 > {
   const templateModel = new FakeTemplateModel();
   const taskModel = new FakeTaskModel();
   const draftModel = new FakeDraftModel();
-  const deletionStore = new InMemoryAuthStore();
+  const templateDeletionRepository = new InMemoryTemplateDeletionRepository();
   const workflowService = new WorkflowService({
     templateModel: templateModel as unknown as ConstructorParameters<typeof WorkflowService>[0]["templateModel"],
     embeddingService: fakeEmbeddingService(),
     validationService: new ValidationService(),
     taskModel: taskModel as unknown as ConstructorParameters<typeof WorkflowService>[0]["taskModel"],
-    deletionLog: new DeletionLogService({ authStore: deletionStore }),
+    templateDeletionLog: new TemplateDeletionLogService({ templateDeletionRepository }),
   });
   const validationService = new ValidationService();
   const draftService = new DraftService({
@@ -73,10 +82,12 @@ async function buildServer(): Promise<
     taskController: new TaskController({ taskService: {} as TaskService }),
     approvalController: {} as ApprovalController,
     authController: {} as AuthController,
+    userSessionController: {} as UserSessionController,
+    userController: {} as UserController,
   };
 
   const server = await startTestServer(controllers);
-  return { ...server, templateModel, draftModel, deletionStore };
+  return { ...server, templateModel, draftModel, templateDeletionRepository };
 }
 
 test("POST /api/workflows/extract rejects an empty text body", async () => {
@@ -84,7 +95,7 @@ test("POST /api/workflows/extract rejects an empty text body", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/workflows/extract`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ text: "  " }),
     });
     assert.equal(res.status, 400);
@@ -98,7 +109,7 @@ test("POST /api/workflows saves a valid workflow", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
@@ -117,7 +128,7 @@ test("POST /api/workflows rejects an invalid workflow with validation errors", a
     const invalid = { ...fixture, steps: [] };
     const res = await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: invalid }),
     });
 
@@ -136,7 +147,7 @@ test("POST /api/workflows rejects a missing workflow body", async () => {
   try {
     const res = await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 400);
@@ -150,11 +161,11 @@ test("GET /api/workflows lists saved summaries", async () => {
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
-    const res = await fetch(`${server.baseUrl}/api/workflows`, { headers: adminAuthHeader() });
+    const res = await fetch(`${server.baseUrl}/api/workflows`, { headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER) });
     assert.equal(res.status, 200);
     const summaries = (await res.json()) as Array<{ workflow_id: string }>;
     assert.equal(summaries.length, 1);
@@ -169,11 +180,11 @@ test("GET /api/workflows/:id fetches a saved workflow", async () => {
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
-    const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`, { headers: adminAuthHeader() });
+    const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`, { headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER) });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { workflow_id: string };
     assert.equal(body.workflow_id, fixture.workflow_id);
@@ -185,7 +196,7 @@ test("GET /api/workflows/:id fetches a saved workflow", async () => {
 test("GET /api/workflows/:id returns 404 for an unknown id", async () => {
   const server = await buildServer();
   try {
-    const res = await fetch(`${server.baseUrl}/api/workflows/does_not_exist`, { headers: adminAuthHeader() });
+    const res = await fetch(`${server.baseUrl}/api/workflows/does_not_exist`, { headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER) });
     assert.equal(res.status, 404);
   } finally {
     await server.close();
@@ -197,13 +208,13 @@ test("PUT /api/workflows/:id saves a new version", async () => {
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: { ...fixture, title: "Edited title" } }),
     });
 
@@ -221,7 +232,7 @@ test("POST /api/workflows/:id/validate reports errors without saving", async () 
     const invalid = { ...fixture, steps: [] };
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/validate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: invalid }),
     });
 
@@ -230,7 +241,7 @@ test("POST /api/workflows/:id/validate reports errors without saving", async () 
     assert.equal(body.valid, false);
     assert(body.errors.length > 0);
 
-    const listRes = await fetch(`${server.baseUrl}/api/workflows`, { headers: adminAuthHeader() });
+    const listRes = await fetch(`${server.baseUrl}/api/workflows`, { headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER) });
     assert.equal(((await listRes.json()) as unknown[]).length, 0);
   } finally {
     await server.close();
@@ -242,12 +253,12 @@ test("GET /api/workflows/:id/record returns the full row including draft_id", as
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/record`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { workflow_id: string; document: { title: string } };
@@ -262,7 +273,7 @@ test("GET /api/workflows/:id/record returns 404 for an unknown workflow", async 
   const server = await buildServer();
   try {
     const res = await fetch(`${server.baseUrl}/api/workflows/does_not_exist/record`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(res.status, 404);
   } finally {
@@ -287,14 +298,14 @@ test("GET /api/workflows/:id/record inlines draft_text when a draft exists", asy
 
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
     const template = server.templateModel.templates.find((t) => t.workflow_id === fixture.workflow_id);
     template!.draft_id = draft._id;
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/record`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { draft_text: string | null };
@@ -309,12 +320,12 @@ test("GET /api/workflows/:id/record returns draft_text null when draft_id is nul
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/record`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { draft_text: string | null };
@@ -329,14 +340,14 @@ test("GET /api/workflows/:id/record still opens when draft_id points at a delete
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
     const template = server.templateModel.templates.find((t) => t.workflow_id === fixture.workflow_id);
     template!.draft_id = new ObjectId();
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/record`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { workflow_id: string; draft_text: string | null };
@@ -352,13 +363,13 @@ test("PATCH /api/workflows/:id/title renames in place without forking a version"
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/title`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ title: "  Overseas Leave (IT Faculty)  " }),
     });
     assert.equal(res.status, 200);
@@ -388,13 +399,13 @@ test("PATCH /api/workflows/:id/title rejects a blank title", async () => {
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/title`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ title: "   " }),
     });
     assert.equal(res.status, 400);
@@ -408,7 +419,7 @@ test("PATCH /api/workflows/:id/title returns 404 for an unknown workflow", async
   try {
     const res = await fetch(`${server.baseUrl}/api/workflows/does_not_exist/title`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ title: "Anything" }),
     });
     assert.equal(res.status, 404);
@@ -422,13 +433,13 @@ test("PATCH /api/workflows/:id/review rejects an invalid review_status", async (
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/review`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ review_status: "not_a_real_status" }),
     });
     assert.equal(res.status, 400);
@@ -442,7 +453,7 @@ test("PATCH /api/workflows/:id/review returns 404 for an unknown workflow", asyn
   try {
     const res = await fetch(`${server.baseUrl}/api/workflows/does_not_exist/review`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ review_status: "confirmed" }),
     });
     assert.equal(res.status, 404);
@@ -456,13 +467,13 @@ test("PATCH /api/workflows/:id/review publishes a template", async () => {
   try {
     await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ workflow: fixture }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}/review`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
       body: JSON.stringify({ review_status: "confirmed" }),
     });
     assert.equal(res.status, 200);
@@ -476,7 +487,7 @@ test("PATCH /api/workflows/:id/review publishes a template", async () => {
 async function seedTemplate(baseUrl: string): Promise<void> {
   await fetch(`${baseUrl}/api/workflows`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+    headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.WORKFLOW_MANAGER) },
     body: JSON.stringify({ workflow: fixture }),
   });
 }
@@ -485,7 +496,7 @@ function deleteTemplate(
   baseUrl: string,
   id: string,
   body: Record<string, unknown>,
-  headers: Record<string, string> = adminAuthHeader(),
+  headers: Record<string, string> = authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
 ): Promise<Response> {
   return fetch(`${baseUrl}/api/workflows/${id}`, {
     method: "DELETE",
@@ -506,7 +517,7 @@ test("DELETE /api/workflows/:id removes the template on a correct confirmation",
     assert.equal(res.status, 204);
 
     const after = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(after.status, 404);
   } finally {
@@ -524,10 +535,11 @@ test("DELETE /api/workflows/:id records who deleted it (Finding 0.3 / D-2)", asy
       confirm_title: fixture.title,
     });
 
-    const deletions = await server.deletionStore.listTemplateDeletions(10);
+    const deletions = await server.templateDeletionRepository.list(10);
     assert.equal(deletions.length, 1);
     assert.equal(deletions[0]?.workflow_id, fixture.workflow_id);
-    assert.equal(deletions[0]?.deleted_by_username, "test-admin");
+    assert.equal(deletions[0]?.deleted_by_email, TEST_USERS[TestIdentity.WORKFLOW_MANAGER].email);
+    assert.equal(deletions[0]?.deleted_by_user_id, TEST_USERS[TestIdentity.WORKFLOW_MANAGER].id);
     // versions_removed is only updated once the Mongo delete confirms - see Finding 0.1.
     assert.equal(deletions[0]?.versions_removed, 1);
   } finally {
@@ -547,7 +559,7 @@ test("DELETE /api/workflows/:id rejects a wrong confirmation word", async () => 
     assert.equal(res.status, 400);
 
     const after = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(after.status, 200);
   } finally {
@@ -567,7 +579,7 @@ test("DELETE /api/workflows/:id rejects a mismatched title", async () => {
     assert.equal(res.status, 400);
 
     const after = await fetch(`${server.baseUrl}/api/workflows/${fixture.workflow_id}`, {
-      headers: adminAuthHeader(),
+      headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER),
     });
     assert.equal(after.status, 200);
   } finally {
@@ -620,7 +632,7 @@ test("DELETE /api/workflows/:id with no token returns 401", async () => {
   }
 });
 
-test("DELETE /api/workflows/:id with a portal token returns 403", async () => {
+test("DELETE /api/workflows/:id without workflow:manage returns 403 PERMISSION_DENIED", async () => {
   const server = await buildServer();
   try {
     await seedTemplate(server.baseUrl);
@@ -629,9 +641,10 @@ test("DELETE /api/workflows/:id with a portal token returns 403", async () => {
       server.baseUrl,
       fixture.workflow_id,
       { confirmation: "delete", confirm_title: fixture.title },
-      portalAuthHeader(),
+      authHeaderFor(TestIdentity.TASK_CREATOR),
     );
     assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, AuthErrorCode.PERMISSION_DENIED);
   } finally {
     await server.close();
   }
@@ -651,15 +664,60 @@ test("POST /api/workflows with no token returns 401", async () => {
   }
 });
 
-test("POST /api/workflows with a portal token returns 403", async () => {
+test("POST /api/workflows without workflow:manage returns 403 PERMISSION_DENIED", async () => {
   const server = await buildServer();
   try {
     const res = await fetch(`${server.baseUrl}/api/workflows`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...portalAuthHeader() },
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
       body: JSON.stringify({ workflow: fixture }),
     });
     assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, AuthErrorCode.PERMISSION_DENIED);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/workflows is readable with task:create", async () => {
+  const server = await buildServer();
+  try {
+    const res = await fetch(`${server.baseUrl}/api/workflows`, { headers: authHeaderFor(TestIdentity.TASK_CREATOR) });
+    assert.equal(res.status, 200);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/workflows without workflow:manage or task:create returns 403 PERMISSION_DENIED", async () => {
+  const server = await buildServer();
+  try {
+    const res = await fetch(`${server.baseUrl}/api/workflows`, { headers: authHeaderFor(TestIdentity.USER_MANAGER) });
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, AuthErrorCode.PERMISSION_DENIED);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/workflows/deletions without workflow:manage returns 403", async () => {
+  const server = await buildServer();
+  try {
+    const res = await fetch(`${server.baseUrl}/api/workflows/deletions`, {
+      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
+    });
+    assert.equal(res.status, 403);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/workflows with a revoked or unknown token returns 401 AUTHENTICATION_REQUIRED", async () => {
+  const server = await buildServer();
+  try {
+    const res = await fetch(`${server.baseUrl}/api/workflows`, { headers: { Authorization: "Bearer not-a-session" } });
+    assert.equal(res.status, 401);
+    assert.equal(((await res.json()) as { code: string }).code, AuthErrorCode.AUTHENTICATION_REQUIRED);
   } finally {
     await server.close();
   }

@@ -11,7 +11,7 @@ import {
   requireOneOf,
 } from "../utils/http/request-validator.util.js";
 import { ValidationError } from "../errors/validation.error.js";
-import { UnauthorizedError } from "../errors/unauthorized.error.js";
+import { requireAuthContext } from "../utils/http/auth-context.util.js";
 import { serializeTemplateRecord } from "../utils/http/serializer.util.js";
 import { REVIEW_STATUS } from "../data/constants/status.constant.js";
 import type { ExtractResponseDto } from "../lib/types/http/http.type.js";
@@ -135,15 +135,11 @@ export class WorkflowController {
       throw new ValidationError("confirm_title must exactly match the template title");
     }
 
-    // `requireRole("admin")` on this route already guarantees req.user - this
-    // guard is just so the type stays `AuthUser`, not `AuthUser | undefined`.
-    if (!req.user) throw new UnauthorizedError("Authentication required");
-
-    await this.workflowService.delete(workflowId, req.user, req.requestId);
+    await this.workflowService.delete(workflowId, requireAuthContext(req).user, req.requestId);
     res.status(204).send();
   };
 
-  /** `GET /workflows/deletions` - the admin-only template deletion log, newest first. */
+  /** `GET /workflows/deletions` - the template deletion log, newest first. */
   listDeletions = async (req: Request, res: Response): Promise<void> => {
     const limit = optionalPositiveInt(req.query.limit, "limit") ?? 50;
     const workflowId = optionalString(req.query, "workflow_id");

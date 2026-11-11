@@ -6,4 +6,5 @@ export { asyncHandler } from "./async-handler.middleware.js";
 export { notFound } from "./not-found.middleware.js";
 export { errorHandler } from "./error-handler.middleware.js";
 export { createAuthenticateMiddleware } from "./authenticate.middleware.js";
-export { requireAuth, requireRole } from "./require-auth.middleware.js";
+export { requireAuthentication } from "./require-authentication.middleware.js";
+export { requireAnyPermission } from "./require-permission.middleware.js";
