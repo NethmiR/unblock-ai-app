@@ -1,6 +1,5 @@
 import { config } from "./config/index.config.js";
 import { createApp } from "./app.js";
-import { ensureIndexes } from "./db/index.definition.js";
 import { closeDb } from "./db/mongo.client.js";
 import { closePool } from "./db/postgres.client.js";
 import { logger } from "./utils/shared/logger.util.js";
@@ -117,8 +116,6 @@ async function main(): Promise<void> {
     approvalController: new ApprovalController({ approvalService }),
     authController: new AuthController({ authService }),
   };
-
-  await ensureIndexes();
 
   const app = createApp(controllers, { authService });
   const server = app.listen(config.server.port, () => {

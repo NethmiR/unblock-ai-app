@@ -54,8 +54,8 @@ unblock-ai-api/
 │  ├─ data/                   # prompts, JSON Schemas, vocabulary, constants, samples
 │  ├─ lib/types/              # central TypeScript type directory
 │  ├─ errors/                 # BaseError + one subclass per error category
-│  └─ db/                     # Mongo client + index definitions, Postgres client + migrations
-├─ scripts/                   # CLI scripts: db/ (init-db, migrate, seed), maintenance/ (backfill), copy-assets
+│  └─ db/                     # Mongo + Postgres clients, migration engine + per-database migrations
+├─ scripts/                   # CLI scripts: db/ (migrate-postgres, migrate-mongo, seed), maintenance/ (backfill), copy-assets
 ├─ tests/                      # unit/, integration/, live/, helpers/, smoke/, evaluation/, perf/
 ├─ docs/                        # api/, architecture/, guides/, plans/, postman/
 ├─ dist/                        # build output, git-ignored
@@ -147,9 +147,11 @@ one store. The reasoning, and the consequences it forces:
   mirrors [src/db/mongo.client.ts](../../src/db/mongo.client.ts): a lazily-created pool
   (the process starts even if Postgres is down) with its own `closePool()`,
   invoked alongside `closeDb()` in `server.ts`'s shutdown handler.
-- **Migrations are plain `.sql` files**, not a framework — [src/db/migrate.ts](../../src/db/migrate.ts)
-  applies them in filename order inside a transaction each, tracked in a
-  `schema_migrations` table. `npm run migrate:pg` runs them; `npm run
+- **Both databases are versioned by migrations** — [src/db/migration/](../../src/db/migration/)
+  holds one shared engine plus independent Postgres and MongoDB migration sets,
+  each tracked in its own `migrations` table/collection with up/down support
+  (see [../guides/database-migrations.md](../guides/database-migrations.md)).
+  `npm run migrate:up` applies them; `npm run
   seed:auth` seeds the (small, fixed) set of admin/portal users from `.env`
   credentials, idempotently (`ON CONFLICT DO NOTHING`, or `DO UPDATE` with
   `--force`).
@@ -270,8 +272,7 @@ See [../guides/running-the-app.md](../guides/running-the-app.md) for the full se
 ```bash
 npm install
 cp .example.env .env   # then fill in AI provider + MongoDB + PostgreSQL credentials
-npm run init-db               # create Mongo collections/indexes
-npm run migrate:pg            # create the Postgres auth + deletion-log tables
+npm run migrate:up            # apply Postgres + Mongo migrations (tables, collections, indexes)
 npm run seed:auth             # seed the admin + two portal users from .env credentials
 npm run dev                   # tsx watch, or: npm run build && npm start
 npm test                      # fast unit + integration tests (AUTH_STORE_BACKEND=memory needs no Postgres)

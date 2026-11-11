@@ -111,7 +111,7 @@ still need a `mongod` process for it to connect to (a local install, or a remote
    ```
 
    In Compass you should see the default `admin`, `local`, `config` databases. The `unblock_ai`
-   database appears once you run `npm run init-db` (see below).
+   database appears once you run `npm run migrate:mongo:up` (see below).
 
 5. Set in `.env`:
 
@@ -122,28 +122,28 @@ MONGODB_DB=unblock_ai
 
 If instead you're pointing at **MongoDB Atlas** (cloud) or another remote instance, use the connection string Atlas gives you (starts with `mongodb+srv://...`) as `MONGODB_URI`, and use Compass with that same connection string to inspect data visually.
 
-### Initialize collections/indexes
+### Apply database migrations
 
-Once MongoDB is reachable (either option above), run this from `unblock-ai-api/`:
+Once MongoDB and PostgreSQL are reachable, run this from `unblock-ai-api/`:
 
 ```bash
-npm run init-db
+npm run migrate:up
 ```
 
-This creates the required collections and indexes (via `scripts/db/init-db.script.ts`) and prints a summary of what was created. It is idempotent — safe to re-run any time.
+This applies every pending Postgres migration (auth and deletion-log tables) and Mongo migration (collections and indexes). Re-running it applies nothing new. Check where each database stands with `npm run migrate:status`.
 
-Expected output:
+Expected output on a fresh database:
 
 ```
-database   : unblock_ai
-  selection_sessions   _id_, session_created_desc
-  drafts               _id_, draft_text_sha256_unique, draft_created_desc
-  templates            _id_, template_id_version_unique, template_latest, template_retrieval_filter
+[postgres] applied  20261111000000_initial-schema
+[mongo] applied  20261111000000_initial-schema
 ```
+
+See [database-migrations.md](./database-migrations.md) for rolling back, writing new migrations and every migration command.
 
 ### Inspecting the data in Compass
 
-Connect Compass to `mongodb://localhost:27017` and open the **`unblock_ai`** database. The three
+Connect Compass to `mongodb://localhost:27017` and open the **`unblock_ai`** database. The
 collections map to the app as follows:
 
 | Collection           | Holds                                                              |
@@ -151,6 +151,10 @@ collections map to the app as follows:
 | `drafts`             | Admin-submitted raw text awaiting/after LLM extraction              |
 | `templates`          | Extracted workflow templates (versioned; `is_latest` marks current) |
 | `selection_sessions` | Selector-agent conversation sessions                                |
+| `tasks`              | Approval requests and their step state                              |
+| `counters`           | Per-year sequence for task references                               |
+| `audit_logs`         | Append-only log of destructive actions                              |
+| `migrations`         | Applied Mongo migrations (`migrations_lock` holds the run lock)     |
 
 Vector search runs in-process (`InMemoryVectorStore`, cosine similarity in Node), so **no Atlas
 Search index is needed** — plain Community Server is sufficient. The `VECTOR_BACKEND=atlas` env var

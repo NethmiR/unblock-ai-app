@@ -140,12 +140,16 @@ unblock-ai-api/
 │  │  └─ index.error.ts
 │  └─ db/
 │     ├─ mongo.client.ts
-│     └─ index.definition.ts
+│     ├─ postgres.client.ts
+│     └─ migration/
+│        ├─ core/                     # shared engine: runner, loader, generator, engine, cli
+│        ├─ postgres/                 # store, template, engine, migrations/
+│        └─ mongo/                    # store, template, engine, migrations/
 ├─ scripts/
 │  ├─ copy-assets.script.ts           # build step: copies non-.ts assets into dist/
 │  ├─ db/
-│  │  ├─ init-db.script.ts
 │  │  ├─ migrate-postgres.script.ts
+│  │  ├─ migrate-mongo.script.ts
 │  │  └─ seed-auth.script.ts
 │  └─ maintenance/
 │     └─ backfill-summaries.script.ts
@@ -184,7 +188,7 @@ unblock-ai-api/
 
 **`src/services/`** — Owns all business logic. A service performs DB access through its model, calls utils for pure computation, and calls external AI providers only through `ILlmAdapter` and `IEmbeddingAdapter`, never through a provider SDK directly. Each provider lives in one adapter file under `llm-adapter/` or `embedding-adapter/`, and the matching `create*Adapter` factory picks one from config. Services receive their collaborators through constructor injection, never by importing a concrete singleton. `extraction.service.ts` only extracts, `embedding.service.ts` only embeds, `retrieval.service.ts` only ranks, `selector.service.ts` only makes one model decision, `selection.service.ts` only orchestrates the multi-round loop.
 
-**`src/models/`** — One model per MongoDB collection. A model owns: the collection name, the TypeScript document interface, the index specifications for that collection, and thin typed CRUD operations (`insertOne`, `findOne`, `updateOne`, `find`, projections). Models contain no business rules — no version-number computation, no embedding calls, no status transition policy. Those live in services.
+**`src/models/`** — One model per MongoDB collection. A model owns: the collection name, the TypeScript document interface, and thin typed CRUD operations (`insertOne`, `findOne`, `updateOne`, `find`, projections). Collections and indexes are created by Mongo migrations, not by models. Models contain no business rules — no version-number computation, no embedding calls, no status transition policy. Those live in services.
 
 **`src/config/`** — Separate config modules per concern, each exporting a frozen, fully-typed object read from `process.env` exactly once at load time and validated on read. `index.config.ts` re-exports a single composed `config` object. No file outside `src/config/` may read `process.env` directly.
 
@@ -198,7 +202,7 @@ unblock-ai-api/
 
 **`src/middlewares/`** — One middleware per file, single responsibility each, wired into routes only where applicable.
 
-**`scripts/`** — CLI entry points that are neither tests nor part of the running app: `db/` (init-db, run Postgres migrations, seed auth users) and `maintenance/` (one-off data backfills), plus `copy-assets.script.ts` at the root, invoked from `npm run build` to copy non-`.ts` assets (Postgres migrations, sample data) into `dist/`.
+**`scripts/`** — CLI entry points that are neither tests nor part of the running app: `db/` (Postgres and MongoDB migration CLIs, seed auth users) and `maintenance/` (one-off data backfills), plus `copy-assets.script.ts` at the root, invoked from `npm run build` to copy non-`.ts` assets (sample data) into `dist/`. See [../guides/database-migrations.md](../guides/database-migrations.md) for the migration engine.
 
 **`tests/`** — Outside `src/`. All unit tests under `tests/unit/`, mirroring the `src/` layout; integration tests (HTTP-level, in-memory fakes) under `tests/integration/`; network-dependent tests under `tests/live/`; shared fixtures and fake builders under `tests/helpers/`. Also home to test-adjacent tooling that isn't `node:test`-based: `tests/smoke/` (manual connectivity checks against real Azure/SMTP, run individually via `npm run smoke-test:*`), `tests/evaluation/` (the selector recall/accuracy report, `npm run evaluate:selection`), and `tests/perf/` (the perf-test suite, `npm run perf-test`, writing timestamped results under its own git-ignored `results/`).
 

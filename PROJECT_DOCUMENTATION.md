@@ -361,7 +361,7 @@ unblock-ai-app/
 │   └─ admin-template-open-performance-phase-plan.md
 ├─ unblock-ai-api/
 │   ├─ src/          169 .ts files, ~8,100 LOC
-│   ├─ scripts/      10 CLI scripts (init-db, migrate, seed, backfill, evaluate, smoke tests)
+│   ├─ scripts/      10 CLI scripts (migrate-postgres, migrate-mongo, seed, backfill, evaluate, smoke tests)
 │   ├─ tests/        43 test files across unit / integration / live
 │   └─ docs/         api/ · architecture/ · guides/ · plans/ · postman/
 └─ unblock-ai-web/
@@ -1550,8 +1550,7 @@ liveness check only (`GET /api/health` touches no dependency) — see
 ## 6.7 Process lifecycle
 
 ```ts
-await ensureIndexes();                    // idempotent, runs at every boot
-const server = app.listen(config.server.port);
+const server = app.listen(config.server.port);   // schema is owned by migrations, not boot
 
 on SIGINT / SIGTERM   -> server.close() -> closeDb() -> closePool() -> exit(0)
 on unhandledRejection -> log + exit(1)
@@ -1577,9 +1576,9 @@ function invoked on shutdown.
 | `counters` | Sequence allocation for `reference` | one document per counter |
 | `audit_logs` | Task-deletion audit | `resource`, `resource_id`, `created_at` |
 
-### Indexes — all 12, created idempotently at boot
+### Indexes — all 13, created by the initial Mongo migration
 
-**File:** [`src/db/index.definition.ts`](unblock-ai-api/src/db/index.definition.ts)
+**File:** [`src/db/migration/mongo/migrations/20261111000000_initial-schema.migration.ts`](unblock-ai-api/src/db/migration/mongo/migrations/20261111000000_initial-schema.migration.ts)
 
 | Collection | Index | Options | Purpose |
 |---|---|---|---|
@@ -1591,16 +1590,17 @@ function invoked on shutdown.
 | `selection_sessions` | `{ created_at: -1 }` | | List newest first |
 | `tasks` | `{ session_id: 1 }` | | Task-for-session lookup |
 | `tasks` | `{ status: 1, created_at: -1 }` | | Filtered task list |
+| `tasks` | `{ created_by: 1, created_at: -1 }` | | A portal user's own requests, newest first |
 | `tasks` | `{ reference: 1 }` | **unique** | Human reference integrity |
 | `tasks` | `{ "steps.approval_token": 1 }` | **sparse** | **Token → task, one indexed hop** |
 | `tasks` | `{ workflow_id: 1, status: 1 }` | | Per-workflow task queries |
 | `audit_logs` | `{ resource: 1, resource_id: 1, created_at: -1 }` | | Audit trail reads |
 
-`ensureIndexes()` runs on every server start and via `npm run init-db`.
+`npm run migrate:mongo:up` creates them; the server never touches indexes at boot.
 
 ## 7.2 PostgreSQL — three tables
 
-**Migration:** [`src/db/migrations/001_auth_tables.sql`](unblock-ai-api/src/db/migrations/001_auth_tables.sql)
+**Migration:** [`src/db/migration/postgres/migrations/20261111000000_initial-schema.migration.ts`](unblock-ai-api/src/db/migration/postgres/migrations/20261111000000_initial-schema.migration.ts)
 
 ### `admin_users` / `portal_users`
 
@@ -1647,11 +1647,14 @@ deleted_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 Three indexes: `deleted_at DESC`, `(deleted_by_admin_id, deleted_at DESC)`,
 `workflow_id`.
 
-### Migrations are plain SQL, not a framework
+### Migrations
 
-[`src/db/migrate.ts`](unblock-ai-api/src/db/migrate.ts) applies `.sql` files in
-**filename order**, each inside its own transaction, tracked in a
-`schema_migrations` table. `npm run migrate:pg` runs them.
+[`src/db/migration/`](unblock-ai-api/src/db/migration/) holds one shared engine and
+independent Postgres and MongoDB migration sets with `up`/`down` support. Each database
+tracks applied migrations, by batch, in its own `migrations` table or collection, and
+guards runs with a `migrations_lock`. Each Postgres migration runs in its own transaction.
+`npm run migrate:up` applies both sets. See
+[`docs/guides/database-migrations.md`](unblock-ai-api/docs/guides/database-migrations.md).
 
 `npm run seed:auth` seeds the fixed set of users from `.env` credentials,
 idempotently (`ON CONFLICT DO NOTHING`; `DO UPDATE` with `--force`).
@@ -2525,8 +2528,7 @@ cd unblock-ai-api
 npm install
 cp .example.env .env          # then fill in Azure + Mongo + Postgres credentials
 
-npm run init-db               # create Mongo collections + all 12 indexes
-npm run migrate:pg            # create the Postgres auth + deletion-log tables
+npm run migrate:up            # apply Postgres + Mongo migrations (tables, collections, indexes)
 npm run seed:auth             # seed 1 admin + 2 portal users from .env credentials
 
 npm run smoke-test:azure      # verify the chat deployment answers
@@ -2563,8 +2565,9 @@ Open http://localhost:3001 and sign in.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Unit + integration |
 | `npm run test:live` | Live Azure tests |
-| `npm run init-db` | Create Mongo indexes (idempotent) |
-| `npm run migrate:pg` | Apply Postgres migrations in filename order |
+| `npm run migrate:up` / `migrate:status` | Apply / inspect migrations on both databases |
+| `npm run migrate:pg:<up\|down\|reset\|status\|create\|unlock>` | Postgres migrations |
+| `npm run migrate:mongo:<up\|down\|reset\|status\|create\|unlock>` | MongoDB migrations |
 | `npm run seed:auth` | Seed users (`--force` to overwrite) |
 | `npm run backfill:summaries` | Regenerate `retrieval_summary` for older templates |
 | `npm run evaluate:selection` | Score selection accuracy against labelled queries |
@@ -2600,9 +2603,8 @@ Open http://localhost:3001 and sign in.
 | ☐ | `APP_PUBLIC_URL` set to the real public origin (approval links are built from it) |
 | ☐ | `CORS_ORIGIN` set to the real web origin |
 | ☐ | `AUTH_STORE_BACKEND=postgres`, `POSTGRES_URL` set |
-| ☐ | `npm run migrate:pg` applied |
+| ☐ | `npm run migrate:up` applied (check with `npm run migrate:status`) |
 | ☐ | `npm run seed:auth` run with **real** credentials, not the `.example.env` defaults |
-| ☐ | `npm run init-db` applied |
 | ☐ | Consider `VECTOR_BACKEND=atlas` with `ATLAS_VECTOR_INDEX` if the template library is large |
 | ☐ | `AUTH_MAX_FAILED_ATTEMPTS` set to a non-zero value |
 | ☐ | HTTPS terminated in front of both services (the cookie is `secure` in production) |
@@ -2611,8 +2613,8 @@ Open http://localhost:3001 and sign in.
 
 - **Both DB clients connect lazily** — the process starts even if a database is
   briefly unavailable, and fails per-request rather than at boot.
-- **`ensureIndexes()` runs at every boot** and is idempotent, so a fresh environment
-  self-provisions its Mongo indexes.
+- **Schema changes are a deploy step**, not a boot step: run `npm run migrate:up`
+  before starting a new release.
 - **Graceful shutdown** on `SIGINT`/`SIGTERM`: stop accepting, close Mongo, close the
   Postgres pool, exit 0.
 - **`GET /api/health` is liveness only** — it touches no dependency. It will report
@@ -2919,8 +2921,8 @@ lib/types/                 workflow/ · draft/ · template/ · selection/ · ret
 errors/                    base · validation · unauthorized · forbidden · not-found
                            · conflict · extraction · selection · embedding
                            · database · configuration · index
-db/                        mongo.client · postgres.client · index.definition
-                           · migrate · migrations/001_auth_tables.sql
+db/                        mongo.client · postgres.client
+                           · migration/{core, postgres, mongo}
 ```
 
 ### Frontend — `unblock-ai-web/src/`

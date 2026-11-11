@@ -1,5 +1,5 @@
 import { MongoClient, type Collection, type Db, type Document } from "mongodb";
-import { config } from "../config/index.config.js";
+import { db as dbConfig } from "../config/db.config.js";
 import { logger } from "../utils/shared/logger.util.js";
 import { DatabaseError } from "../errors/database.error.js";
 
@@ -10,16 +10,16 @@ export async function getDb(): Promise<Db> {
   if (db) return db;
 
   try {
-    client = new MongoClient(config.db.uri, {
-      serverSelectionTimeoutMS: config.db.serverSelectionTimeoutMs,
+    client = new MongoClient(dbConfig.uri, {
+      serverSelectionTimeoutMS: dbConfig.serverSelectionTimeoutMs,
     });
     await client.connect();
-    db = client.db(config.db.dbName);
+    db = client.db(dbConfig.dbName);
   } catch (err) {
     throw new DatabaseError("Failed to connect to MongoDB", { cause: err });
   }
 
-  logger.info("mongo connected", { db: config.db.dbName });
+  logger.info("mongo connected", { db: dbConfig.dbName });
   return db;
 }
 

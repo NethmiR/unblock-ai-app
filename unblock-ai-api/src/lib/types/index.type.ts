@@ -11,3 +11,4 @@ export * from "./audit/index.type.js";
 export * from "./auth/index.type.js";
 export * from "./document/index.type.js";
 export * from "./ai/index.type.js";
+export * from "./migration/index.type.js";

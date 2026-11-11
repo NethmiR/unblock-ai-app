@@ -1,5 +1,5 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
-import { config } from "../config/index.config.js";
+import { postgres as postgresConfig } from "../config/postgres.config.js";
 import { logger } from "../utils/shared/logger.util.js";
 import { DatabaseError } from "../errors/database.error.js";
 
@@ -10,9 +10,9 @@ export function getPool(): Pool {
   if (pool) return pool;
 
   pool = new Pool({
-    connectionString: config.postgres.url,
-    max: config.postgres.poolMax,
-    connectionTimeoutMillis: config.postgres.connectionTimeoutMs,
+    connectionString: postgresConfig.url,
+    max: postgresConfig.poolMax,
+    connectionTimeoutMillis: postgresConfig.connectionTimeoutMs,
   });
   // node-postgres emits 'error' on idle clients. With no listener, Node treats it
   // as an unhandled 'error' event and terminates the process.

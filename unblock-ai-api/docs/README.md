@@ -15,6 +15,7 @@
 | Document | Description |
 | --- | --- |
 | [guides/running-the-app.md](./guides/running-the-app.md) | Full local setup: MongoDB, environment variables, installing dependencies, running backend and frontend together, troubleshooting. |
+| [guides/database-migrations.md](./guides/database-migrations.md) | The Postgres and MongoDB migration engine: layout, npm commands, writing migrations, tracking and locking. |
 | [guides/configuration.md](./guides/configuration.md) | Every environment variable, its default, whether it's required, and which config module owns it. |
 
 ## API reference

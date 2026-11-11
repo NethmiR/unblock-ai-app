@@ -40,7 +40,7 @@ The runnable Postman collection and environment ship at [../postman/](../postman
 
 ```bash
 npm install
-npm run init-db     # creates Mongo indexes
+npm run migrate:up  # applies pending Postgres + Mongo migrations
 npm run dev          # tsx watch, or: npm run build && npm start
 ```
 

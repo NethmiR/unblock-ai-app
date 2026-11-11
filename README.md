@@ -249,29 +249,21 @@ value in **both** files or logins will not survive across the two apps.
 
 ## 6. Initialise the databases
 
-Run all three from `unblock-ai-api/`. Each is idempotent and safe to re-run.
+Run both from `unblock-ai-api/`. Each is safe to re-run.
 
 ```bash
 cd unblock-ai-api
 
-# 6.1 MongoDB collections + indexes
-npm run init-db
+# 6.1 Apply PostgreSQL + MongoDB migrations (tables, collections, indexes)
+npm run migrate:up
 
-# 6.2 PostgreSQL tables (admin_users, portal_users, template_deletions)
-npm run migrate:pg
-
-# 6.3 Seed the demo accounts
+# 6.2 Seed the demo accounts
 npm run seed:auth
 ```
 
-`npm run init-db` prints the collections it created:
-
-```
-database   : unblock_ai
-  selection_sessions   _id_, session_created_desc
-  drafts               _id_, draft_text_sha256_unique, draft_created_desc
-  templates            _id_, template_id_version_unique, template_latest, template_retrieval_filter
-```
+`npm run migrate:status` shows which migrations each database has applied. Rolling back,
+writing new migrations and every per-database command are covered in
+[unblock-ai-api/docs/guides/database-migrations.md](unblock-ai-api/docs/guides/database-migrations.md).
 
 `npm run seed:auth` will not overwrite an account that already exists. To reset a seeded
 password after changing it in `.env`, run `npm run seed:auth -- --force`.
@@ -369,7 +361,7 @@ in chat → fill in the requirements → submit → copy the approval link from 
 | `ECONNREFUSED 27017` | MongoDB is not running — `docker start unblock-ai-mongo`, or `Start-Service MongoDB` |
 | Postgres connection/timeout errors at startup | The service is down, or `POSTGRES_URL` has the wrong password/database. Test it with the `psql` command in 4.2 |
 | `password authentication failed for user "unblock_app"` | Role password does not match `POSTGRES_URL` — `ALTER ROLE unblock_app WITH PASSWORD '...'` |
-| `relation "admin_users" does not exist` | `npm run migrate:pg` has not been run |
+| `relation "admin_users" does not exist` | `npm run migrate:pg:up` has not been run |
 | Login succeeds then immediately bounces back to the login page | `SESSION_TOKEN_SECRET` differs between `unblock-ai-api/.env` and `unblock-ai-web/.env.local`, or is unset in dev (random per process) |
 | CORS errors in the browser console | The frontend is not on the port in `CORS_ORIGIN` (default 3001) |
 | `EADDRINUSE` on port 3000 | Something else holds the port — free it, or change `PORT` and `NEXT_PUBLIC_API_BASE_URL` together |

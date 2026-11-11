@@ -1,14 +1,4 @@
-import { runMigrations } from "../../src/db/migrate.js";
-import { closePool } from "../../src/db/postgres.client.js";
+import { runMigrationCli } from "../../src/db/migration/core/migration.cli.js";
+import { createPostgresMigrationEngine } from "../../src/db/migration/postgres/postgres.migration-engine.js";
 
-const applied = await runMigrations();
-
-if (applied.length === 0) {
-  console.log("no pending migrations");
-} else {
-  for (const filename of applied) {
-    console.log(`applied  ${filename}`);
-  }
-}
-
-await closePool();
+await runMigrationCli(createPostgresMigrationEngine(), process.argv.slice(2));

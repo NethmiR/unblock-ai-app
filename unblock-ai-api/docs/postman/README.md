@@ -49,7 +49,7 @@ request timeout: **Settings → General → Request timeout in ms** — set it t
 
 - MongoDB is running and reachable at the `MONGODB_URI` the server was started with.
 - The server is running (`npm run dev` or `npm run build && npm start`) and `npm run
-  init-db` has been run at least once to create indexes.
+  migrate:up` has been run to create the collections, indexes and tables.
 - At least one workflow template exists with `review_status: "confirmed"` before the
   **Selection** folder can find anything. The **Drafts** and **Workflows** folders each
   create and publish one — run one of them first, or run the whole collection with the
