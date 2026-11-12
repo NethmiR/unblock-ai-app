@@ -1,8 +1,8 @@
 import type { RetrievalSummary } from "../workflow/retrieval-summary.type.js";
 
 export interface RetrievalCandidate {
-  workflow_id: string;
-  version: number;
+  workflow_template_id: string;
+  workflow_template_version: number;
   title: string;
   description: string;
   score: number;

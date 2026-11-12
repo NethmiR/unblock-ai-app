@@ -2,6 +2,20 @@
 
 > Historical planning document. Paths and file names below predate the TypeScript restructure — see docs/architecture/folder-structure.md for the current layout.
 
+> **As built.** Azure AI Search, chunking, drafts and `/api/workflows/extract` were never adopted (the draft concept has since been removed). Each workflow template is embedded as one document: `workflow_templates.retrieval` holds the rendered text, `embedding`, `aliases_lower`, `retrieval_summary` and `institution_type` of the template's current version, rebuilt whenever a version is generated or the title changes. Immutable versions live in `workflow_template_versions`. Retrieval is in-memory cosine by default (`VECTOR_BACKEND=memory`); `VECTOR_BACKEND=atlas` runs MongoDB Atlas `$vectorSearch` against the index named by `ATLAS_VECTOR_INDEX` (default `template_vector_index`), which must be created out-of-band on the `workflow_templates` collection:
+>
+> ```json
+> {
+>   "fields": [
+>     { "type": "vector", "path": "retrieval.embedding", "numDimensions": 1536, "similarity": "cosine" },
+>     { "type": "filter", "path": "status" },
+>     { "type": "filter", "path": "retrieval.institution_type" }
+>   ]
+> }
+> ```
+>
+> `numDimensions` must equal `EMBEDDING_DIMENSIONS` (default 1536). Only `published` templates are searched (`status` filter); archived templates are dropped by a `$match` on `archived_at: null` after the vector stage, so `archived_at` is not an index field. See [src/models/workflow-template.model.ts](../../src/models/workflow-template.model.ts).
+
 > Companion to [RAG_IMPLEMENTATION_GUIDE.md](./RAG_IMPLEMENTATION_GUIDE.md), which specs the same pipeline on Postgres + pgvector. This document answers: **what changes if we use MongoDB as the document store and Azure AI Search as the vector database?**
 >
 > Short answer: it is a **legitimately good fit** — arguably better than Postgres on two axes (schema fit, retrieval quality out of the box) and worse on one that matters (consistency between the two stores). This document is about managing that one weakness.

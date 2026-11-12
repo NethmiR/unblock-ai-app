@@ -1,15 +1,25 @@
 import { writeFile } from "node:fs/promises";
 import { TaskModel } from "../../src/models/task.model.js";
-import { TemplateModel } from "../../src/models/template.model.js";
-import { WorkflowService } from "../../src/services/workflow.service.js";
-import { EmbeddingService } from "../../src/services/embedding.service.js";
-import { ValidationService } from "../../src/services/validation.service.js";
-import { TemplateDeletionLogService } from "../../src/services/template-deletion-log.service.js";
-import { InMemoryTemplateDeletionRepository } from "../../src/repositories/template-deletion-repository/in-memory.template-deletion-repository.js";
+import { WorkflowTemplateModel } from "../../src/models/workflow-template.model.js";
+import { WorkflowTemplateVersionModel } from "../../src/models/workflow-template-version.model.js";
 import { CompletionDocumentService } from "../../src/services/completion-document.service.js";
 import { createDocumentRenderer } from "../../src/services/document/index.document.js";
 import { config } from "../../src/config/index.config.js";
 import { closeDb } from "../../src/db/mongo.client.js";
+import type { TaskDocument } from "../../src/lib/types/task/task.type.js";
+import type { WorkflowDefinition } from "../../src/lib/types/workflow/workflow.type.js";
+
+async function loadTaskDefinition(task: TaskDocument): Promise<WorkflowDefinition> {
+  const template = await new WorkflowTemplateModel().findById(task.workflow_template_id);
+  if (!template) {
+    throw new Error(`Workflow template '${task.workflow_template_id}' not found`);
+  }
+  const version = await new WorkflowTemplateVersionModel().find(task.workflow_template_id, task.workflow_template_version);
+  if (!version) {
+    throw new Error(`Workflow template '${task.workflow_template_id}' has no version ${task.workflow_template_version}`);
+  }
+  return { ...version.definition, title: template.title };
+}
 
 async function smokeTest(): Promise<void> {
   const taskId = process.argv[2];
@@ -17,23 +27,12 @@ async function smokeTest(): Promise<void> {
     throw new Error("Usage: npm run smoke-test:document -- <task-id> [out.pdf]");
   }
 
-  const taskModel = new TaskModel();
-  const task = await taskModel.findById(taskId);
+  const task = await new TaskModel().findById(taskId);
   if (!task) {
     throw new Error(`Task '${taskId}' not found`);
   }
 
-  const workflowService = new WorkflowService({
-    templateModel: new TemplateModel(),
-    embeddingService: new EmbeddingService(),
-    validationService: new ValidationService(),
-    taskModel,
-    // This script never deletes templates - an in-memory store avoids pulling
-    // in a live Postgres connection just to satisfy the constructor.
-    templateDeletionLog: new TemplateDeletionLogService({ templateDeletionRepository: new InMemoryTemplateDeletionRepository() }),
-  });
-  const workflow = await workflowService.getDocument(task.workflow_id, task.version);
-
+  const workflow = await loadTaskDefinition(task);
   const renderer = createDocumentRenderer(config.document.format);
   const completionDocumentService = new CompletionDocumentService({ renderer, config });
   const completedAt = task.completion_document?.generated_at ?? task.updated_at;

@@ -3,7 +3,7 @@ export type SelectionDecision = "matched" | "ambiguous" | "no_match" | "manual_c
 export type Confidence = "high" | "medium" | "low";
 
 export interface SelectionCandidate {
-  workflow_id: string;
+  workflow_template_id: string;
   title: string;
   one_liner: string | null;
   score: number;
@@ -12,7 +12,7 @@ export interface SelectionCandidate {
 export interface SelectionResponse {
   session_id: string;
   decision: SelectionDecision;
-  workflow_id: string | null;
+  workflow_template_id: string | null;
   confidence: Confidence;
   question: string | null;
   options: string[];
@@ -22,7 +22,7 @@ export interface SelectionResponse {
 export interface ChooseResponse {
   session_id: string;
   decision: SelectionDecision;
-  workflow_id: string;
+  workflow_template_id: string;
 }
 
 export enum RequesterActorType {

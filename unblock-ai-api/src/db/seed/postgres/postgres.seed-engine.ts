@@ -4,15 +4,28 @@ import { POSTGRES_SEED_TEMPLATE } from "./postgres.seed-template.js";
 import { closePool } from "../../postgres.client.js";
 import { user as userConfig } from "../../../config/user.config.js";
 import { loadSeedConfig } from "../../../config/seed.config.js";
-import { PostgresUserRepository } from "../../../repositories/user-repository/postgres.user-repository.js";
+import { createPostgresRepositoryRegistry } from "../../../repositories/repository-registry.factory.js";
 import { UserService } from "../../../services/user.service.js";
+import { OrganisationalUnitService } from "../../../services/organisational-unit.service.js";
+import { DesignationService } from "../../../services/designation.service.js";
+import { UserAffiliationService } from "../../../services/user-affiliation.service.js";
 import type { PostgresSeedContext } from "./postgres.seed-context.js";
 
 const SEEDERS_DIRECTORY = fileURLToPath(new URL("./seeders", import.meta.url));
 
 async function createPostgresSeedContext(): Promise<PostgresSeedContext> {
+  const { userRepository, userAffiliationRepository, organisationalUnitRepository, designationRepository } =
+    createPostgresRepositoryRegistry();
   return {
-    userService: new UserService({ userRepository: new PostgresUserRepository(), userConfig }),
+    userService: new UserService({ userRepository, userAffiliationRepository, userConfig }),
+    organisationalUnitService: new OrganisationalUnitService({ organisationalUnitRepository }),
+    designationService: new DesignationService({ designationRepository }),
+    userAffiliationService: new UserAffiliationService({
+      userAffiliationRepository,
+      organisationalUnitRepository,
+      designationRepository,
+      userRepository,
+    }),
     seedConfig: loadSeedConfig(),
   };
 }

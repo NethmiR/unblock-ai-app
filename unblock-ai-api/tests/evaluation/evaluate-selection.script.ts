@@ -1,11 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { TemplateModel } from "../../src/models/template.model.js";
 import { InMemoryVectorStore } from "../../src/services/vector-store/in-memory.vector-store.js";
 import { RetrievalService } from "../../src/services/retrieval.service.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { SelectorService } from "../../src/services/selector.service.js";
 import { LlmMessageRole } from "../../src/data/constants/llm.constant.js";
-import { closeDb } from "../../src/db/mongo.client.js";
+import { buildFixtureRetrievalReader } from "../helpers/fixture-retrieval-corpus.helper.js";
 
 interface EvaluationCase {
   query: string;
@@ -19,7 +18,7 @@ interface EvaluationRow {
   query: string;
   expected: string;
   got: string;
-  workflow: string;
+  workflow_template: string;
   recall: string;
   ok: string;
 }
@@ -32,9 +31,8 @@ const cases = JSON.parse(
   await readFile("src/data/samples/selection/queries.json", "utf8"),
 ) as EvaluationCase[];
 
-const templateModel = new TemplateModel();
-const vectorStore = new InMemoryVectorStore({ templateReader: templateModel });
 const embeddingService = new EmbeddingService();
+const vectorStore = new InMemoryVectorStore({ retrievalReader: await buildFixtureRetrievalReader(embeddingService) });
 const retrievalService = new RetrievalService({ vectorStore, embeddingService });
 const selectorService = new SelectorService();
 
@@ -45,7 +43,7 @@ const rows: EvaluationRow[] = [];
 
 for (const c of cases) {
   const candidates = await retrievalService.retrieve(c.query);
-  const ids = candidates.map((x) => x.workflow_id);
+  const ids = candidates.map((x) => x.workflow_template_id);
 
   const expectedIds = c.expect_workflow ? [c.expect_workflow] : (c.expect_in_candidates ?? []);
   let recall = "n/a";
@@ -58,14 +56,14 @@ for (const c of cases) {
 
   const decision = await selectorService.decide(candidates, [{ role: LlmMessageRole.USER, text: c.query }]);
   const correct =
-    decision.decision === c.expect && (!c.expect_workflow || decision.workflow_id === c.expect_workflow);
+    decision.decision === c.expect && (!c.expect_workflow || decision.workflow_template_id === c.expect_workflow);
   if (correct) decisionHits++;
 
   rows.push({
     query: c.query.slice(0, 42),
     expected: c.expect,
     got: decision.decision,
-    workflow: decision.workflow_id ?? "-",
+    workflow_template: decision.workflow_template_id ?? "-",
     recall,
     ok: correct ? "PASS" : "FAIL",
   });
@@ -76,5 +74,3 @@ console.log(`\nRecall@5          : ${recallHits}/${recallTotal}  (${pct(recallHi
 console.log(`Decision accuracy : ${decisionHits}/${cases.length}  (${pct(decisionHits, cases.length)})`);
 console.log(`\nRecall bad  -> fix retrieval_summary / embeddings`);
 console.log(`Decision bad -> fix the selector prompt`);
-
-await closeDb();

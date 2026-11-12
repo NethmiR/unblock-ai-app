@@ -1,36 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { WorkflowController } from "../../src/controllers/workflow.controller.js";
-import { DraftController } from "../../src/controllers/draft.controller.js";
 import { SelectionController } from "../../src/controllers/selection.controller.js";
-import { TaskController } from "../../src/controllers/task.controller.js";
-import { HealthController } from "../../src/controllers/health.controller.js";
 import { ConflictError } from "../../src/errors/conflict.error.js";
 import {
   authHeaderFor,
   TestIdentity,
+  createTestControllers,
   startTestServer,
   type TestServer,
 } from "../helpers/test-server.helper.js";
-import type { ExtractionService } from "../../src/services/extraction.service.js";
-import type { WorkflowService } from "../../src/services/workflow.service.js";
-import type { DraftService } from "../../src/services/draft.service.js";
 import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { SelectionResponseDto } from "../../src/lib/types/selection/session.type.js";
-import type { WorkflowDefinition } from "../../src/lib/types/workflow/workflow.type.js";
-import type { ApprovalController } from "../../src/controllers/approval.controller.js";
-import type { AuthController } from "../../src/controllers/auth.controller.js";
-import type { UserSessionController } from "../../src/controllers/user-session.controller.js";
-import type { UserController } from "../../src/controllers/user.controller.js";
-import type { ApiControllers } from "../../src/routes/index.route.js";
+import type { PublishedWorkflowDefinition } from "../../src/lib/types/workflow-template/workflow-template.type.js";
+import { LEAVE_WORKFLOW_TEMPLATE_ID } from "../helpers/workflow-template.helper.js";
+import { loadExpectedFixture } from "../helpers/fixture.helper.js";
 
 interface FakeSelectionServiceOptions {
   startResult?: SelectionResponseDto;
   answerResult?: SelectionResponseDto;
-  chooseResult?: { session_id: string; decision: string; workflow_id: string };
-  matchedWorkflow?: WorkflowDefinition;
-  matchedWorkflowError?: Error;
+  chooseResult?: { session_id: string; decision: string; workflow_template_id: string };
+  matchedWorkflowTemplate?: PublishedWorkflowDefinition;
+  matchedWorkflowTemplateError?: Error;
 }
 
 function fakeSelectionService(options: FakeSelectionServiceOptions = {}): SelectionService & {
@@ -47,38 +38,19 @@ function fakeSelectionService(options: FakeSelectionServiceOptions = {}): Select
       calls.answer.push({ sessionId, answer });
       return Promise.resolve(options.answerResult);
     },
-    choose(sessionId: string, workflowId: string) {
-      calls.choose.push({ sessionId, workflowId });
+    choose(sessionId: string, workflowTemplateId: string) {
+      calls.choose.push({ sessionId, workflowTemplateId });
       return Promise.resolve(options.chooseResult);
     },
-    getMatchedWorkflow() {
-      if (options.matchedWorkflowError) return Promise.reject(options.matchedWorkflowError);
-      return Promise.resolve(options.matchedWorkflow);
+    getMatchedWorkflowTemplate() {
+      if (options.matchedWorkflowTemplateError) return Promise.reject(options.matchedWorkflowTemplateError);
+      return Promise.resolve(options.matchedWorkflowTemplate);
     },
   } as unknown as SelectionService & { calls: { start: unknown[]; answer: unknown[]; choose: unknown[] } };
 }
 
 async function buildServer(selectionService: SelectionService): Promise<TestServer> {
-  const controllers: ApiControllers = {
-    healthController: new HealthController(),
-    workflowController: new WorkflowController({
-      workflowService: {} as WorkflowService,
-      extractionService: {} as ExtractionService,
-      validationService: {} as never,
-      draftService: {} as never,
-    }),
-    draftController: new DraftController({
-      draftService: {} as DraftService,
-      extractionService: {} as ExtractionService,
-      workflowService: {} as WorkflowService,
-    }),
-    selectionController: new SelectionController({ selectionService }),
-    taskController: new TaskController({ taskService: {} as TaskService }),
-    approvalController: {} as ApprovalController,
-    authController: {} as AuthController,
-    userSessionController: {} as UserSessionController,
-    userController: {} as UserController,
-  };
+  const controllers = createTestControllers({ selectionController: new SelectionController({ selectionService }) });
 
   return startTestServer(controllers);
 }
@@ -102,7 +74,7 @@ test("POST /api/selection/sessions starts a session and returns the decision", a
     startResult: {
       session_id: "s1",
       decision: "matched",
-      workflow_id: "wf_1",
+      workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID,
       confidence: "high",
       question: null,
       options: [],
@@ -148,7 +120,7 @@ test("POST /api/selection/sessions/:id/answer forwards to the service", async ()
     answerResult: {
       session_id: "s1",
       decision: "matched",
-      workflow_id: "wf_1",
+      workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID,
       confidence: "high",
       question: null,
       options: [],
@@ -173,7 +145,7 @@ test("POST /api/selection/sessions/:id/answer forwards to the service", async ()
   }
 });
 
-test("POST /api/selection/sessions/:id/choose rejects a missing workflow_id", async () => {
+test("POST /api/selection/sessions/:id/choose rejects a missing workflow_template_id", async () => {
   const server = await buildServer(fakeSelectionService());
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/choose`, {
@@ -187,31 +159,50 @@ test("POST /api/selection/sessions/:id/choose rejects a missing workflow_id", as
   }
 });
 
+test("POST /api/selection/sessions/:id/choose rejects a workflow_template_id that is not a UUID", async () => {
+  const selectionService = fakeSelectionService();
+  const server = await buildServer(selectionService);
+  try {
+    const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/choose`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
+      body: JSON.stringify({ workflow_template_id: "wf_1" }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(selectionService.calls.choose.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
 test("POST /api/selection/sessions/:id/choose forwards to the service", async () => {
   const selectionService = fakeSelectionService({
-    chooseResult: { session_id: "s1", decision: "matched", workflow_id: "wf_1" },
+    chooseResult: { session_id: "s1", decision: "matched", workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID },
   });
   const server = await buildServer(selectionService);
   try {
     const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/choose`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({ workflow_id: "wf_1" }),
+      body: JSON.stringify({ workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID }),
     });
     assert.equal(res.status, 200);
-    assert.equal((selectionService.calls.choose[0] as { workflowId: string }).workflowId, "wf_1");
+    assert.equal(
+      (selectionService.calls.choose[0] as { workflowTemplateId: string }).workflowTemplateId,
+      LEAVE_WORKFLOW_TEMPLATE_ID,
+    );
   } finally {
     await server.close();
   }
 });
 
-test("GET /api/selection/sessions/:id/workflow returns 409 before a match", async () => {
+test("GET /api/selection/sessions/:id/workflow-template returns 409 before a match", async () => {
   const selectionService = fakeSelectionService({
-    matchedWorkflowError: new ConflictError("This session has not matched a workflow yet"),
+    matchedWorkflowTemplateError: new ConflictError("This session has not matched a workflow template yet"),
   });
   const server = await buildServer(selectionService);
   try {
-    const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/workflow`, {
+    const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/workflow-template`, {
       headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 409);
@@ -220,17 +211,18 @@ test("GET /api/selection/sessions/:id/workflow returns 409 before a match", asyn
   }
 });
 
-test("GET /api/selection/sessions/:id/workflow returns the matched workflow", async () => {
-  const matchedWorkflow = { workflow_id: "wf_1", title: "Test" } as unknown as WorkflowDefinition;
-  const selectionService = fakeSelectionService({ matchedWorkflow });
+test("GET /api/selection/sessions/:id/workflow-template returns the published version and definition", async () => {
+  const definition = loadExpectedFixture("it_faculty_overseas_leave.json");
+  const selectionService = fakeSelectionService({ matchedWorkflowTemplate: { version: 3, definition } });
   const server = await buildServer(selectionService);
   try {
-    const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/workflow`, {
+    const res = await fetch(`${server.baseUrl}/api/selection/sessions/s1/workflow-template`, {
       headers: authHeaderFor(TestIdentity.TASK_CREATOR),
     });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { workflow_id: string };
-    assert.equal(body.workflow_id, "wf_1");
+    const body = (await res.json()) as { workflow_template_version: number; definition: { title: string } };
+    assert.equal(body.workflow_template_version, 3);
+    assert.equal(body.definition.title, definition.title);
   } finally {
     await server.close();
   }

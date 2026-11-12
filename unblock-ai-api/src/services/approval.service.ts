@@ -1,5 +1,5 @@
 import { TaskModel } from "../models/task.model.js";
-import { WorkflowService } from "./workflow.service.js";
+import { WorkflowTemplateService } from "./workflow-template.service.js";
 import { ExecutionService } from "./execution.service.js";
 import { NotificationService } from "./notification.service.js";
 import { TaskService } from "./task.service.js";
@@ -19,7 +19,7 @@ import type { ApproverViewDto, ApproverStatus, DecisionResultDto } from "../lib/
 
 export interface ApprovalServiceOptions {
   taskModel: TaskModel;
-  workflowService: WorkflowService;
+  workflowTemplateService: WorkflowTemplateService;
   executionService: ExecutionService;
   notificationService: NotificationService;
   taskService: TaskService;
@@ -35,7 +35,7 @@ interface TokenContext {
 
 export class ApprovalService {
   private readonly taskModel: TaskModel;
-  private readonly workflowService: WorkflowService;
+  private readonly workflowTemplateService: WorkflowTemplateService;
   private readonly executionService: ExecutionService;
   private readonly notificationService: NotificationService;
   private readonly taskService: TaskService;
@@ -44,7 +44,7 @@ export class ApprovalService {
 
   constructor({
     taskModel,
-    workflowService,
+    workflowTemplateService,
     executionService,
     notificationService,
     taskService,
@@ -52,7 +52,7 @@ export class ApprovalService {
     config,
   }: ApprovalServiceOptions) {
     this.taskModel = taskModel;
-    this.workflowService = workflowService;
+    this.workflowTemplateService = workflowTemplateService;
     this.executionService = executionService;
     this.notificationService = notificationService;
     this.taskService = taskService;
@@ -107,7 +107,7 @@ export class ApprovalService {
 
     return {
       task_reference: task.reference,
-      workflow_title: workflow.title,
+      workflow_template_title: workflow.title,
       step: {
         step_id: workflowStep.id,
         name: workflowStep.name,
@@ -254,7 +254,7 @@ export class ApprovalService {
     const step = task.steps.find((s) => s.step_id === payload.step_id);
     if (!step) throw NotFoundError.of("Approval token", token);
 
-    const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+    const workflow = await this.workflowTemplateService.getDefinition(task.workflow_template_id, task.workflow_template_version);
 
     return { task, workflow, step };
   }

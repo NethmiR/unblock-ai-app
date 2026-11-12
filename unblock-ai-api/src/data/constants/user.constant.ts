@@ -9,3 +9,9 @@ export const USER_FIELD_LIMIT = {
 } as const;
 
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export const USER_LIST_PAGINATION = {
+  DEFAULT_LIMIT: 25,
+  MAX_LIMIT: 100,
+  SEARCH_MAX_LENGTH: 100,
+} as const;

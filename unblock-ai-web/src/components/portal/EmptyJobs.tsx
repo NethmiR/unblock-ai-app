@@ -15,7 +15,7 @@ export function EmptyJobs() {
         Start by describing what you need — overseas leave, a verification letter, a hall booking.
         We&apos;ll work out who has to approve it.
       </p>
-      <Link href="/portal/jobs/new">
+      <Link href="/old/portal/jobs/new">
         <Button className="h-[50px] rounded-card px-[22px] text-[15px] font-medium">
           New Request
         </Button>

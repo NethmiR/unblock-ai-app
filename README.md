@@ -20,12 +20,12 @@ Install these before starting:
 | Requirement | Notes |
 |---|---|
 | **Node.js 18+** and npm | `node -v` to check |
-| **MongoDB 7** | Local server or Docker — stores workflows, drafts, tasks |
-| **PostgreSQL 17** | Stores users, sessions and template-deletion audit rows |
+| **MongoDB 7** | Local server or Docker — stores workflow templates and their versions, selection sessions, tasks |
+| **PostgreSQL 17** | Stores users, permissions, sessions and the organisational structure |
 | **Azure AI Foundry account** | Needed for the chat model and the embedding model (section 3) |
 | Git | To clone the repository |
 
-There is no offline mock for the Azure models — the extraction and retrieval features
+There is no offline mock for the Azure models — workflow template generation and retrieval
 require real deployments.
 
 ---
@@ -53,7 +53,7 @@ The project uses **two separate model deployments**:
 
 | Purpose | Model used | Env prefix |
 |---|---|---|
-| Workflow extraction + selector agent (the LLM) | `gpt-4o` | `AZURE_OPENAI_*` / `AZURE_SELECTOR_*` |
+| Workflow template generation + selector agent (the LLM) | `gpt-4o` | `AZURE_OPENAI_*` / `AZURE_SELECTOR_*` |
 | Template retrieval vectors (the embedding model) | `text-embedding-3-small` (1536 dimensions) | `AZURE_EMBEDDING_*` |
 
 ### 3.1 Create the Foundry project
@@ -268,9 +268,11 @@ writing new migrations and every per-database command are covered in
 [unblock-ai-api/docs/guides/database-migrations.md](unblock-ai-api/docs/guides/database-migrations.md).
 
 `npm run seed:pg:run` creates the administrator from `SEED_ADMINISTRATOR_EMAIL` /
-`SEED_ADMINISTRATOR_FULL_NAME` with all four permissions and the password in
-`USER_DEFAULT_PASSWORD`. Seeders are idempotent: an existing user is skipped, never
-overwritten. `npm run seed:pg:list` lists the seeders and `npm run seed:pg:create -- <name>`
+`SEED_ADMINISTRATOR_FULL_NAME` with every permission and the password in
+`USER_DEFAULT_PASSWORD`, then seeds the University of Moratuwa structure (faculties,
+departments, divisions) and its designations. With `SEED_SAMPLE_USERS=true` it also creates
+sample users `u1@u.c` … `u16@u.c` with test affiliations — development only. Seeders are
+idempotent: existing records are skipped, never overwritten. `npm run seed:pg:list` lists the seeders and `npm run seed:pg:create -- <name>`
 scaffolds a new one — see
 [unblock-ai-api/docs/guides/database-seeding.md](unblock-ai-api/docs/guides/database-seeding.md).
 
@@ -297,9 +299,9 @@ npm run dev            # port 3001 is already fixed in package.json
 Then open:
 
 - App: **http://localhost:3001**
-- Login (every user): **http://localhost:3001/login** — after sign-in you land on `/account`
-- Template authoring dashboard: **http://localhost:3001/admin** (reachable by URL, not linked yet)
-- Requester dashboard: **http://localhost:3001/portal** (reachable by URL, not linked yet)
+- Login (every user): **http://localhost:3001/login** — after sign-in you land on `/dashboard`
+- Workflow templates: **http://localhost:3001/dashboard/workflows** (needs `workflow:manage`)
+- Requester dashboard: **http://localhost:3001/old/portal** (reachable by URL, not linked yet)
 - API health check: **http://localhost:3000/api/health**
 
 The frontend **must** run on port 3001 — it is the backend's default `CORS_ORIGIN`. If you
@@ -321,12 +323,25 @@ one or more permissions:
 
 | Permission | Allows |
 |---|---|
-| `workflow:manage` | Author, edit, publish and delete workflow templates; drafts; the deletion log |
-| `task:create` | Read published workflows, chat with the selector, create and run **their own** requests |
+| `workflow:manage` | Create, generate, publish, archive and restore workflow templates |
+| `task:create` | Read workflow templates, chat with the selector, create and run **their own** requests |
 | `task:approve` | Grantable, but gates nothing yet (approvals still use emailed links) |
-| `user:manage` | Create, list and view users |
+| `user:manage` | Create, list and view users, and manage their affiliations |
+| `organisation:manage` | Configure faculties, departments, divisions and designations |
 
-**Bootstrap administrator** — created by `npm run seed:pg:run` with all four permissions.
+**Bootstrap administrator** — created by `npm run seed:pg:run` with every permission.
+
+**Organisational structure** — every user can belong to any number of faculties,
+departments and divisions, and hold designations (Dean, Head of Department, Lecturer,
+Student, …) within them. `organisation:manage` holders configure the structure under
+*Organisation* in the dashboard; `user:manage` holders assign people under *Users*; everyone
+sees their own affiliations on *Profile*. Design and rules:
+[docs/organisational-structure-and-user-affiliations-phase-plan.md](docs/organisational-structure-and-user-affiliations-phase-plan.md).
+
+**Sample users** — with `SEED_SAMPLE_USERS=true`, `u1@u.c` … `u16@u.c` (password
+`USER_DEFAULT_PASSWORD`) cover the Vice-Chancellor, Registrar (`u2@u.c`, user and
+organisation management), Deans, Heads of Department, lecturers, administrative staff,
+students and one user without affiliations.
 With the suggested `.env` in section 5.1 that is `admin@example.com` / `12345`.
 
 **Other users** are created by a `user:manage` holder through the API. Every new user gets the
@@ -372,9 +387,10 @@ npm test                        # unit + integration tests (in-memory Mongo + fa
 
 Frontend checks: `npm run typecheck`, `npm run lint`, `npm test` from `unblock-ai-web/`.
 
-A typical end-to-end walkthrough: sign in as the bootstrap administrator → open `/admin` →
-create a template from prose → Generate → Publish → create a `task:create` user (section 8) →
-sign out → sign in as that user → open `/portal` → start a new job → describe the request in
+A typical end-to-end walkthrough: sign in as the bootstrap administrator → open
+`/dashboard/workflows` → **New workflow template** → enter a title and describe the process
+in the prompt → Generate → Publish → create a `task:create` user (section 8) →
+sign out → sign in as that user → open `/old/portal` → start a new job → describe the request in
 chat → fill in the requirements → submit → copy the approval link from the backend terminal →
 approve.
 
@@ -395,9 +411,9 @@ approve.
 | `403 PERMISSION_DENIED` from the API | The signed-in user lacks the permission that route needs (section 8) |
 | CORS errors in the browser console | The frontend is not on the port in `CORS_ORIGIN` (default 3001) |
 | `EADDRINUSE` on port 3000 | Something else holds the port — free it, or change `PORT` and `NEXT_PUBLIC_API_BASE_URL` together |
-| Extraction returns 422 | The model rejected the prose as not a workflow, or failed validation after `EXTRACTION_MAX_ATTEMPTS` retries — check the backend logs |
+| Generating a workflow template returns 422 | `WORKFLOW_TEMPLATE_PROMPT_REJECTED`: the model judged the prompt not to be a workflow. `WORKFLOW_TEMPLATE_GENERATION_FAILED`: no valid definition after `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` attempts — check the backend logs. A `.env` still setting the old `EXTRACTION_MAX_ATTEMPTS` is ignored; rename it |
 | Embedding errors / dimension mismatch | `AZURE_EMBEDDING_DIM` does not match the deployed model (1536 for `text-embedding-3-small`, 3072 for `-large`) |
-| Nothing found when searching for a template | The template is not published — retrieval only sees templates with `review_status: confirmed`. Publish it from the admin editor |
+| Nothing found when searching for a template | The template is not published, or it is archived — retrieval only sees published, non-archived templates. Publish or restore it in `/dashboard/workflows` |
 
 ---
 
@@ -411,4 +427,5 @@ approve.
 | [unblock-ai-api/docs/guides/running-the-app.md](unblock-ai-api/docs/guides/running-the-app.md) | Longer-form run guide |
 | [unblock-ai-api/docs/guides/database-seeding.md](unblock-ai-api/docs/guides/database-seeding.md) | The Postgres seed pack and the bootstrap administrator |
 | [docs/user-access-and-session-management-phase-plan.md](docs/user-access-and-session-management-phase-plan.md) | Design of users, permissions and server-side sessions |
+| [docs/organisational-structure-and-user-affiliations-phase-plan.md](docs/organisational-structure-and-user-affiliations-phase-plan.md) | Design of faculties, departments, divisions, designations and user affiliations |
 | [unblock-ai-api/docs/postman/](unblock-ai-api/docs/postman/) | Postman collection that chains ids automatically |

@@ -40,7 +40,7 @@ export type LlmConfig = AiProviderConnectionConfig;
 
 export type EmbeddingConfig = { dimensions: number } & AiProviderConnectionConfig;
 
-export interface ExtractionConfig {
+export interface WorkflowTemplateGenerationConfig {
   maxAttempts: number;
 }
 
@@ -74,6 +74,7 @@ export interface UserConfig {
 export interface SeedConfig {
   administratorEmail: string;
   administratorFullName: string;
+  sampleUsersEnabled: boolean;
 }
 
 export interface DocumentConfig {
@@ -90,7 +91,7 @@ export interface AppConfig {
   postgres: PostgresConfig;
   llm: LlmConfig;
   embedding: EmbeddingConfig;
-  extraction: ExtractionConfig;
+  workflowTemplateGeneration: WorkflowTemplateGenerationConfig;
   retrieval: RetrievalConfig;
   mail: MailConfig;
   auth: AuthConfig;

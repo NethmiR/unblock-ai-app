@@ -1,6 +1,7 @@
 import dagre from "dagre";
 import type { Node, Edge } from "@xyflow/react";
-import type { Workflow, WorkflowStep } from "@/types/workflow";
+import type { WorkflowStep } from "@/types/workflow";
+import type { WorkflowTemplateDefinition } from "@/types/workflow-template";
 
 const NODE_WIDTH = 340;
 const NODE_HEIGHT = 92;
@@ -47,7 +48,7 @@ export interface FlowNodeData extends Record<string, unknown> {
  *
  * PURE: no React, no DOM, no I/O. Unit-test it against both gold fixtures.
  */
-export function toFlowGraph(workflow: Workflow): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
+export function toFlowGraph(workflow: WorkflowTemplateDefinition): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
   const nodes: Node<FlowNodeData>[] = [];
   const edges: Edge[] = [];
 

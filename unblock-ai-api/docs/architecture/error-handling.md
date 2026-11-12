@@ -21,15 +21,23 @@ this is exactly what gets serialized into the HTTP response body.
 | Class | File | Status | `code` | Used for |
 | --- | --- | --- | --- | --- |
 | `ValidationError` | `src/errors/validation.error.ts` | 400 | `VALIDATION_ERROR` | Malformed or missing request bodies/fields; has `ValidationError.forField()` and `ValidationError.forObject()` factory helpers. |
-| `NotFoundError` | `src/errors/not-found.error.ts` | 404 | `NOT_FOUND` | Missing draft, workflow, or selection session; has a `NotFoundError.of(resource, id)` factory helper. |
-| `ConflictError` | `src/errors/conflict.error.ts` | 409 | `CONFLICT` | A request that is well-formed but conflicts with the current state (e.g. fetching a matched workflow for a session that hasn't matched yet). |
-| `ExtractionError` | `src/errors/extraction.error.ts` | 422 | `EXTRACTION_ERROR` | LLM extraction failed after all repair attempts, or the input text was flagged as not describing a workflow. |
+| `NotFoundError` | `src/errors/not-found.error.ts` | 404 | `NOT_FOUND` | Missing workflow template, template version, or selection session; has a `NotFoundError.of(resource, id)` factory helper. |
+| `ConflictError` | `src/errors/conflict.error.ts` | 409 | `CONFLICT` | A request that is well-formed but conflicts with the current state (e.g. fetching the matched workflow template for a session that hasn't matched yet, or publishing a template that is already published). |
+| `WorkflowTemplateGenerationError` | `src/errors/workflow-template-generation.error.ts` | 422 | `WORKFLOW_TEMPLATE_GENERATION_FAILED` | Workflow template generation failed after all repair attempts (`details` lists the last validation errors). Raised with code `WORKFLOW_TEMPLATE_PROMPT_REJECTED` when the model flags the prompt as not describing a workflow (`details` lists the model's `metadata.ambiguities`). |
 | `SelectionError` | `src/errors/selection.error.ts` | 502 | `SELECTION_ERROR` | The selector-agent Azure OpenAI call failed. |
 | `EmbeddingError` | `src/errors/embedding.error.ts` | 502 | `EMBEDDING_ERROR` | The Azure embeddings call failed, or returned an unexpected dimension. |
 | `DatabaseError` | `src/errors/database.error.ts` | 500 | `DATABASE_ERROR` | A MongoDB operation failed unexpectedly. |
 | `ConfigurationError` | `src/errors/configuration.error.ts` | 500 | `CONFIGURATION_ERROR` | A required environment variable is missing or invalid at startup. `isOperational: false`. |
 
 All eight are re-exported from the barrel `src/errors/index.error.ts` alongside `BaseError`.
+
+Resource-specific errors are built by factory functions rather than new classes. For
+example, `src/errors/workflow-template.error.ts` returns `NotFoundError` or
+`ConflictError` instances with specific codes (`WORKFLOW_TEMPLATE_NOT_FOUND`,
+`WORKFLOW_TEMPLATE_VERSION_NOT_FOUND`, `WORKFLOW_TEMPLATE_ARCHIVED`,
+`WORKFLOW_TEMPLATE_NOT_ARCHIVED`, `WORKFLOW_TEMPLATE_NOT_GENERATED`,
+`WORKFLOW_TEMPLATE_ALREADY_PUBLISHED`, `WORKFLOW_TEMPLATE_NOT_PUBLISHED`), defined in
+`src/data/constants/workflow-template-error.constant.ts`.
 
 ## The error-handling middleware
 

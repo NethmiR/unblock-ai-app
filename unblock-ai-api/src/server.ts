@@ -4,8 +4,8 @@ import { createRequireTaskOwnership } from "./middlewares/require-task-ownership
 import { closeDb } from "./db/mongo.client.js";
 import { closePool } from "./db/postgres.client.js";
 import { logger } from "./utils/shared/logger.util.js";
-import { DraftModel } from "./models/draft.model.js";
-import { TemplateModel } from "./models/template.model.js";
+import { WorkflowTemplateModel } from "./models/workflow-template.model.js";
+import { WorkflowTemplateVersionModel } from "./models/workflow-template-version.model.js";
 import { SelectionSessionModel } from "./models/selection-session.model.js";
 import { TaskModel } from "./models/task.model.js";
 import { AuditLogModel } from "./models/audit-log.model.js";
@@ -13,11 +13,9 @@ import { createLlmAdapter } from "./services/llm-adapter/index.llm-adapter.js";
 import { createEmbeddingAdapter } from "./services/embedding-adapter/index.embedding-adapter.js";
 import { EmbeddingService } from "./services/embedding.service.js";
 import { ValidationService } from "./services/validation.service.js";
-import { ExtractionService } from "./services/extraction.service.js";
-import { DraftService } from "./services/draft.service.js";
-import { WorkflowService } from "./services/workflow.service.js";
+import { WorkflowTemplateGenerationService } from "./services/workflow-template-generation.service.js";
+import { WorkflowTemplateService } from "./services/workflow-template.service.js";
 import { AuditService } from "./services/audit.service.js";
-import { TemplateDeletionLogService } from "./services/template-deletion-log.service.js";
 import { createVectorStore } from "./services/vector-store/index.vector-store.js";
 import { RetrievalService } from "./services/retrieval.service.js";
 import { SelectorService } from "./services/selector.service.js";
@@ -30,14 +28,14 @@ import { CompletionDocumentService } from "./services/completion-document.servic
 import { createDocumentRenderer } from "./services/document/index.document.js";
 import { createMailer } from "./services/mailer/index.mailer.js";
 import { TaskService } from "./services/task.service.js";
-import { createUserRepository } from "./repositories/user-repository/index.user-repository.js";
-import { createUserSessionRepository } from "./repositories/user-session-repository/index.user-session-repository.js";
-import { createTemplateDeletionRepository } from "./repositories/template-deletion-repository/index.template-deletion-repository.js";
+import { createRepositoryRegistry } from "./repositories/repository-registry.factory.js";
 import { UserSessionService } from "./services/user-session.service.js";
 import { AuthenticationService } from "./services/authentication.service.js";
 import { UserService } from "./services/user.service.js";
-import { WorkflowController } from "./controllers/workflow.controller.js";
-import { DraftController } from "./controllers/draft.controller.js";
+import { OrganisationalUnitService } from "./services/organisational-unit.service.js";
+import { DesignationService } from "./services/designation.service.js";
+import { UserAffiliationService } from "./services/user-affiliation.service.js";
+import { WorkflowTemplateController } from "./controllers/workflow-template.controller.js";
 import { SelectionController } from "./controllers/selection.controller.js";
 import { TaskController } from "./controllers/task.controller.js";
 import { ApprovalController } from "./controllers/approval.controller.js";
@@ -45,10 +43,13 @@ import { HealthController } from "./controllers/health.controller.js";
 import { AuthController } from "./controllers/auth.controller.js";
 import { UserSessionController } from "./controllers/user-session.controller.js";
 import { UserController } from "./controllers/user.controller.js";
+import { OrganisationalUnitController } from "./controllers/organisational-unit.controller.js";
+import { DesignationController } from "./controllers/designation.controller.js";
+import { UserAffiliationController } from "./controllers/user-affiliation.controller.js";
 
 async function main(): Promise<void> {
-  const draftModel = new DraftModel();
-  const templateModel = new TemplateModel();
+  const workflowTemplateModel = new WorkflowTemplateModel();
+  const workflowTemplateVersionModel = new WorkflowTemplateVersionModel();
   const sessionModel = new SelectionSessionModel();
   const taskModel = new TaskModel();
   const auditLogModel = new AuditLogModel();
@@ -58,13 +59,15 @@ async function main(): Promise<void> {
   const embeddingAdapter = createEmbeddingAdapter(config.embedding);
   const embeddingService = new EmbeddingService({ embeddingAdapter });
   const validationService = new ValidationService();
-  const extractionService = new ExtractionService({ llmAdapter, validationService });
-  const draftService = new DraftService({ draftModel });
+  const workflowTemplateGenerationService = new WorkflowTemplateGenerationService({ llmAdapter, validationService });
 
-  const repositoryBackend = config.postgres.repositoryBackend;
-  const userRepository = createUserRepository(repositoryBackend);
-  const userSessionRepository = createUserSessionRepository(repositoryBackend);
-  const templateDeletionRepository = createTemplateDeletionRepository(repositoryBackend);
+  const {
+    userRepository,
+    userSessionRepository,
+    organisationalUnitRepository,
+    designationRepository,
+    userAffiliationRepository,
+  } = createRepositoryRegistry(config.postgres.repositoryBackend);
 
   const userSessionService = new UserSessionService({ userSessionRepository, authConfig: config.auth });
   const authenticationService = new AuthenticationService({
@@ -72,20 +75,26 @@ async function main(): Promise<void> {
     userSessionService,
     authConfig: config.auth,
   });
-  const templateDeletionLogService = new TemplateDeletionLogService({ templateDeletionRepository });
-  const userService = new UserService({ userRepository, userConfig: config.user });
+  const userService = new UserService({ userRepository, userAffiliationRepository, userConfig: config.user });
+  const organisationalUnitService = new OrganisationalUnitService({ organisationalUnitRepository });
+  const designationService = new DesignationService({ designationRepository });
+  const userAffiliationService = new UserAffiliationService({
+    userAffiliationRepository,
+    organisationalUnitRepository,
+    designationRepository,
+    userRepository,
+  });
 
-  const workflowService = new WorkflowService({
-    templateModel,
+  const workflowTemplateService = new WorkflowTemplateService({
+    workflowTemplateModel,
+    workflowTemplateVersionModel,
+    generationService: workflowTemplateGenerationService,
     embeddingService,
-    validationService,
-    taskModel,
-    templateDeletionLog: templateDeletionLogService,
+    userRepository,
   });
 
   const vectorStore = createVectorStore(config.retrieval.vectorBackend, {
-    templateReader: templateModel,
-    templateModel,
+    workflowTemplateModel,
     indexName: config.retrieval.atlasIndexName,
   });
 
@@ -95,7 +104,7 @@ async function main(): Promise<void> {
     retrievalService,
     selectorService,
     sessionModel,
-    workflowService,
+    workflowTemplateService,
   });
   const plannerService = new PlannerService();
   const mailer = createMailer(config.mail.transport, config.mail);
@@ -106,7 +115,7 @@ async function main(): Promise<void> {
   const taskService = new TaskService({
     taskModel,
     selectionService,
-    workflowService,
+    workflowTemplateService,
     plannerService,
     executionService,
     notificationService,
@@ -116,7 +125,7 @@ async function main(): Promise<void> {
   });
   const approvalService = new ApprovalService({
     taskModel,
-    workflowService,
+    workflowTemplateService,
     executionService,
     notificationService,
     taskService,
@@ -126,14 +135,16 @@ async function main(): Promise<void> {
 
   const controllers = {
     healthController: new HealthController(),
-    workflowController: new WorkflowController({ workflowService, extractionService, validationService, draftService }),
-    draftController: new DraftController({ draftService, extractionService, workflowService }),
+    workflowTemplateController: new WorkflowTemplateController({ workflowTemplateService }),
     selectionController: new SelectionController({ selectionService }),
     taskController: new TaskController({ taskService }),
     approvalController: new ApprovalController({ approvalService }),
     authController: new AuthController({ authenticationService }),
     userSessionController: new UserSessionController({ userSessionService }),
     userController: new UserController({ userService }),
+    organisationalUnitController: new OrganisationalUnitController({ organisationalUnitService }),
+    designationController: new DesignationController({ designationService }),
+    userAffiliationController: new UserAffiliationController({ userAffiliationService }),
   };
 
   const app = createApp(controllers, {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ObjectId } from "mongodb";
 import { NotificationService } from "../../../src/services/notification.service.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
+import { LEAVE_WORKFLOW_TEMPLATE_ID } from "../../helpers/workflow-template.helper.js";
 import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
 import type { MailMessage, MailSendResult } from "../../../src/lib/types/approval/mail.type.js";
 import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
@@ -51,8 +52,8 @@ function baseTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
     reference: "TASK-2026-00042",
     session_id: "session-1",
     created_by: "user-1",
-    workflow_id: LEAVE_WORKFLOW.workflow_id,
-    version: 1,
+    workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID,
+    workflow_template_version: 1,
     status: "in_progress",
     requirements: [],
     values: {},

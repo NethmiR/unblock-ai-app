@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HealthController } from "../../src/controllers/health.controller.js";
 import { TaskController } from "../../src/controllers/task.controller.js";
 import { createRequireTaskOwnership } from "../../src/middlewares/require-task-ownership.middleware.js";
 import { ConflictError } from "../../src/errors/conflict.error.js";
@@ -9,10 +8,10 @@ import {
   TestIdentity,
   authHeaderFor,
   createTestAuthentication,
+  createTestControllers,
   startTestServer,
   type TestServer,
 } from "../helpers/test-server.helper.js";
-import type { ApiControllers } from "../../src/routes/index.route.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { ErrorResponseBody } from "../../src/lib/types/http/http.type.js";
 
@@ -37,22 +36,9 @@ function handlerReachedTaskService(): TaskService {
 
 async function buildServer(): Promise<TestServer> {
   const owners = new Map([[OWNED_TASK_ID, TEST_USERS[TestIdentity.TASK_CREATOR].id]]);
-  const controllers = {
-    healthController: new HealthController(),
+  const controllers = createTestControllers({
     taskController: new TaskController({ taskService: handlerReachedTaskService() }),
-  } as unknown as ApiControllers;
-  const unusedController = new Proxy({}, { get: () => async () => undefined });
-  for (const key of [
-    "workflowController",
-    "draftController",
-    "selectionController",
-    "approvalController",
-    "authController",
-    "userSessionController",
-    "userController",
-  ] as const) {
-    (controllers as unknown as Record<string, unknown>)[key] = unusedController;
-  }
+  });
 
   return startTestServer(controllers, {
     authenticationService: createTestAuthentication().authenticationService,

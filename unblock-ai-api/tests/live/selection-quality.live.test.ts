@@ -3,13 +3,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { TemplateModel } from "../../src/models/template.model.js";
 import { InMemoryVectorStore } from "../../src/services/vector-store/in-memory.vector-store.js";
 import { RetrievalService } from "../../src/services/retrieval.service.js";
 import { SelectorService } from "../../src/services/selector.service.js";
 import { LlmMessageRole } from "../../src/data/constants/llm.constant.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
-import { closeDb } from "../../src/db/mongo.client.js";
+import { buildFixtureRetrievalReader } from "../helpers/fixture-retrieval-corpus.helper.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const QUERIES_PATH = path.join(__dirname, "..", "..", "src", "data", "samples", "selection", "queries.json");
@@ -26,9 +25,9 @@ const DECISION_TARGET = 0.8;
 
 test("selection quality meets Recall@5 and decision-accuracy targets", async (t) => {
   const cases = JSON.parse(await readFile(QUERIES_PATH, "utf8")) as SelectionQualityCase[];
-  const templateModel = new TemplateModel();
-  const vectorStore = new InMemoryVectorStore({ templateReader: templateModel });
-  const retrievalService = new RetrievalService({ vectorStore, embeddingService: new EmbeddingService() });
+  const embeddingService = new EmbeddingService();
+  const vectorStore = new InMemoryVectorStore({ retrievalReader: await buildFixtureRetrievalReader(embeddingService) });
+  const retrievalService = new RetrievalService({ vectorStore, embeddingService });
   const selectorService = new SelectorService();
 
   let recallHits = 0;
@@ -38,7 +37,7 @@ test("selection quality meets Recall@5 and decision-accuracy targets", async (t)
 
   for (const c of cases) {
     const candidates = await retrievalService.retrieve(c.query);
-    const ids = candidates.map((x) => x.workflow_id);
+    const ids = candidates.map((x) => x.workflow_template_id);
 
     const expectedIds = c.expect_workflow ? [c.expect_workflow] : (c.expect_in_candidates ?? []);
     if (expectedIds.length) {
@@ -47,7 +46,8 @@ test("selection quality meets Recall@5 and decision-accuracy targets", async (t)
     }
 
     const decision = await selectorService.decide(candidates, [{ role: LlmMessageRole.USER, text: c.query }]);
-    const correct = decision.decision === c.expect && (!c.expect_workflow || decision.workflow_id === c.expect_workflow);
+    const correct =
+      decision.decision === c.expect && (!c.expect_workflow || decision.workflow_template_id === c.expect_workflow);
     if (correct) decisionHits++;
 
     if (c.expect === "no_match" && decision.decision !== "no_match") {
@@ -74,6 +74,4 @@ test("selection quality meets Recall@5 and decision-accuracy targets", async (t)
   await t.test("every no_match case is correctly refused", () => {
     assert.deepEqual(noMatchFailures, [], `no_match cases must never be answered: ${JSON.stringify(noMatchFailures)}`);
   });
-
-  await closeDb();
 });

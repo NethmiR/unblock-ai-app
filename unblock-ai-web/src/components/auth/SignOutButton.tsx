@@ -1,27 +1,18 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { RoutePath } from "@/lib/routing/route-path";
+import { AUTH_COPY } from "@/lib/constants/ui-copy";
+import { useSignOut } from "@/lib/hooks/useSignOut";
 
 export function SignOutButton() {
-  const router = useRouter();
-  const [isBusy, setIsBusy] = useState(false);
-
-  async function handleSignOut() {
-    setIsBusy(true);
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.replace(RoutePath.LOGIN);
-    router.refresh();
-  }
+  const { signOut, isSigningOut } = useSignOut();
 
   return (
     <button
       type="button"
-      onClick={handleSignOut}
-      disabled={isBusy}
+      onClick={signOut}
+      disabled={isSigningOut}
       className="text-[12.5px] font-medium text-muted transition-colors hover:text-ink disabled:text-faint"
     >
-      {isBusy ? "Signing out…" : "Sign out"}
+      {isSigningOut ? AUTH_COPY.signingOut : AUTH_COPY.signOut}
     </button>
   );
 }

@@ -4,10 +4,18 @@ import { ValidationError } from "../../errors/validation.error.js";
 import { UserErrorCode } from "../../data/constants/user-error.constant.js";
 import { PostgresConstraint, PostgresErrorCode } from "../../data/constants/postgres.constant.js";
 import { isPostgresError } from "../../utils/database/postgres-error.util.js";
+import { SqlParameters, SqlWhereBuilder, toContainsPattern } from "../../utils/database/sql-builder.util.js";
 import type { Permission } from "../../data/constants/permission.constant.js";
 import type { UserStatus } from "../../data/constants/user.constant.js";
 import type { IUserRepository } from "./user-repository.interface.js";
-import type { CreateUserRecordInput, UserCredentialRecord, UserRecord } from "../../lib/types/user/user.type.js";
+import type {
+  CreateUserRecordInput,
+  UserCredentialRecord,
+  UserListFilter,
+  UserListPage,
+  UserRecord,
+  UserReference,
+} from "../../lib/types/user/user.type.js";
 
 interface UserRow {
   id: string;
@@ -63,6 +71,15 @@ export class PostgresUserRepository implements IUserRepository {
     return rows[0] ? toUserRecord(rows[0]) : null;
   }
 
+  async findReferencesByIds(ids: readonly string[]): Promise<UserReference[]> {
+    if (ids.length === 0) return [];
+    const rows = await query<{ id: string; full_name: string; email: string }>(
+      "SELECT id, full_name, email FROM users WHERE id = ANY($1::uuid[])",
+      [[...ids]],
+    );
+    return rows.map((row) => ({ id: row.id, fullName: row.full_name, email: row.email }));
+  }
+
   async findCredentialByEmail(email: string): Promise<UserCredentialRecord | null> {
     const rows = await query<UserRow>(`${USER_SELECT} WHERE lower(u.email) = lower($1) ${USER_GROUP_BY}`, [email]);
     return rows[0] ? toUserCredentialRecord(rows[0]) : null;
@@ -76,9 +93,34 @@ export class PostgresUserRepository implements IUserRepository {
     return rows[0]?.exists ?? false;
   }
 
-  async list(): Promise<UserRecord[]> {
-    const rows = await query<UserRow>(`${USER_SELECT} ${USER_GROUP_BY} ORDER BY lower(u.full_name), u.id`);
-    return rows.map(toUserRecord);
+  async list(filter: UserListFilter): Promise<UserListPage> {
+    const parameters = new SqlParameters();
+    const where = new SqlWhereBuilder(parameters);
+    if (filter.search !== null) {
+      const pattern = where.parameter(toContainsPattern(filter.search));
+      where.where(`(u.full_name ILIKE ${pattern} OR u.email ILIKE ${pattern})`);
+    }
+    if (filter.organisationalUnitId !== null) {
+      const unitId = where.parameter(filter.organisationalUnitId);
+      where.where(
+        `EXISTS (
+           SELECT 1
+             FROM user_organisational_units uou
+             JOIN organisational_units ou ON ou.id = uou.organisational_unit_id
+            WHERE uou.user_id = u.id AND (ou.id = ${unitId} OR ou.parent_id = ${unitId})
+         )`,
+      );
+    }
+    const whereSql = where.toSql();
+
+    const totals = await query<{ total: number }>(`SELECT count(*)::int AS total FROM users u ${whereSql}`, parameters.toArray());
+    const limit = parameters.add(filter.limit);
+    const offset = parameters.add(filter.offset);
+    const rows = await query<UserRow>(
+      `${USER_SELECT} ${whereSql} ${USER_GROUP_BY} ORDER BY lower(u.full_name), u.id LIMIT ${limit} OFFSET ${offset}`,
+      parameters.toArray(),
+    );
+    return { users: rows.map(toUserRecord), total: totals[0]?.total ?? 0 };
   }
 
   async create(input: CreateUserRecordInput): Promise<UserRecord> {

@@ -7,19 +7,20 @@
 UNBLOCK-AI turns a **plain-English description of an institutional approval workflow** (e.g. "students who want to travel overseas must get approval from their advisor, then the Head of Department...") into a **strict, machine-readable JSON workflow definition** — a reusable template that a (future) execution engine could run: resolving approvers from a directory, evaluating conditions, tracking step completion, sending notifications, etc.
 
 ```
-Admin pastes plain text
+Admin writes a title + prompt
         │
         ▼
-  LLM Extraction (LLM adapter)   ──►  Schema + Graph Validation
-        │                                     │
+  Workflow template generation   ──►  Schema + Graph Validation
+  (LLM adapter)                               │
         │  (on failure, feed errors back)     │ pass
         ▼                                     ▼
-   Repair loop (up to N attempts)      MongoDB (versioned templates + embeddings)
-                                               │
+   Repair loop (up to N attempts)      MongoDB (workflow template + immutable
+                                               version + retrieval embedding)
+                                               │ admin publishes
                                                ▼
                                      Retrieval + Selector Agent
                                      (maps a user's plain-language
-                                      request to a confirmed template)
+                                      request to a published template)
 ```
 
 Actually **executing** a workflow (sending real emails, collecting real approvals, walking the graph at runtime) is out of scope — the schema is simply designed so a future execution engine could consume it without redesign.
@@ -30,7 +31,7 @@ Actually **executing** a workflow (sending real emails, collecting real approval
 - **Web framework**: Express 5 ([src/app.ts](../../src/app.ts), [src/server.ts](../../src/server.ts))
 - **LLM and embedding providers**: pluggable via the adapter pattern. Services depend only on `ILlmAdapter` ([src/services/llm-adapter/](../../src/services/llm-adapter/)) and `IEmbeddingAdapter` ([src/services/embedding-adapter/](../../src/services/embedding-adapter/)); `LLM_PROVIDER` and `EMBEDDING_PROVIDER` independently select Azure OpenAI (official `openai` SDK) or Google AI Studio Gemini (official `@google/genai` SDK)
 - **Schema validation**: AJV (2020-12 dialect) + `ajv-formats` ([src/utils/workflow/schema-validator.util.ts](../../src/utils/workflow/schema-validator.util.ts))
-- **Persistence**: MongoDB via the official `mongodb` driver ([src/db/mongo.client.ts](../../src/db/mongo.client.ts), [src/models/](../../src/models/)) for workflows/drafts/tasks, **plus PostgreSQL** via `pg` ([src/db/postgres.client.ts](../../src/db/postgres.client.ts)) for users, permissions, sessions and the template deletion log — see §8.1
+- **Persistence**: MongoDB via the official `mongodb` driver ([src/db/mongo.client.ts](../../src/db/mongo.client.ts), [src/models/](../../src/models/)) for workflow templates, template versions, selection sessions and tasks, **plus PostgreSQL** via `pg` ([src/db/postgres.client.ts](../../src/db/postgres.client.ts)) for users, permissions, sessions and the organisational structure — see §8.1
 - **Auth**: email + password login, opaque server-side session tokens (SHA-256 hash stored in Postgres) and permission-based route guards (`node:crypto` scrypt for password hashing, no `bcrypt`/`argon2` dependency) — see §8.1
 - **Testing**: Node's built-in `node:test` runner, executed via `tsx` — split into `tests/unit/`, `tests/integration/`, and `tests/live/` (calls the configured live AI provider)
 - **Config**: `dotenv`, loaded and validated once at startup ([src/config/env.config.ts](../../src/config/env.config.ts))
@@ -47,16 +48,16 @@ unblock-ai-api/
 │  ├─ routes/                # one file per route group; no business logic
 │  ├─ controllers/           # parses/validates HTTP, calls services, maps to responses
 │  ├─ services/               # all business logic, DB access via models/repositories, external calls
-│  ├─ repositories/           # Postgres data access: user, user-session, template-deletion (postgres + in-memory)
+│  ├─ repositories/           # Postgres data access: users, sessions, organisation (postgres + in-memory)
 │  ├─ models/                 # one model per MongoDB collection
 │  ├─ config/                 # typed config modules; only place that reads process.env
 │  ├─ middlewares/            # cors, json-body, request-id, logging, error handling, auth
-│  ├─ utils/                  # pure helpers (shared, workflow, retrieval, http, auth)
+│  ├─ utils/                  # pure helpers (shared, workflow, workflow-template, retrieval, http, auth, ...)
 │  ├─ data/                   # prompts, JSON Schemas, vocabulary, constants, samples
 │  ├─ lib/types/              # central TypeScript type directory
 │  ├─ errors/                 # BaseError + one subclass per error category
 │  └─ db/                     # Mongo + Postgres clients, migration engine + per-database migrations, Postgres seed pack
-├─ scripts/                   # CLI scripts: db/ (migrate-postgres, migrate-mongo, seed-postgres), maintenance/ (backfill), copy-assets
+├─ scripts/                   # CLI scripts: db/ (migrate-postgres, migrate-mongo, seed-postgres), copy-assets
 ├─ tests/                      # unit/, integration/, live/, helpers/, smoke/, evaluation/, perf/
 ├─ docs/                        # api/, architecture/, guides/, plans/, postman/
 ├─ dist/                        # build output, git-ignored
@@ -74,11 +75,11 @@ See [../guides/configuration.md](../guides/configuration.md) for the full table 
 [src/data/schemas/workflow.schema.json](../../src/data/schemas/workflow.schema.json) is a strict JSON Schema (draft 2020-12, `additionalProperties: false` everywhere) that models a workflow as a **dependency graph**, not a linear list. Top-level shape:
 
 ```
-schema_version, workflow_id, title, description,
+schema_version, title, description, retrieval_summary,
 scope, requester, inputs, computed, steps, completion, metadata
 ```
 
-Key modeling decisions (also encoded as instructions in the extraction system prompt):
+Key modeling decisions (also encoded as instructions in the workflow template generation system prompt):
 
 - **`steps` is a graph.** Each step has `depends_on: [{ step_id, required_outcome }]`. Sequencing, parallelism, and dependency-gating all fall out of this one mechanism rather than being separate concepts.
 - **Actors are never named people.** Every `assignee` / `collected_from` / notification target is an "actor" object with one of four `resolution` modes: `dynamic` (directory lookup relative to another actor, e.g. "the student's advisor"), `static` (a fixed office), `requester` (whoever started the workflow), or `system` (automated). Roles are normalized to `snake_case`; a suggested vocabulary lives in [src/data/vocabulary/role.vocabulary.ts](../../src/data/vocabulary/role.vocabulary.ts) (academic, administrative, financial, facilities, security, IT, generic), but the model can coin new roles, which get flagged in `metadata.unmapped_roles` for admin review rather than treated as an error.
@@ -88,13 +89,15 @@ Key modeling decisions (also encoded as instructions in the extraction system pr
 - **Loop-backs stay acyclic.** "Request more info" is modeled as an *outcome* on the same step (`action: "reopen_input"`, `return_to_step: "self"`), not a new step pointing backward — keeping the dependency graph a DAG.
 - **Terminal rejection** is an outcome effect (`action: "terminate_workflow"`) rather than a special workflow-level field.
 - **Every outcome-bearing step has exactly three fixed outcome keys**: `approved`, `rejected`, `request_more_info` (nullable when not applicable).
-- **Non-workflow input is a first-class outcome**, not an error: if the source text describes no institutional process at all, the prompt instructs the model to emit the smallest valid document (one `review` step, `system`-resolved, `metadata.review_status: "rejected"`) rather than hallucinating a workflow.
-- **Strict-mode discipline**: every schema property must be present in the output; unused scalars are `null` (never omitted), unused arrays are `[]` (never `null`/omitted). This is required because the extraction call uses OpenAI's `strict: true` structured-output mode, which needs a fully-closed schema.
-- **`metadata`** carries provenance and self-assessment: `source_text_hash`, `extraction_model`, `confidence` (`high`/`medium`/`low`), `ambiguities` (plain-English notes on assumptions the model had to make), `unmapped_roles`, and `review_status` (`pending_admin_review` / `confirmed` / `rejected`).
+- **Non-workflow input is a first-class outcome**, not an error: if the source text describes no institutional process at all, the prompt instructs the model to emit the smallest valid document (one `review` step, `system`-resolved, `metadata.is_workflow: false`) rather than hallucinating a workflow.
+- **Strict-mode discipline**: every schema property must be present in the output; unused scalars are `null` (never omitted), unused arrays are `[]` (never `null`/omitted). This is required because the generation call uses OpenAI's `strict: true` structured-output mode, which needs a fully-closed schema.
+- **`metadata`** carries the model's self-assessment: `confidence` (`high`/`medium`/`low`), `ambiguities` (plain-English notes on assumptions the model had to make), `unmapped_roles`, and `is_workflow` (`false` when the prompt describes no process). Provenance (who generated it, when, how many attempts, from which prompt) lives on the stored template version, not in the definition.
+- **`retrieval_summary`** (one-liner, aliases, keywords, requester types, ...) is generated in the same call as the rest of the definition and is the text that gets embedded for retrieval.
+- **No id or title inside a stored definition.** The template's UUID and its title live on the `workflow_templates` document; each stored version's `definition` omits `title`, and the title is merged back in when a definition is served to the runtime.
 
-## 6. LLM extraction pipeline ([src/services/extraction.service.ts](../../src/services/extraction.service.ts))
+## 6. Workflow template generation pipeline ([src/services/workflow-template-generation.service.ts](../../src/services/workflow-template-generation.service.ts))
 
-1. **Prompt assembly** ([src/data/prompts/extraction.prompt.ts](../../src/data/prompts/extraction.prompt.ts)): a detailed system prompt encodes all the schema semantics above (graph vs. list, actor resolution, namespace paths, ambiguity handling, rejection-of-non-workflow-input rules), followed by two **few-shot examples** loaded from [src/data/samples/input/](../../src/data/samples/input/) + [src/data/samples/expected/](../../src/data/samples/expected/) ([src/data/prompts/extraction-few-shot.prompt.ts](../../src/data/prompts/extraction-few-shot.prompt.ts)), followed by the actual user-supplied plain text.
+1. **Prompt assembly** ([src/data/prompts/workflow-template-generation.prompt.ts](../../src/data/prompts/workflow-template-generation.prompt.ts), built by [src/utils/workflow/build-workflow-template-generation-messages.util.ts](../../src/utils/workflow/build-workflow-template-generation-messages.util.ts)): a detailed system prompt encodes all the schema semantics above (graph vs. list, actor resolution, namespace paths, ambiguity handling, rejection-of-non-workflow-input rules), followed by two **few-shot examples** loaded from [src/data/samples/input/](../../src/data/samples/input/) + [src/data/samples/expected/](../../src/data/samples/expected/) ([src/data/prompts/workflow-template-generation-few-shot.prompt.ts](../../src/data/prompts/workflow-template-generation-few-shot.prompt.ts)), followed by the admin's prompt.
 2. **Structured-output call**: calls the configured `ILlmAdapter` with `workflowResponseSchema`, forcing the model to emit schema-conformant JSON. Each adapter maps this onto its provider's native structured output (Azure OpenAI strict `json_schema`; Gemini `responseJsonSchema`) and applies its own sampling rules: the Azure adapter pins `temperature: 0` unless the deployment is a reasoning model (`o*`/`gpt-5*`); the Gemini adapter keeps the provider default, as Google recommends for Gemini 3.x.
 3. **Two-layer validation** on every candidate (schema validation + graph validation via [src/services/validation.service.ts](../../src/services/validation.service.ts)):
    - **Schema validation** ([src/utils/workflow/schema-validator.util.ts](../../src/utils/workflow/schema-validator.util.ts)): AJV structural check against `workflow.schema.json`.
@@ -107,44 +110,39 @@ Key modeling decisions (also encoded as instructions in the extraction system pr
      - `checkApprovalOutcomes` — every `approval`-type step defines both `approved` and `rejected`
      - `checkCompletionRequiredSteps` — `completion.required_steps` references real steps
      - `checkNamespacePaths` — every `inputs.*` / `computed.*` / `steps.*` / `requester.*` / `system.*` reference used in conditions, computed arguments, and `context_from_steps` bindings actually resolves to something declared elsewhere in the document
-4. **Self-repair loop**: if validation fails and attempts remain, the invalid candidate plus a formatted list of errors is appended to the conversation as assistant/user turns, and the model is asked to return corrected JSON fixing *only* those problems. Default `maxAttempts` comes from `config.extraction.maxAttempts` (3). If still invalid after the last attempt, throws `ExtractionError`.
-5. **Non-workflow guard**: even a schema-valid result is rejected (`ExtractionError`) if `metadata.review_status === "rejected"` — i.e., the model itself flagged the input as not describing a workflow.
+4. **Self-repair loop**: if validation fails and attempts remain, the invalid candidate plus a formatted list of errors is appended to the conversation as assistant/user turns, and the model is asked to return corrected JSON fixing *only* those problems. Default `maxAttempts` comes from `config.workflowTemplateGeneration.maxAttempts` (`WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS`, default 3). If still invalid after the last attempt, throws `WorkflowTemplateGenerationError` (`422`, code `WORKFLOW_TEMPLATE_GENERATION_FAILED`, `details` = the last validation errors).
+5. **Non-workflow guard**: even a schema-valid result is rejected (`422`, code `WORKFLOW_TEMPLATE_PROMPT_REJECTED`, `details` = `metadata.ambiguities`) if `metadata.is_workflow` is `false` — i.e., the model itself flagged the prompt as not describing a workflow.
+6. **Result**: the definition minus `title`, plus the model's title and the attempt count. `WorkflowTemplateService` stores it as a new immutable version (see §8).
 
 ## 7. Validation as a standalone capability
 
-Schema + graph validation is exposed independently of extraction via [src/services/validation.service.ts](../../src/services/validation.service.ts), so any workflow JSON — LLM-generated or hand-authored/edited by an admin — can be re-validated before being saved or updated. This is exercised by the `POST /api/workflows/:id/validate` endpoint and the `PUT /api/workflows/:id` endpoint.
+Schema + graph validation lives in its own service ([src/services/validation.service.ts](../../src/services/validation.service.ts)), separate from generation. There is no endpoint for saving or validating hand-edited workflow JSON: a definition only changes by generating a new version from a prompt, and every generated version passes validation before it is stored.
 
 ## 8. Persistence layer (MongoDB)
 
-- **`src/models/draft.model.ts`** — the `drafts` collection: raw admin-submitted prose, deduplicated by SHA-256 of the normalised text.
-- **`src/models/template.model.ts`** — the `templates` collection: versioned workflow documents with their retrieval embeddings; `is_latest` marks the current version per `workflow_id`.
+- **`src/models/workflow-template.model.ts`** — the `workflow_templates` collection, one document per template (string UUID `_id`): `title`, `description`, `status` (`draft` → `unpublished` → `published`), `current_version`, `draft_prompt` (a saved but not yet generated prompt), `retrieval` (the current version's embedding text, `embedding`, `aliases_lower`, `retrieval_summary`, `institution_type`, embedding `model`/`dim`/`embedded_at`), `archived_at`, `created_by`/`updated_by` (Postgres user ids) and timestamps. It also runs the retrieval queries (published, non-archived only) and the Atlas `$vectorSearch`.
+- **`src/models/workflow-template-version.model.ts`** — the `workflow_template_versions` collection: one immutable document per generated version (`workflow_template_id`, `version`, `prompt`, `definition`, `generation_attempts`, `created_by`, `created_at`). Tasks pin `workflow_template_id` + `workflow_template_version`, so older versions stay readable after a regenerate.
 - **`src/models/selection-session.model.ts`** — the `selection_sessions` collection: multi-round clarifying-question conversations.
-- Models own the collection name, the document interface, and thin typed CRUD operations. Versioning policy (bumping the version number, demoting the previous `is_latest`) and the embedding call live in [src/services/workflow.service.ts](../../src/services/workflow.service.ts) and [src/services/embedding.service.ts](../../src/services/embedding.service.ts), not in the model.
+- Models own the collection name, the document interface, and thin typed CRUD operations. Lifecycle policy (version numbering, status transitions, archive/restore) and the embedding call live in [src/services/workflow-template.service.ts](../../src/services/workflow-template.service.ts) and [src/services/embedding.service.ts](../../src/services/embedding.service.ts), not in the model. The retrieval embedding is rebuilt whenever a version is generated and whenever the title changes; a title change never creates a version.
 
-### 8.1 A second database: PostgreSQL for users, sessions + deletion tracking
+### 8.1 A second database: PostgreSQL for users, sessions and the organisation
 
 Users and their permissions (`users`, `permissions`, `user_permissions`),
-server-side sessions (`user_sessions`) and the template deletion log
-(`template_deletions`) live in **PostgreSQL**, not Mongo — deliberately making
+server-side sessions (`user_sessions`) and the organisational structure
+(organisational units, designations, user affiliations) live in **PostgreSQL**, not Mongo — deliberately making
 this a **polyglot-persistence** service rather than pushing everything into
 one store. The reasoning, and the consequences it forces:
 
 - **Why a second database at all.** User data is relational: a hard
   uniqueness constraint (`lower(email)`), a permission catalogue joined to
   users by foreign keys, a deferred constraint trigger that rejects any
-  transaction leaving a user with no permissions, and
-  `template_deletions.deleted_by_user_id` benefits from a real foreign key
-  (`ON DELETE RESTRICT` — an audit row can never be silently orphaned or
-  erased by removing the user who created it). None of that is natural to
+  transaction leaving a user with no permissions. None of that is natural to
   express against a schemaless Mongo collection.
-- **No cross-database transaction exists.** A template deletion touches
-  Postgres (the log row) and Mongo (the template documents) with no shared
-  transaction coordinator between them. `WorkflowService.delete()` writes the
-  deletion-log row **before** deleting from Mongo, with `versions_removed`
-  starting at `0` and only updated once the Mongo delete confirms — so a row
-  still reading `versions_removed: 0` means the log landed but the delete
-  didn't, which is a recoverable, visible failure state rather than a silent
-  gap. Write ordering is the only atomicity available.
+- **No cross-database references are enforced.** Mongo documents store
+  Postgres user ids as plain strings (`workflow_templates.created_by` /
+  `updated_by`, `workflow_template_versions.created_by`); the API resolves
+  them to names at read time and returns `null` for an id it cannot find.
+  Workflow templates are archived, never deleted, so no write spans both stores.
 - **Two connection lifecycles.** [src/db/postgres.client.ts](../../src/db/postgres.client.ts)
   mirrors [src/db/mongo.client.ts](../../src/db/mongo.client.ts): a lazily-created pool
   (the process starts even if Postgres is down) with its own `closePool()`,
@@ -154,8 +152,12 @@ one store. The reasoning, and the consequences it forces:
   each tracked in its own `migrations` table/collection with up/down support
   (see [../guides/database-migrations.md](../guides/database-migrations.md)).
   `npm run migrate:up` applies them. The Postgres set is
-  `20261111000000_initial-schema` followed by
-  `20261111015501_unified-users-permissions-and-sessions`.
+  `20261111000000_initial-schema`,
+  `20261111015501_unified-users-permissions-and-sessions`,
+  `20261111060534_organisational-structure-and-user-affiliations` and
+  `20261111101054_workflow-template-archive-only` (drops `template_deletions`).
+  The Mongo set is `20261111000000_initial-schema` followed by
+  `20261111101053_workflow-templates`.
 - **A seed pack mirrors the migration pack** — [src/db/seed/](../../src/db/seed/)
   holds a core runner/loader/generator/CLI plus timestamped Postgres seeders in
   [src/db/seed/postgres/seeders/](../../src/db/seed/postgres/seeders/). Seeders are
@@ -166,11 +168,12 @@ one store. The reasoning, and the consequences it forces:
   permissions). `npm run seed:pg:run` runs them, `seed:pg:list` lists them and
   `seed:pg:create -- <name>` scaffolds a new one (see
   [../guides/database-seeding.md](../guides/database-seeding.md)).
-- **Data access is behind three repositories** in [src/repositories/](../../src/repositories/) —
-  `user-repository/`, `user-session-repository/` and `template-deletion-repository/`,
+- **Data access is behind repositories** in [src/repositories/](../../src/repositories/) —
+  `user-repository/`, `user-session-repository/`, `organisational-unit-repository/`,
+  `designation-repository/` and `user-affiliation-repository/`,
   each with an interface, a `postgres` and an `in-memory` implementation and an
   `index` factory — the same pattern already used for `IVectorStore` and `IMailer`.
-  `POSTGRES_REPOSITORY_BACKEND` selects the backend for all three; `memory` is what
+  `POSTGRES_REPOSITORY_BACKEND` selects the backend for all of them; `memory` is what
   lets `npm test` run with no live Postgres at all, the way `mongodb-memory-server`
   already does for Mongo.
 - **Passwords are hashed with `node:crypto`'s scrypt** ([src/utils/shared/password.util.ts](../../src/utils/shared/password.util.ts)),
@@ -207,8 +210,9 @@ populates `req.auth` on every request but never rejects by itself.
 [src/middlewares/require-permission.middleware.ts](../../src/middlewares/require-permission.middleware.ts)
 (`requireAnyPermission(...)`, `403` when the user holds none of the listed
 permissions) do the actual gating, applied per-route:
-`workflow:manage` for workflow writes, the deletion log and `/drafts`;
-`workflow:manage` or `task:create` for reading workflows; `task:create` for
+`workflow:manage` for creating, generating, editing, publishing, archiving and
+restoring workflow templates; `workflow:manage` or `task:create` for reading
+workflow templates and their versions; `task:create` for
 `/selection` and `/tasks`; `user:manage` for `/users`.
 [src/middlewares/require-task-ownership.middleware.ts](../../src/middlewares/require-task-ownership.middleware.ts)
 limits `/tasks/:id*` to the task's creator and answers `404` for anyone else's task. The split matters because `/api/approvals/*` is authenticated by a
@@ -270,13 +274,13 @@ for the full design rationale; summary of what exists in code:
 Three tiers, matching the test scripts in [package.json](../../package.json):
 
 - **`npm test`** → `tests/unit/**/*.test.ts` + `tests/integration/**/*.test.ts` (fast, no live network):
-  - `tests/unit/utils/` — schema validation, graph validation (fixtures pass; mutation tests confirm each failure mode is caught), alias boost, render-summary, request-validator, serializer, vector-math.
-  - `tests/unit/services/` — draft, workflow, retrieval, selection, selector, vector-store services against fakes.
+  - `tests/unit/utils/` — schema validation, graph validation (fixtures pass; mutation tests confirm each failure mode is caught), alias boost, render-summary, request-validator, workflow-template serializer, vector-math.
+  - `tests/unit/services/` — workflow-template, retrieval, selection, selector, vector-store services against fakes.
   - `tests/unit/errors/` — `BaseError` contract.
-  - `tests/integration/` — full HTTP-level coverage of draft, workflow, and selection routes, and the error handler, using an in-process Express server.
+  - `tests/integration/` — full HTTP-level coverage of workflow-template, selection, task and approval routes, and the error handler, using an in-process Express server.
 - **`npm run test:live`** → `tests/live/**/*.test.ts` (slow, calls the configured live AI provider, run manually/CI-gated):
-  - `extraction-accuracy.live.test.ts` — asserts the model correctly extracts *specific* structural details from the two worked examples (right step IDs, correct `depends_on` chains, correct condition operator/operands, correct loop-back/termination outcomes, correct `context_from_steps` bindings).
-  - `generalisation.live.test.ts`, `consistency.live.test.ts`, `robustness.live.test.ts`, `selection-quality.live.test.ts` — extraction on an unseen fixture, repeatability across repeated calls, behavior on messy/edge-case/non-workflow input, and selector agent quality, respectively.
+  - `workflow-template-generation-accuracy.live.test.ts` — asserts the model correctly generates *specific* structural details from the two worked examples (right step IDs, correct `depends_on` chains, correct condition operator/operands, correct loop-back/termination outcomes, correct `context_from_steps` bindings).
+  - `generalisation.live.test.ts`, `consistency.live.test.ts`, `robustness.live.test.ts`, `selection-quality.live.test.ts` — generation on an unseen fixture, repeatability across repeated calls, behavior on messy/edge-case/non-workflow input, and selector agent quality, respectively.
 - Two more manual, non-`node:test` tiers live alongside these: **`npm run evaluate:selection`** (`tests/evaluation/`) prints a recall@5 + decision-accuracy report for the selector agent against `src/data/samples/selection/queries.json`; **`npm run perf-test`** (`tests/perf/`) measures latency/token/cost for a chosen AI operation across configured models, writing timestamped JSON/CSV under its own git-ignored `results/`.
 
 ## 13. Sample data (used as both few-shot examples and test gold data)
@@ -287,7 +291,7 @@ Three tiers, matching the test scripts in [package.json](../../package.json):
 | `departmental_event_workshop` | Event organization: parallel hall-booking + speaker-clearance branches, a refreshments step that starts `blocked` pending hall booking's outcome and consumes its `confirmed_capacity` response field via `context_from_steps` |
 | `lab_equipment_purchase_request` | Input-only fixture (no expected/gold JSON) — used in `tests/live/` as an unseen example for generalisation/robustness testing |
 
-These live under [src/data/samples/](../../src/data/samples/) (`input/`, `expected/`, `selection/`, `demo-drafts/`). The same two fully-worked fixtures (`it_faculty_overseas_leave`, `departmental_event_workshop`) serve **three roles at once**: few-shot prompt examples, schema/graph validation test fixtures, and live extraction-accuracy assertions — meaning any change to the schema or prompt must keep these three consistent.
+These live under [src/data/samples/](../../src/data/samples/) (`input/`, `expected/`, `selection/`, `demo-drafts/`). The same two fully-worked fixtures (`it_faculty_overseas_leave`, `departmental_event_workshop`) serve **three roles at once**: few-shot prompt examples, schema/graph validation test fixtures, and live generation-accuracy assertions — meaning any change to the schema or prompt must keep these three consistent.
 
 ## 14. What is explicitly out of scope / not yet built
 

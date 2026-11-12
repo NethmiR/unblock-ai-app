@@ -1,6 +1,6 @@
 import { runPerfSuite } from "./lib/perf-runner.util.js";
 import { writePerfResults } from "./lib/perf-output.util.js";
-import { workflowExtractionOperation } from "./operations/workflow-extraction.operation.js";
+import { workflowTemplateGenerationOperation } from "./operations/workflow-template-generation.operation.js";
 import { taskRequestOperation } from "./operations/task-request.operation.js";
 import type { PerfOperation, PerfRecord } from "../../src/lib/types/perf/perf.type.js";
 
@@ -9,7 +9,7 @@ import type { PerfOperation, PerfRecord } from "../../src/lib/types/perf/perf.ty
  * file under `operations/`) to extend the suite to another AI request.
  */
 const OPERATIONS: Record<string, PerfOperation> = {
-  [workflowExtractionOperation.name]: workflowExtractionOperation,
+  [workflowTemplateGenerationOperation.name]: workflowTemplateGenerationOperation,
   [taskRequestOperation.name]: taskRequestOperation,
 };
 
@@ -36,7 +36,7 @@ function parseCliOptions(argv: string[]): CliOptions {
   }
 
   return {
-    operation: readFlag(flags, "operation") ?? workflowExtractionOperation.name,
+    operation: readFlag(flags, "operation") ?? workflowTemplateGenerationOperation.name,
     iterations: Number(readFlag(flags, "iterations") ?? 5),
     intervalMs: Number(readFlag(flags, "interval-ms") ?? 3000),
   };

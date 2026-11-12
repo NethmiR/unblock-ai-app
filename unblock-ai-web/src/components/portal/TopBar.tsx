@@ -9,7 +9,7 @@ export async function PortalTopBar() {
   return (
     <header className="sticky top-0 z-20 flex h-[60px] items-center justify-between border-b border-line bg-surface px-8">
       <div className="flex items-center gap-3.5">
-        <Link href="/portal" className="flex items-center gap-3.5">
+        <Link href="/old/portal" className="flex items-center gap-3.5">
           <div className="flex h-[26px] w-[26px] items-center justify-center rounded-lg bg-ink text-xs font-bold text-white">
             U
           </div>
@@ -18,10 +18,10 @@ export async function PortalTopBar() {
         <div className="h-5 w-px bg-line" />
         <div className="text-[12.5px] text-muted">Requester portal</div>
         <nav className="ml-2 flex items-center gap-4 text-[12.5px]">
-          <Link href="/portal" className="text-muted hover:text-ink">
+          <Link href="/old/portal" className="text-muted hover:text-ink">
             My Requests
           </Link>
-          <Link href="/portal/jobs/new" className="text-muted hover:text-ink">
+          <Link href="/old/portal/jobs/new" className="text-muted hover:text-ink">
             New Request
           </Link>
         </nav>

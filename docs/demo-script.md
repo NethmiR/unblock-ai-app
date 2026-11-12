@@ -1,7 +1,7 @@
 # Unblock AI — 10-Minute Demo Script
 
-Two surfaces in one run: the **admin portal** (author a workflow in plain English, verify
-the compiled graph, publish it) and the **portal** (a requester finds the right process by
+Two surfaces in one run: the **workflow templates dashboard** (author a workflow in plain
+English, verify the generated graph, publish it) and the **portal** (a requester finds the right process by
 chatting, fills in details, and the approval chain runs to a signed PDF).
 
 The arc deliberately links them: the template published live in Act 1 is what makes the
@@ -50,24 +50,26 @@ A `409 EMAIL_ALREADY_REGISTERED` just means the requester already exists from a 
 There is a **single `ua_session` cookie**. Logging in as the requester *replaces* the
 administrator's session in the same browser profile. Set up **two separate windows**:
 
-- **Window A** (normal profile) → sign in as the administrator. Login lands on `/account`;
-  then type `/admin` in the address bar (the dashboards are reachable by URL but not linked
-  from `/account` yet)
-- **Window B** (incognito / second profile) → sign in as `chathura@example.com`, then go to
-  `/portal`
+- **Window A** (normal profile) → sign in as the administrator. Login lands on `/dashboard`;
+  open **Workflow Templates → View existing** in the sidebar (`/dashboard/workflows`)
+- **Window B** (incognito / second profile) → sign in as `chathura@example.com`, then type
+  `/old/portal` in the address bar (the requester portal is reachable by URL but not linked
+  from the dashboard)
 - **Window B, second tab** → your email inbox, for approval links
 
 Log both in *before* you start talking. Do not log in on camera.
 
 ### Data setup
 
-Publish these two ahead of time so the library is not empty:
+Create, generate and publish these two ahead of time so the library is not empty (paste
+each file into the prompt of a **New workflow template**):
 
 - **IT Faculty Overseas Leave** — from `unblock-ai-api/src/data/samples/demo-drafts/it_overseas_leave.txt`
 - **Departmental Workshop / Event** — from `.../demo-drafts/workshop_event.txt`
 
-**Delete the Engineering Overseas Leave template if a previous run left it** — publishing
-it live is Act 1, and it must not already exist.
+**Archive the Engineering Overseas Leave template if a previous run left it** — publishing
+it live is Act 1, and no live copy may exist. Templates cannot be deleted; an archived one
+is no longer offered to requesters, and the Active filter hides it from the list.
 
 Have `demo-drafts/eng_overseas_leave.txt` **open in a text editor, ready to copy**. Do not
 type it live.
@@ -84,7 +86,7 @@ address for both approvers** so both emails land in one place.
 
 ---
 
-## Act 1 — Admin portal (0:00 – 3:30)
+## Act 1 — Workflow templates (0:00 – 3:30)
 
 ### 0:00 – 0:30 · Frame the problem
 
@@ -93,25 +95,28 @@ address for both approvers** so both emails land in one place.
 > English, compiles it into an executable graph, and then runs it. Two sides: the admin
 > who writes the rule, and the person who just needs their thing approved."
 
-**Window A**, on `/admin`.
+**Window A**, on `/dashboard/workflows`.
 
 ### 0:30 – 1:00 · The template library
 
 Point at the list.
 
-> "These are published workflow templates. Each one was written as prose and compiled.
-> They're filterable by institution type, and versioned — nothing is ever edited in place,
-> every save is a new version."
+> "These are published workflow templates. Each one was written as a prompt in plain
+> English and generated. They're versioned — every generate is a new, immutable version,
+> and the list shows who last changed each one."
 
-Click **Deletion log** in the top bar for about five seconds.
+Open the row menu on one template and point at **Version history** and **Archive** for
+about five seconds.
 
-> "And every removal is audited to a named user. This is a governance surface, not a wiki."
+> "Nothing is ever deleted. Archiving stops a template being offered, but any request
+> already running on it keeps working. This is a governance surface, not a wiki."
 
-Back to `/admin`.
+Close the menu.
 
 ### 1:00 – 1:30 · Write a workflow in English
 
-Click **＋ Create new template**. Paste `eng_overseas_leave.txt` into the left pane.
+Click **New workflow template**. Type the title `Engineering Overseas Leave` and paste
+`eng_overseas_leave.txt` into the prompt on the left.
 
 Read one line out loud while it lands:
 
@@ -133,7 +138,7 @@ Click **Generate**.
 > attempts. What comes out is guaranteed executable, or you get an error — never a
 > plausible-looking broken graph."
 
-### 2:30 – 3:15 · The compiled flowchart
+### 2:30 – 3:15 · The generated flowchart
 
 When the graph renders, trace it with the cursor.
 
@@ -149,14 +154,16 @@ When the graph renders, trace it with the cursor.
 
 Click **Publish**.
 
-> "Until now it's invisible. Publishing is the gate — only confirmed, latest-version
-> templates are findable. It's now live, and indexed for retrieval."
+> "Until now it's invisible. Publishing is the gate — only published templates are
+> findable. It's now live, and indexed for retrieval. If I change the prompt and regenerate
+> later, the new version goes live immediately, and requests already in flight keep the
+> version they started on."
 
 ---
 
 ## Act 2 — Portal (3:30 – 7:15)
 
-**Switch to Window B**, on `/portal`.
+**Switch to Window B**, on `/old/portal`.
 
 ### 3:30 – 3:50 · The requester's world
 
@@ -302,8 +309,8 @@ Click **Download record (PDF)**. Open it.
 | # | Segment | Runs | Ends |
 |---|---|---|---|
 | 1 | Framing | 0:30 | 0:30 |
-| 2 | Template library + deletion log | 0:30 | 1:00 |
-| 3 | Paste prose | 0:30 | 1:30 |
+| 2 | Template library + versions / archive | 0:30 | 1:00 |
+| 3 | Title + paste prompt | 0:30 | 1:30 |
 | 4 | **Generate (LLM — variable)** | 1:00 | 2:30 |
 | 5 | Flowchart walkthrough | 0:45 | 3:15 |
 | 6 | Publish | 0:15 | 3:30 |
@@ -320,7 +327,7 @@ Click **Download record (PDF)**. Open it.
 
 Cut in this order — each is self-contained:
 
-1. **Deletion log** (0:05) — mention it verbally instead
+1. **Version history / archive menu** (0:05) — mention it verbally instead
 2. **Requester status view** (segment 10) — go straight to the inbox
 3. **The date-validation flex** in segment 9
 4. **Second approval** — approve once and say "the second approver does the same thing, and
@@ -328,7 +335,7 @@ Cut in this order — each is self-contained:
 
 ### If you are running short
 
-- Open the workshop/event template in the admin editor. It has **parallel branches** — hall
+- Open the workshop/event template in the workflow template editor. It has **parallel branches** — hall
   booking and security run concurrently, refreshments waits on the hall — and the flowchart
   makes the "graph, not checklist" point visually in 30 seconds.
 - Show a **reject** or **request more information** on the second approval instead of
@@ -340,7 +347,7 @@ Cut in this order — each is self-contained:
 
 | Risk | Mitigation |
 |---|---|
-| **Generate takes >60s** | Keep a pre-published Engineering template in a second admin tab; switch to it and say "here's one I compiled earlier". Keep talking through the validation story — it fills the time honestly. |
+| **Generate takes >60s** | Keep a pre-published Engineering template open in a second tab; switch to it and say "here's one I compiled earlier". Keep talking through the validation story — it fills the time honestly. |
 | **Email delayed / SMTP blocked** | The API terminal logs the full `/approvals/<token>` URL. Keep it visible and paste the link directly. |
 | **Session cookie collision** | Two browser windows, both logged in before you start. This is the number one failure mode. |
 | **Selector matches instead of asking** | It only asks if two overseas-leave templates are live. Verify the Engineering publish succeeded before moving to Act 2 — if it failed, open with a direct query and drop the ambiguity beat. |

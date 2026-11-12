@@ -3,11 +3,21 @@ import { ConflictError } from "../../errors/conflict.error.js";
 import { ValidationError } from "../../errors/validation.error.js";
 import { UserErrorCode } from "../../data/constants/user-error.constant.js";
 import { UserStatus } from "../../data/constants/user.constant.js";
+import { InMemoryOrganisationStore } from "../in-memory-organisation-store.js";
+import { compareText } from "../../utils/shared/text.util.js";
 import type { IUserRepository } from "./user-repository.interface.js";
-import type { CreateUserRecordInput, UserCredentialRecord, UserRecord } from "../../lib/types/user/user.type.js";
+import type {
+  CreateUserRecordInput,
+  UserCredentialRecord,
+  UserListFilter,
+  UserListPage,
+  UserRecord,
+  UserReference,
+} from "../../lib/types/user/user.type.js";
 
 export interface InMemoryUserRepositoryOptions {
   users?: UserCredentialRecord[];
+  organisationStore?: InMemoryOrganisationStore;
 }
 
 function copyCredential(record: UserCredentialRecord): UserCredentialRecord {
@@ -21,14 +31,23 @@ function toUserRecord(record: UserCredentialRecord): UserRecord {
 
 export class InMemoryUserRepository implements IUserRepository {
   private readonly users = new Map<string, UserCredentialRecord>();
+  private readonly organisationStore: InMemoryOrganisationStore;
 
-  constructor({ users = [] }: InMemoryUserRepositoryOptions = {}) {
+  constructor({ users = [], organisationStore = new InMemoryOrganisationStore() }: InMemoryUserRepositoryOptions = {}) {
     for (const user of users) this.users.set(user.id, copyCredential(user));
+    this.organisationStore = organisationStore;
   }
 
   async findById(id: string): Promise<UserRecord | null> {
     const user = this.users.get(id);
     return user ? toUserRecord(user) : null;
+  }
+
+  async findReferencesByIds(ids: readonly string[]): Promise<UserReference[]> {
+    return ids.flatMap((id) => {
+      const user = this.users.get(id);
+      return user ? [{ id: user.id, fullName: user.fullName, email: user.email }] : [];
+    });
   }
 
   async findCredentialByEmail(email: string): Promise<UserCredentialRecord | null> {
@@ -40,10 +59,21 @@ export class InMemoryUserRepository implements IUserRepository {
     return this.findByEmail(email) !== undefined;
   }
 
-  async list(): Promise<UserRecord[]> {
-    return [...this.users.values()]
-      .sort((a, b) => a.fullName.toLowerCase().localeCompare(b.fullName.toLowerCase()) || a.id.localeCompare(b.id))
-      .map(toUserRecord);
+  async list(filter: UserListFilter): Promise<UserListPage> {
+    const search = filter.search?.toLowerCase() ?? null;
+    const unitId = filter.organisationalUnitId;
+    const matching = [...this.users.values()]
+      .filter(
+        (user) =>
+          search === null || user.fullName.toLowerCase().includes(search) || user.email.toLowerCase().includes(search),
+      )
+      .filter((user) => unitId === null || this.organisationStore.isMemberOfUnitOrItsChildren(user.id, unitId))
+      .sort((a, b) => compareText(a.fullName, b.fullName) || a.id.localeCompare(b.id));
+
+    return {
+      users: matching.slice(filter.offset, filter.offset + filter.limit).map(toUserRecord),
+      total: matching.length,
+    };
   }
 
   async create(input: CreateUserRecordInput): Promise<UserRecord> {

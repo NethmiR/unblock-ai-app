@@ -12,7 +12,7 @@ interface Props {
   hasStarted: boolean;
   isClosed: boolean;
   onSend: (text: string) => void;
-  onChoose: (workflowId: string) => void;
+  onChoose: (workflowTemplateId: string) => void;
 }
 
 /**
@@ -20,7 +20,7 @@ interface Props {
  *
  * Presentational only - all conversational state lives in useSelectionSession.
  * The one piece of judgment this component makes: a quick-reply click on a
- * `manual_choice` message is a pick from the candidate list (workflow_id, via
+ * `manual_choice` message is a pick from the candidate list (workflow_template_id, via
  * `onChoose`), while every other quick reply is free text sent through the
  * same `send` path as typing it would be (per ChatMessage's contract that
  * typing and clicking must produce the same result).
@@ -48,7 +48,7 @@ export function SelectionChat({
     if (decision?.decision === "manual_choice") {
       const candidate = decision.candidates.find((c) => c.title === option);
       if (candidate) {
-        onChoose(candidate.workflow_id);
+        onChoose(candidate.workflow_template_id);
         return;
       }
     }

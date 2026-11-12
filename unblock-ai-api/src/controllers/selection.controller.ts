@@ -1,6 +1,11 @@
 import type { Request, Response } from "express";
 import { SelectionService } from "../services/selection.service.js";
-import { optionalObject, optionalString, requireNonEmptyString } from "../utils/http/request-validator.util.js";
+import {
+  optionalObject,
+  optionalString,
+  requireNonEmptyString,
+  requireUuidField,
+} from "../utils/http/request-validator.util.js";
 
 export interface SelectionControllerOptions {
   selectionService: SelectionService;
@@ -30,14 +35,14 @@ export class SelectionController {
     res.json(result);
   };
 
-  chooseWorkflow = async (req: Request, res: Response): Promise<void> => {
-    const workflowId = requireNonEmptyString(req.body, "workflow_id");
-    const result = await this.selectionService.choose(req.params.id as string, workflowId);
+  chooseWorkflowTemplate = async (req: Request, res: Response): Promise<void> => {
+    const workflowTemplateId = requireUuidField(req.body, "workflow_template_id");
+    const result = await this.selectionService.choose(req.params.id as string, workflowTemplateId);
     res.json(result);
   };
 
-  getMatchedWorkflow = async (req: Request, res: Response): Promise<void> => {
-    const workflow = await this.selectionService.getMatchedWorkflow(req.params.id as string);
-    res.json(workflow);
+  getMatchedWorkflowTemplate = async (req: Request, res: Response): Promise<void> => {
+    const { version, definition } = await this.selectionService.getMatchedWorkflowTemplate(req.params.id as string);
+    res.json({ workflow_template_version: version, definition });
   };
 }

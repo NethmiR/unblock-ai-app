@@ -4,7 +4,7 @@
 
 | Document | Description |
 | --- | --- |
-| [architecture/project-overview.md](./architecture/project-overview.md) | What the project does, tech stack, directory structure, the workflow schema, extraction pipeline, persistence, and test suite — a read-through of the current codebase. |
+| [architecture/project-overview.md](./architecture/project-overview.md) | What the project does, tech stack, directory structure, the workflow schema, workflow template generation pipeline, persistence, and test suite — a read-through of the current codebase. |
 | [architecture/folder-structure.md](./architecture/folder-structure.md) | The complete target `src/` tree and what each folder is responsible for. |
 | [architecture/error-handling.md](./architecture/error-handling.md) | The `BaseError` hierarchy, its subclasses and status codes, and how the error middleware works. |
 | [architecture/rag-implementation-guide.md](./architecture/rag-implementation-guide.md) | Historical design guide for the RAG/retrieval pipeline on Postgres + pgvector. |

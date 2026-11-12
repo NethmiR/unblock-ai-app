@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ObjectId } from "mongodb";
 import { buildCompletionDocument } from "../../../src/utils/document/completion-document.util.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
+import { LEAVE_WORKFLOW_TEMPLATE_ID } from "../../helpers/workflow-template.helper.js";
 import type { TaskDocument, TaskStepState } from "../../../src/lib/types/task/task.type.js";
 import type { TaskRequirement } from "../../../src/lib/types/task/requirement.type.js";
 
@@ -12,8 +13,8 @@ function buildTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
     reference: "LEAVE-2026-00001",
     session_id: "session-1",
     created_by: "user-1",
-    workflow_id: "it_faculty_overseas_leave",
-    version: 1,
+    workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID,
+    workflow_template_version: 1,
     status: "completed",
     requirements: [],
     values: {},
@@ -269,7 +270,7 @@ test("follow-up answers appear in their own section, after the template-ordered 
 
 test("no calculated-values section appears when no computed values are supplied", () => {
   const workflow = loadExpectedFixture("departmental_event_workshop.json");
-  const task = buildTask({ workflow_id: workflow.workflow_id });
+  const task = buildTask();
 
   const doc = buildCompletionDocument(task, workflow, {
     institutionName: "Test University",
@@ -296,7 +297,6 @@ test("a calculated-values section is added when computed values are supplied", (
 test("approval designation falls back from display_name to title-cased role to the step name", () => {
   const workflow = loadExpectedFixture("departmental_event_workshop.json");
   const task = buildTask({
-    workflow_id: workflow.workflow_id,
     steps: [
       approvedStep("hall_booking", "Hall Booking Approval"),
       approvedStep("speaker_clearance", "Guest Speaker Security Clearance"),
@@ -334,7 +334,6 @@ test("approval rows carry the approver's name, email, outcome, decision time, an
   };
 
   const task = buildTask({
-    workflow_id: workflow.workflow_id,
     steps: [rejectedStep],
   });
 

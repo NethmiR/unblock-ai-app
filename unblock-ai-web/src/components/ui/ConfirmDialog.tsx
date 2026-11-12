@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
-import { cn } from "@/lib/utils/cn";
 
 interface ConfirmDialogProps {
   title: string;
@@ -78,15 +77,7 @@ export function ConfirmDialog({
           <Button variant="secondary" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </Button>
-          <Button
-            variant="primary"
-            onClick={onConfirm}
-            disabled={!canConfirm || busy}
-            className={cn(
-              tone === "danger" &&
-                "bg-danger hover:bg-danger/90 disabled:bg-slate-200 disabled:text-muted",
-            )}
-          >
+          <Button variant={tone === "danger" ? "danger" : "primary"} onClick={onConfirm} disabled={!canConfirm || busy}>
             {busy ? busyLabel ?? `${confirmLabel}…` : confirmLabel}
           </Button>
         </div>

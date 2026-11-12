@@ -1,6 +1,5 @@
 export * from "./workflow/index.type.js";
-export * from "./draft/index.type.js";
-export * from "./template/index.type.js";
+export * from "./workflow-template/index.type.js";
 export * from "./selection/index.type.js";
 export * from "./retrieval/index.type.js";
 export * from "./config/index.type.js";
@@ -14,5 +13,7 @@ export * from "./ai/index.type.js";
 export * from "./migration/index.type.js";
 export * from "./user/index.type.js";
 export * from "./user-session/index.type.js";
-export * from "./template-deletion/index.type.js";
 export * from "./seed/index.type.js";
+export * from "./organisational-unit/index.type.js";
+export * from "./designation/index.type.js";
+export * from "./user-affiliation/index.type.js";

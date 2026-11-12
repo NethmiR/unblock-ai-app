@@ -1,28 +1,23 @@
-import { HealthController } from "../../src/controllers/health.controller.js";
-import { WorkflowController } from "../../src/controllers/workflow.controller.js";
-import { DraftController } from "../../src/controllers/draft.controller.js";
-import { SelectionController } from "../../src/controllers/selection.controller.js";
-import { TaskController } from "../../src/controllers/task.controller.js";
 import { AuthController } from "../../src/controllers/auth.controller.js";
 import { UserSessionController } from "../../src/controllers/user-session.controller.js";
 import { UserController } from "../../src/controllers/user.controller.js";
 import { UserService } from "../../src/services/user.service.js";
+import { OrganisationalUnitController } from "../../src/controllers/organisational-unit.controller.js";
+import { DesignationController } from "../../src/controllers/designation.controller.js";
+import { UserAffiliationController } from "../../src/controllers/user-affiliation.controller.js";
+import { OrganisationalUnitService } from "../../src/services/organisational-unit.service.js";
+import { DesignationService } from "../../src/services/designation.service.js";
+import { UserAffiliationService } from "../../src/services/user-affiliation.service.js";
 import { hashPassword } from "../../src/utils/shared/password.util.js";
 import { Permission } from "../../src/data/constants/permission.constant.js";
 import { UserStatus } from "../../src/data/constants/user.constant.js";
 import {
   createTestAuthentication,
+  createTestControllers,
   startTestServer,
   type TestAuthentication,
   type TestServer,
 } from "./test-server.helper.js";
-import type { ApiControllers } from "../../src/routes/index.route.js";
-import type { ApprovalController } from "../../src/controllers/approval.controller.js";
-import type { WorkflowService } from "../../src/services/workflow.service.js";
-import type { ExtractionService } from "../../src/services/extraction.service.js";
-import type { DraftService } from "../../src/services/draft.service.js";
-import type { SelectionService } from "../../src/services/selection.service.js";
-import type { TaskService } from "../../src/services/task.service.js";
 import type { AuthConfig } from "../../src/lib/types/config/config.type.js";
 import type { UserCredentialRecord } from "../../src/lib/types/user/user.type.js";
 
@@ -58,31 +53,33 @@ export async function startAuthTestServer(
   options: { users?: UserCredentialRecord[]; authConfig?: AuthConfig } = {},
 ): Promise<AuthTestServer> {
   const authentication = createTestAuthentication(options);
-  const controllers: ApiControllers = {
-    healthController: new HealthController(),
-    workflowController: new WorkflowController({
-      workflowService: {} as WorkflowService,
-      extractionService: {} as ExtractionService,
-      validationService: {} as never,
-      draftService: {} as never,
-    }),
-    draftController: new DraftController({
-      draftService: {} as DraftService,
-      extractionService: {} as ExtractionService,
-      workflowService: {} as WorkflowService,
-    }),
-    selectionController: new SelectionController({ selectionService: {} as SelectionService }),
-    taskController: new TaskController({ taskService: {} as TaskService }),
-    approvalController: {} as ApprovalController,
+  const { userRepository, organisationalUnitRepository, designationRepository, userAffiliationRepository } =
+    authentication.repositories;
+  const controllers = createTestControllers({
     authController: new AuthController({ authenticationService: authentication.authenticationService }),
     userSessionController: new UserSessionController({ userSessionService: authentication.userSessionService }),
     userController: new UserController({
       userService: new UserService({
-        userRepository: authentication.userRepository,
+        userRepository,
+        userAffiliationRepository,
         userConfig: { defaultPassword: TEST_DEFAULT_PASSWORD },
       }),
     }),
-  };
+    organisationalUnitController: new OrganisationalUnitController({
+      organisationalUnitService: new OrganisationalUnitService({ organisationalUnitRepository }),
+    }),
+    designationController: new DesignationController({
+      designationService: new DesignationService({ designationRepository }),
+    }),
+    userAffiliationController: new UserAffiliationController({
+      userAffiliationService: new UserAffiliationService({
+        userAffiliationRepository,
+        organisationalUnitRepository,
+        designationRepository,
+        userRepository,
+      }),
+    }),
+  });
 
   const server = await startTestServer(controllers, { authenticationService: authentication.authenticationService });
   return { ...server, authentication };

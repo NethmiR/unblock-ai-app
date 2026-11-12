@@ -50,14 +50,14 @@ test("requireObject rejects an array", () => {
 });
 
 test("requireOneOf returns the value when it is in the allowed set", () => {
-  assert.equal(requireOneOf({ review_status: "confirmed" }, "review_status", ["confirmed", "rejected"] as const), "confirmed");
+  assert.equal(requireOneOf({ status: "published" }, "status", ["draft", "published"] as const), "published");
 });
 
 test("requireOneOf throws naming the allowed values", () => {
   assert.throws(
-    () => requireOneOf({ review_status: "bogus" }, "review_status", ["confirmed", "rejected"] as const),
+    () => requireOneOf({ status: "bogus" }, "status", ["draft", "published"] as const),
     (err: unknown) =>
-      err instanceof ValidationError && err.message === "review_status must be one of: confirmed, rejected",
+      err instanceof ValidationError && err.message === "status must be one of: draft, published",
   );
 });
 

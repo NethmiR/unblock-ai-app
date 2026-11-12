@@ -1,26 +1,31 @@
 import { hashPassword } from "../utils/shared/password.util.js";
 import { isValidEmail, normalizeEmail } from "../utils/user/email.util.js";
 import { isPermission } from "../utils/auth/permission.util.js";
+import { normalizeOptionalText } from "../utils/shared/text.util.js";
+import { requireIntegerInRange, requireOptionalTextLength } from "../utils/shared/field-validation.util.js";
 import { ValidationError } from "../errors/validation.error.js";
-import { NotFoundError } from "../errors/not-found.error.js";
-import { USER_FIELD_LIMIT } from "../data/constants/user.constant.js";
-import { UserErrorCode } from "../data/constants/user-error.constant.js";
+import { userNotFound } from "../errors/user.error.js";
+import { USER_FIELD_LIMIT, USER_LIST_PAGINATION } from "../data/constants/user.constant.js";
 import type { Permission } from "../data/constants/permission.constant.js";
 import type { IUserRepository } from "../repositories/user-repository/user-repository.interface.js";
+import type { IUserAffiliationRepository } from "../repositories/user-affiliation-repository/user-affiliation-repository.interface.js";
 import type { UserConfig } from "../lib/types/config/config.type.js";
-import type { CreateUserInput, UserRecord } from "../lib/types/user/user.type.js";
+import type { CreateUserInput, UserListFilter, UserListResult, UserRecord } from "../lib/types/user/user.type.js";
 
 export interface UserServiceOptions {
   userRepository: IUserRepository;
+  userAffiliationRepository: IUserAffiliationRepository;
   userConfig: UserConfig;
 }
 
 export class UserService {
   private readonly userRepository: IUserRepository;
+  private readonly userAffiliationRepository: IUserAffiliationRepository;
   private readonly userConfig: UserConfig;
 
-  constructor({ userRepository, userConfig }: UserServiceOptions) {
+  constructor({ userRepository, userAffiliationRepository, userConfig }: UserServiceOptions) {
     this.userRepository = userRepository;
+    this.userAffiliationRepository = userAffiliationRepository;
     this.userConfig = userConfig;
   }
 
@@ -38,19 +43,36 @@ export class UserService {
     });
   }
 
-  listUsers(): Promise<UserRecord[]> {
-    return this.userRepository.list();
+  async listUsers(filter: UserListFilter): Promise<UserListResult> {
+    const validated = validateListFilter(filter);
+    const page = await this.userRepository.list(validated);
+    const unitsByUser = await this.userAffiliationRepository.findUnitSummariesByUserIds(page.users.map((user) => user.id));
+    return {
+      users: page.users.map((user) => ({ ...user, organisationalUnits: unitsByUser.get(user.id) ?? [] })),
+      total: page.total,
+      limit: validated.limit,
+      offset: validated.offset,
+    };
   }
 
   async getUserById(id: string): Promise<UserRecord> {
     const user = await this.userRepository.findById(id);
-    if (!user) throw new NotFoundError(`User '${id}' not found`, { code: UserErrorCode.USER_NOT_FOUND });
+    if (!user) throw userNotFound(id);
     return user;
   }
 
   existsByEmail(email: string): Promise<boolean> {
     return this.userRepository.existsByEmail(normalizeEmail(email));
   }
+}
+
+function validateListFilter(filter: UserListFilter): UserListFilter {
+  return {
+    search: requireOptionalTextLength(normalizeOptionalText(filter.search), "search", USER_LIST_PAGINATION.SEARCH_MAX_LENGTH),
+    organisationalUnitId: filter.organisationalUnitId,
+    limit: requireIntegerInRange(filter.limit, "limit", 1, USER_LIST_PAGINATION.MAX_LIMIT),
+    offset: requireIntegerInRange(filter.offset, "offset", 0, Number.MAX_SAFE_INTEGER),
+  };
 }
 
 function validateEmail(raw: string): string {

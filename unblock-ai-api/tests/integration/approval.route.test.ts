@@ -1,33 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { WorkflowController } from "../../src/controllers/workflow.controller.js";
-import { DraftController } from "../../src/controllers/draft.controller.js";
-import { SelectionController } from "../../src/controllers/selection.controller.js";
-import { TaskController } from "../../src/controllers/task.controller.js";
 import { ApprovalController } from "../../src/controllers/approval.controller.js";
-import type { AuthController } from "../../src/controllers/auth.controller.js";
-import type { UserSessionController } from "../../src/controllers/user-session.controller.js";
-import type { UserController } from "../../src/controllers/user.controller.js";
-import { HealthController } from "../../src/controllers/health.controller.js";
 import { NotFoundError } from "../../src/errors/not-found.error.js";
 import { ValidationError } from "../../src/errors/validation.error.js";
 import {
+  createTestControllers,
   startTestServer,
   type TestServer,
 } from "../helpers/test-server.helper.js";
-import type { ExtractionService } from "../../src/services/extraction.service.js";
-import type { WorkflowService } from "../../src/services/workflow.service.js";
-import type { DraftService } from "../../src/services/draft.service.js";
 import type { SelectionService } from "../../src/services/selection.service.js";
 import type { TaskService } from "../../src/services/task.service.js";
 import type { ApprovalService } from "../../src/services/approval.service.js";
-import type { ApiControllers } from "../../src/routes/index.route.js";
 import type { ApproverViewDto, DecisionResultDto } from "../../src/lib/types/approval/approval.type.js";
 
 function fakeApproverView(overrides: Partial<ApproverViewDto> = {}): ApproverViewDto {
   return {
     task_reference: "TASK-2026-00001",
-    workflow_title: "IT Faculty Overseas Leave",
+    workflow_template_title: "IT Faculty Overseas Leave",
     step: { step_id: "advisor_review", name: "Advisor Review", instructions_to_approver: null, response_fields: [] },
     approver: { name: "Dr. Advisor", email: "advisor@example.com" },
     requester_answers: [],
@@ -77,26 +66,7 @@ function fakeApprovalService(options: FakeApprovalServiceOptions = {}): Approval
 }
 
 async function buildServer(approvalService: ApprovalService): Promise<TestServer> {
-  const controllers: ApiControllers = {
-    healthController: new HealthController(),
-    workflowController: new WorkflowController({
-      workflowService: {} as WorkflowService,
-      extractionService: {} as ExtractionService,
-      validationService: {} as never,
-      draftService: {} as never,
-    }),
-    draftController: new DraftController({
-      draftService: {} as DraftService,
-      extractionService: {} as ExtractionService,
-      workflowService: {} as WorkflowService,
-    }),
-    selectionController: new SelectionController({ selectionService: {} as SelectionService }),
-    taskController: new TaskController({ taskService: {} as TaskService }),
-    approvalController: new ApprovalController({ approvalService }),
-    authController: {} as AuthController,
-    userSessionController: {} as UserSessionController,
-    userController: {} as UserController,
-  };
+  const controllers = createTestControllers({ approvalController: new ApprovalController({ approvalService }) });
 
   return startTestServer(controllers);
 }

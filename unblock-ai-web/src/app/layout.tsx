@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Public_Sans, IBM_Plex_Sans } from "next/font/google";
+import { APP_CONFIG } from "@/lib/config/app.config";
 import "./globals.css";
 
 const publicSans = Public_Sans({
@@ -15,8 +16,8 @@ const ibmPlex = IBM_Plex_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Unblock AI",
-  description: "Plain English in, verified workflow out.",
+  title: { default: APP_CONFIG.name, template: `%s · ${APP_CONFIG.name}` },
+  description: APP_CONFIG.description,
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

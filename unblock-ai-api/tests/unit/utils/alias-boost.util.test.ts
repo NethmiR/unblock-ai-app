@@ -5,8 +5,8 @@ import type { RetrievalCandidate } from "../../../src/lib/types/selection/candid
 
 function candidate(overrides: Partial<RetrievalCandidate>): RetrievalCandidate {
   return {
-    workflow_id: "x",
-    version: 1,
+    workflow_template_id: "x",
+    workflow_template_version: 1,
     title: "X",
     description: "",
     score: 0,
@@ -18,26 +18,26 @@ function candidate(overrides: Partial<RetrievalCandidate>): RetrievalCandidate {
 }
 
 const candidates: RetrievalCandidate[] = [
-  candidate({ workflow_id: "a", score: 0.7, aliases_lower: ["overseas leave"] }),
-  candidate({ workflow_id: "b", score: 0.75, aliases_lower: ["hall booking"] }),
+  candidate({ workflow_template_id: "a", score: 0.7, aliases_lower: ["overseas leave"] }),
+  candidate({ workflow_template_id: "b", score: 0.75, aliases_lower: ["hall booking"] }),
 ];
 
 test("an alias hit can overtake a higher raw score", () => {
   const out = applyAliasBoost(candidates, "I need overseas leave", 0.15);
-  assert.equal(out[0]?.workflow_id, "a");
+  assert.equal(out[0]?.workflow_template_id, "a");
   assert.ok(Math.abs((out[0]?.score ?? 0) - 0.85) < 1e-9);
   assert.deepEqual(out[0]?.alias_hits, ["overseas leave"]);
 });
 
 test("no alias hit leaves the ordering untouched", () => {
   const out = applyAliasBoost(candidates, "something unrelated", 0.15);
-  assert.equal(out[0]?.workflow_id, "b");
+  assert.equal(out[0]?.workflow_template_id, "b");
   assert.deepEqual(out[0]?.alias_hits, []);
 });
 
 test("matching is case-insensitive", () => {
   const out = applyAliasBoost(candidates, "OVERSEAS LEAVE please", 0.15);
-  assert.equal(out[0]?.workflow_id, "a");
+  assert.equal(out[0]?.workflow_template_id, "a");
 });
 
 test("base_score is preserved for debugging", () => {
@@ -46,6 +46,6 @@ test("base_score is preserved for debugging", () => {
 });
 
 test("candidates without aliases do not crash", () => {
-  const out = applyAliasBoost([candidate({ workflow_id: "c", score: 0.5 })], "anything", 0.15);
+  const out = applyAliasBoost([candidate({ workflow_template_id: "c", score: 0.5 })], "anything", 0.15);
   assert.equal(out[0]?.score, 0.5);
 });

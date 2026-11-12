@@ -1,32 +1,4 @@
-import type { DraftDocument, DraftDto } from "../../lib/types/draft/draft.type.js";
-import type { TemplateDocument, TemplateRecordDto, TemplateSummary } from "../../lib/types/template/template.type.js";
 import type { TaskDocument, TaskDto } from "../../lib/types/task/task.type.js";
-
-export function serializeDraft(doc: DraftDocument): DraftDto {
-  return {
-    id: String(doc._id),
-    title: doc.title,
-    raw_text: doc.raw_text,
-    status: doc.status,
-    failure_reason: doc.failure_reason,
-    workflow_id: doc.workflow_id,
-    created_at: doc.created_at,
-    updated_at: doc.updated_at,
-  };
-}
-
-export function serializeTemplateSummary(doc: TemplateDocument): TemplateSummary {
-  return {
-    workflow_id: doc.workflow_id,
-    title: doc.title,
-    description: doc.description,
-    version: doc.version,
-    schema_version: doc.schema_version,
-    review_status: doc.review_status,
-    draft_id: doc.draft_id ? String(doc.draft_id) : null,
-    updated_at: (doc.updated_at as unknown as { toISOString?: () => string })?.toISOString?.() ?? (doc.updated_at as unknown as string),
-  };
-}
 
 export function serializeTask(doc: TaskDocument): TaskDto {
   return {
@@ -34,8 +6,8 @@ export function serializeTask(doc: TaskDocument): TaskDto {
     reference: doc.reference,
     session_id: doc.session_id,
     created_by: doc.created_by,
-    workflow_id: doc.workflow_id,
-    version: doc.version,
+    workflow_template_id: doc.workflow_template_id,
+    workflow_template_version: doc.workflow_template_version,
     status: doc.status,
     requirements: doc.requirements,
     values: doc.values,
@@ -49,16 +21,4 @@ export function serializeTask(doc: TaskDocument): TaskDto {
 
 export function serializeTaskSummary(doc: TaskDocument): TaskDto {
   return serializeTask(doc);
-}
-
-export function serializeTemplateRecord(doc: TemplateDocument, draftText?: string | null): TemplateRecordDto {
-  return {
-    workflow_id: doc.workflow_id,
-    version: doc.version,
-    draft_id: doc.draft_id ? String(doc.draft_id) : null,
-    review_status: doc.review_status,
-    document: doc.document,
-    updated_at: doc.updated_at,
-    draft_text: draftText ?? null,
-  };
 }

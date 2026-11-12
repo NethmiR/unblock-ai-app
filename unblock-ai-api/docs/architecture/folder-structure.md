@@ -11,25 +11,28 @@ unblock-ai-api/
 │  ├─ server.ts                       # entry point: config load, DI wiring, listen, shutdown
 │  ├─ routes/
 │  │  ├─ index.route.ts               # mounts every route group under /api
-│  │  ├─ draft.route.ts
-│  │  ├─ workflow.route.ts
+│  │  ├─ workflow-template.route.ts   # /workflow-templates: draft, generate, publish, archive, versions
 │  │  ├─ selection.route.ts
 │  │  ├─ auth.route.ts                # login, me, logout
 │  │  ├─ user-session.route.ts        # list / revoke own sessions under /auth/sessions
 │  │  ├─ user.route.ts                # user management (user:manage)
+│  │  ├─ organisational-unit.route.ts # faculties, departments, divisions
+│  │  ├─ designation.route.ts         # designation catalogue
+│  │  ├─ user-affiliation.route.ts    # user affiliations, own affiliations, unit members
 │  │  └─ health.route.ts
 │  ├─ controllers/
-│  │  ├─ draft.controller.ts
-│  │  ├─ workflow.controller.ts
+│  │  ├─ workflow-template.controller.ts
 │  │  ├─ selection.controller.ts
 │  │  ├─ auth.controller.ts
 │  │  ├─ user-session.controller.ts
 │  │  ├─ user.controller.ts
+│  │  ├─ organisational-unit.controller.ts
+│  │  ├─ designation.controller.ts
+│  │  ├─ user-affiliation.controller.ts
 │  │  └─ health.controller.ts
 │  ├─ services/
-│  │  ├─ draft.service.ts
-│  │  ├─ workflow.service.ts
-│  │  ├─ extraction.service.ts
+│  │  ├─ workflow-template.service.ts # template lifecycle, immutable versions, retrieval embedding
+│  │  ├─ workflow-template-generation.service.ts # prompt -> validated definition (repair loop)
 │  │  ├─ embedding.service.ts
 │  │  ├─ retrieval.service.ts
 │  │  ├─ selector.service.ts
@@ -37,8 +40,10 @@ unblock-ai-api/
 │  │  ├─ validation.service.ts
 │  │  ├─ authentication.service.ts    # login, token -> AuthContext, logout, lockout
 │  │  ├─ user-session.service.ts      # issue, list, revoke server-side sessions
-│  │  ├─ user.service.ts              # create / list / get users, permission validation
-│  │  ├─ template-deletion-log.service.ts
+│  │  ├─ user.service.ts              # create / list (search, unit filter, paging) / get users
+│  │  ├─ organisational-unit.service.ts # hierarchy and lifecycle rules for units
+│  │  ├─ designation.service.ts       # designation catalogue rules
+│  │  ├─ user-affiliation.service.ts  # replace-set affiliations, single-holder checks
 │  │  ├─ llm-adapter/
 │  │  │  ├─ llm-adapter.interface.ts
 │  │  │  ├─ azure-openai.llm-adapter.ts
@@ -60,10 +65,14 @@ unblock-ai-api/
 │  │  │  ├─ in-memory.user-repository.ts
 │  │  │  └─ index.user-repository.ts
 │  │  ├─ user-session-repository/      # same four-file shape
-│  │  └─ template-deletion-repository/ # same four-file shape
+│  │  ├─ organisational-unit-repository/ # same four-file shape + postgres row mapper
+│  │  ├─ designation-repository/      # same four-file shape + postgres row mapper
+│  │  ├─ user-affiliation-repository/ # same four-file shape
+│  │  ├─ in-memory-organisation-store.ts # shared state for the in-memory organisation twins
+│  │  └─ repository-registry.factory.ts  # builds every repository for a backend
 │  ├─ models/
-│  │  ├─ draft.model.ts
-│  │  ├─ template.model.ts
+│  │  ├─ workflow-template.model.ts   # workflow_templates: list, update, retrieval queries, vector search
+│  │  ├─ workflow-template-version.model.ts # workflow_template_versions: immutable versions
 │  │  ├─ selection-session.model.ts
 │  │  └─ index.model.ts
 │  ├─ config/
@@ -71,7 +80,7 @@ unblock-ai-api/
 │  │  ├─ db.config.ts
 │  │  ├─ llm.config.ts
 │  │  ├─ embedding.config.ts
-│  │  ├─ extraction.config.ts
+│  │  ├─ workflow-template-generation.config.ts # WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS
 │  │  ├─ retrieval.config.ts
 │  │  ├─ server.config.ts
 │  │  ├─ postgres.config.ts
@@ -109,31 +118,36 @@ unblock-ai-api/
 │  │  ├─ workflow/
 │  │  │  ├─ graph-validator.util.ts
 │  │  │  ├─ schema-validator.util.ts
-│  │  │  └─ namespace-path.util.ts
+│  │  │  ├─ namespace-path.util.ts
+│  │  │  └─ build-workflow-template-generation-messages.util.ts
+│  │  ├─ workflow-template/
+│  │  │  └─ workflow-template-input.util.ts # title / prompt normalisation and limits
 │  │  ├─ retrieval/
 │  │  │  ├─ vector-math.util.ts
 │  │  │  ├─ alias-boost.util.ts
-│  │  │  └─ render-summary.util.ts
+│  │  │  ├─ render-summary.util.ts
+│  │  │  └─ retrieval-candidate.util.ts  # template retrieval row -> RetrievalCandidate
 │  │  └─ http/
 │  │     ├─ request-validator.util.ts
 │  │     ├─ bearer-token.util.ts
-│  │     └─ serializer.util.ts
+│  │     ├─ serializer.util.ts
+│  │     └─ workflow-template-serializer.util.ts
 │  ├─ data/
 │  │  ├─ prompts/
-│  │  │  ├─ extraction.prompt.ts
-│  │  │  ├─ extraction-few-shot.prompt.ts
-│  │  │  ├─ selector.prompt.ts
-│  │  │  └─ retrieval-summary.prompt.ts
+│  │  │  ├─ workflow-template-generation.prompt.ts
+│  │  │  ├─ workflow-template-generation-few-shot.prompt.ts
+│  │  │  └─ selector.prompt.ts
 │  │  ├─ schemas/
 │  │  │  ├─ workflow.schema.json
 │  │  │  ├─ workflow-schema.data.ts
-│  │  │  ├─ decision.schema.ts
-│  │  │  └─ retrieval-summary.schema.ts
+│  │  │  └─ decision.schema.ts
 │  │  ├─ vocabulary/
 │  │  │  └─ role.vocabulary.ts
 │  │  ├─ constants/
 │  │  │  ├─ collection.constant.ts
 │  │  │  ├─ status.constant.ts
+│  │  │  ├─ workflow-template.constant.ts # statuses, title / prompt limits
+│  │  │  ├─ workflow-template-error.constant.ts
 │  │  │  ├─ ai-provider.constant.ts
 │  │  │  ├─ llm.constant.ts
 │  │  │  ├─ embedding.constant.ts
@@ -160,8 +174,7 @@ unblock-ai-api/
 │  │     │  ├─ actor.type.ts
 │  │     │  ├─ condition.type.ts
 │  │     │  └─ retrieval-summary.type.ts
-│  │     ├─ draft/draft.type.ts
-│  │     ├─ template/template.type.ts
+│  │     ├─ workflow-template/workflow-template.type.ts
 │  │     ├─ selection/
 │  │     │  ├─ session.type.ts
 │  │     │  ├─ decision.type.ts
@@ -173,7 +186,6 @@ unblock-ai-api/
 │  │     ├─ auth/auth.type.ts
 │  │     ├─ user/user.type.ts
 │  │     ├─ user-session/user-session.type.ts
-│  │     ├─ template-deletion/template-deletion.type.ts
 │  │     ├─ seed/seed.type.ts
 │  │     └─ index.type.ts
 │  ├─ errors/
@@ -183,7 +195,8 @@ unblock-ai-api/
 │  │  ├─ forbidden.error.ts
 │  │  ├─ not-found.error.ts
 │  │  ├─ conflict.error.ts
-│  │  ├─ extraction.error.ts
+│  │  ├─ workflow-template-generation.error.ts
+│  │  ├─ workflow-template.error.ts  # factories for WORKFLOW_TEMPLATE_* codes
 │  │  ├─ selection.error.ts
 │  │  ├─ embedding.error.ts
 │  │  ├─ database.error.ts
@@ -202,12 +215,10 @@ unblock-ai-api/
 │        └─ postgres/                 # seed context, engine, template, seeders/*.seeder.ts
 ├─ scripts/
 │  ├─ copy-assets.script.ts           # build step: copies non-.ts assets into dist/
-│  ├─ db/
-│  │  ├─ migrate-postgres.script.ts
-│  │  ├─ migrate-mongo.script.ts
-│  │  └─ seed-postgres.script.ts      # npm run seed:pg:run | seed:pg:list | seed:pg:create
-│  └─ maintenance/
-│     └─ backfill-summaries.script.ts
+│  └─ db/
+│     ├─ migrate-postgres.script.ts
+│     ├─ migrate-mongo.script.ts
+│     └─ seed-postgres.script.ts      # npm run seed:pg:run | seed:pg:list | seed:pg:create
 ├─ tests/
 │  ├─ unit/
 │  │  ├─ utils/
@@ -241,15 +252,15 @@ unblock-ai-api/
 
 **`src/controllers/`** — Parses and validates the HTTP request (params, query, body), calls one or more services, maps the service result to an HTTP status code and response body, and returns. Controllers never touch MongoDB, never call an AI adapter or provider SDK, and never contain domain rules. A controller throws typed errors from `src/errors/`; it never formats an error response itself.
 
-**`src/services/`** — Owns all business logic. A service performs DB access through its model, calls utils for pure computation, and calls external AI providers only through `ILlmAdapter` and `IEmbeddingAdapter`, never through a provider SDK directly. Each provider lives in one adapter file under `llm-adapter/` or `embedding-adapter/`, and the matching `create*Adapter` factory picks one from config. Services receive their collaborators through constructor injection, never by importing a concrete singleton. `extraction.service.ts` only extracts, `embedding.service.ts` only embeds, `retrieval.service.ts` only ranks, `selector.service.ts` only makes one model decision, `selection.service.ts` only orchestrates the multi-round loop.
+**`src/services/`** — Owns all business logic. A service performs DB access through its model, calls utils for pure computation, and calls external AI providers only through `ILlmAdapter` and `IEmbeddingAdapter`, never through a provider SDK directly. Each provider lives in one adapter file under `llm-adapter/` or `embedding-adapter/`, and the matching `create*Adapter` factory picks one from config. Services receive their collaborators through constructor injection, never by importing a concrete singleton. `workflow-template-generation.service.ts` only turns a prompt into a validated definition, `workflow-template.service.ts` owns the template lifecycle and versions, `embedding.service.ts` only embeds, `retrieval.service.ts` only ranks, `selector.service.ts` only makes one model decision, `selection.service.ts` only orchestrates the multi-round loop.
 
-**`src/repositories/`** — Data access for the PostgreSQL tables. One folder per aggregate (`user-repository/`, `user-session-repository/`, `template-deletion-repository/`), each holding an interface, a Postgres implementation, an in-memory implementation and an `index` factory that picks one from `POSTGRES_REPOSITORY_BACKEND` (`postgres` | `memory`). Repositories contain no business rules — permission validation, password hashing and lockout policy live in services.
+**`src/repositories/`** — Data access for the PostgreSQL tables. One folder per aggregate (`user-repository/`, `user-session-repository/`, `organisational-unit-repository/`, `designation-repository/`, `user-affiliation-repository/`), each holding an interface, a Postgres implementation, an in-memory implementation and an `index` factory that picks one from `POSTGRES_REPOSITORY_BACKEND` (`postgres` | `memory`). Repositories contain no business rules — permission validation, password hashing, lockout policy and affiliation rules live in services. Repositories only map database constraint violations (the backstop for those rules) to the same typed errors. `repository-registry.factory.ts` builds every repository for one backend; on `memory` the organisation repositories and the user repository share one `InMemoryOrganisationStore`, so services under test see the same world the Postgres joins give them.
 
 **`src/models/`** — One model per MongoDB collection. A model owns: the collection name, the TypeScript document interface, and thin typed CRUD operations (`insertOne`, `findOne`, `updateOne`, `find`, projections). Collections and indexes are created by Mongo migrations, not by models. Models contain no business rules — no version-number computation, no embedding calls, no status transition policy. Those live in services.
 
 **`src/config/`** — Separate config modules per concern, each exporting a frozen, fully-typed object read from `process.env` exactly once at load time and validated on read. `index.config.ts` re-exports a single composed `config` object. No file outside `src/config/` may read `process.env` directly.
 
-**`src/utils/`** — Pure helper functions only: no I/O, no config reads other than values passed as arguments, no class state. Organised into `shared/` (cross-feature: logging, hashing, password hashing, ObjectId coercion, assertions, env parsing) plus feature-specific subfolders (`workflow/`, `retrieval/`, `http/`, `auth/`, `user/`).
+**`src/utils/`** — Pure helper functions only: no I/O, no config reads other than values passed as arguments, no class state. Organised into `shared/` (cross-feature: logging, hashing, password hashing, ObjectId coercion, assertions, env parsing) plus feature-specific subfolders (`workflow/`, `workflow-template/`, `retrieval/`, `http/`, `auth/`, `user/`, `organisation/`, `user-affiliation/`, `database/`).
 
 **`src/data/`** — Predefined and hardcoded data: LLM prompt templates, JSON Schemas and structured-output schemas, the role vocabulary, enum-like constants, and sample/seed data. No logic beyond simple string composition of prompts.
 
@@ -259,7 +270,7 @@ unblock-ai-api/
 
 **`src/middlewares/`** — One middleware per file, single responsibility each, wired into routes only where applicable. `authenticate` runs on every request and only populates `req.auth`; `requireAuthentication()`, `requireAnyPermission(...)` and the task-ownership guard are attached per route.
 
-**`scripts/`** — CLI entry points that are neither tests nor part of the running app: `db/` (Postgres and MongoDB migration CLIs, the Postgres seed CLI) and `maintenance/` (one-off data backfills), plus `copy-assets.script.ts` at the root, invoked from `npm run build` to copy non-`.ts` assets (sample data) into `dist/`. See [../guides/database-migrations.md](../guides/database-migrations.md) for the migration engine and [../guides/database-seeding.md](../guides/database-seeding.md) for the seed pack.
+**`scripts/`** — CLI entry points that are neither tests nor part of the running app: `db/` (Postgres and MongoDB migration CLIs, the Postgres seed CLI), plus `copy-assets.script.ts` at the root, invoked from `npm run build` to copy non-`.ts` assets (sample data) into `dist/`. See [../guides/database-migrations.md](../guides/database-migrations.md) for the migration engine and [../guides/database-seeding.md](../guides/database-seeding.md) for the seed pack.
 
 **`tests/`** — Outside `src/`. All unit tests under `tests/unit/`, mirroring the `src/` layout; integration tests (HTTP-level, in-memory fakes) under `tests/integration/`; network-dependent tests under `tests/live/`; shared fixtures and fake builders under `tests/helpers/`. Also home to test-adjacent tooling that isn't `node:test`-based: `tests/smoke/` (manual connectivity checks against real Azure/SMTP, run individually via `npm run smoke-test:*`), `tests/evaluation/` (the selector recall/accuracy report, `npm run evaluate:selection`), and `tests/perf/` (the perf-test suite, `npm run perf-test`, writing timestamped results under its own git-ignored `results/`).
 

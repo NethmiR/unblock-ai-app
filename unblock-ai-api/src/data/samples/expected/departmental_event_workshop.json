@@ -1,6 +1,5 @@
 {
   "schema_version": "1.0",
-  "workflow_id": "departmental_event_workshop",
   "title": "Departmental Event & Workshop Organization",
   "description": "Approval process for departments organizing an event or workshop, covering hall booking, speaker security clearance, and refreshments budget.",
 
@@ -197,15 +196,11 @@
   },
 
   "metadata": {
-    "created_from": "plain_text",
-    "source_text_hash": "sha256:placeholder",
-    "extraction_model": "gpt-4o-2024-08-06",
-    "extraction_timestamp": "2026-07-30T10:00:00Z",
     "confidence": "medium",
     "ambiguities": [
       "Source text does not state what happens if the hall booking or speaker clearance is rejected; modeled as terminating the workflow, consistent with the leave workflow's rejection handling."
     ],
     "unmapped_roles": [],
-    "review_status": "pending_admin_review"
+    "is_workflow": true
   }
 }

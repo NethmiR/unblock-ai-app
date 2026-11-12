@@ -28,15 +28,36 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/api
 
 - One sign-in page, `/login`, for every user: **email + password**. Its form posts to this app's
   `POST /api/auth/login` Route Handler, which calls the API and stores the returned opaque session
-  token in the httpOnly `ua_session` cookie. After login the user lands on `/account`.
-- `/account` shows the user's profile, permissions and active sessions, with actions to revoke one
+  token in the httpOnly `ua_session` cookie. After login the user lands on `/dashboard`.
+- `/old/account` shows the user's profile, permissions and active sessions, with actions to revoke one
   session, sign out of all other sessions, or sign out (which revokes the session on the API).
-- `src/proxy.ts` only checks that the session cookie exists for `/account`, `/admin` and `/portal`
+- `src/proxy.ts` only checks that the session cookie exists for `/dashboard/*` and `/old/*`
   and redirects to `/login` otherwise. It does not verify the token — the API validates it on every
   call, so an expired or revoked session fails there.
-- `/admin` (template authoring) and `/portal` (requests) are still reachable by URL but are not
-  linked from the login flow; they are pending a permission-based redesign. The API's permission
-  guards are the real access boundary.
+- `/old/account` and `/old/portal` (requests) are still reachable by URL but are not linked from
+  the dashboard; they are pending a permission-based redesign. The API's permission guards are the
+  real access boundary.
+
+## Workflow templates
+
+Workflow template management lives under `/dashboard/workflows` and needs `workflow:manage`:
+
+- `/dashboard/workflows` — the list, with search and an Active / Archived / All filter, and
+  archive / restore actions.
+- `/dashboard/workflows/new` — a new template: title and prompt, then **Save** (a draft, nothing
+  generated) or **Generate**.
+- `/dashboard/workflows/[workflowTemplateId]` — the editor: title, prompt, Save,
+  Generate / Regenerate, Publish, and a version history drawer. `?version=N` opens a read-only view
+  of an older version.
+
+Generating creates a new immutable version. Once a template is published, regenerating publishes
+the new version immediately; older versions stay for tasks that use them. Changing the title never
+creates a version.
+
+Code: `src/components/workflow-templates/**`, `src/lib/workflow-template/**`,
+`src/lib/api/workflow-templates.ts`, `src/lib/hooks/useWorkflowTemplate*.ts` and
+`src/types/workflow-template.ts`. The API endpoints are documented in
+`../unblock-ai-api/docs/api/api-documentation.md` §4.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

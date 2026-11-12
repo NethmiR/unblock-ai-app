@@ -1,6 +1,10 @@
 # Database Seeding
 
-Seeders put the data an environment needs to be usable into a migrated database. Today that is one record: the bootstrap administrator, the first user who can create everyone else.
+Seeders put the data an environment needs to be usable into a migrated database:
+
+- the bootstrap administrator, the first user who can create everyone else;
+- the University of Moratuwa organisational structure (faculties, departments and divisions) and its designations;
+- optionally, sample users `u1@u.c` … `u16@u.c` with test affiliations, for development and demos only.
 
 The seed pack mirrors the migration pack: a database-agnostic core, a Postgres adapter, timestamped seeder files and npm commands. Run migrations first; seeders never change the schema.
 
@@ -16,10 +20,18 @@ src/db/seed/
 │  └─ seed.cli.ts                         argument parsing and console output
 └─ postgres/
    ├─ postgres.seed-context.ts            PostgresSeedContext: the services a seeder may use
-   ├─ postgres.seed-engine.ts             builds the context (UserService over Postgres) and the engine
+   ├─ postgres.seed-engine.ts             builds the context (services over Postgres) and the engine
    ├─ postgres.seed-template.ts
    └─ seeders/
-      └─ 20261111021734_administrator-user.seeder.ts
+      ├─ 20261111021734_administrator-user.seeder.ts
+      ├─ 20261111063459_university-of-moratuwa-organisational-units.seeder.ts
+      ├─ 20261111063506_university-of-moratuwa-designations.seeder.ts
+      └─ 20261111065643_university-of-moratuwa-sample-users.seeder.ts
+└─ data/
+   └─ university-of-moratuwa/             typed, database-agnostic seed data
+      ├─ organisational-units.seed-data.ts
+      ├─ designations.seed-data.ts
+      └─ sample-users.seed-data.ts
 
 scripts/db/
 └─ seed-postgres.script.ts                CLI entry point for Postgres
@@ -62,6 +74,38 @@ npm run seed:pg:run
 | `USER_DEFAULT_PASSWORD` | The initial password, the same one every created user receives |
 
 If a user with that email already exists, the seeder reports `skipped` and changes nothing.
+
+## The University of Moratuwa seeders
+
+| Seeder | Creates | Skips by |
+|---|---|---|
+| `…_university-of-moratuwa-organisational-units` | 6 faculties, 35 departments, 5 faculty-level and 17 university-level divisions | unit `code` |
+| `…_university-of-moratuwa-designations` | 29 designations (leadership, academic, academic support, administrative, non-academic, student) | designation `code` |
+| `…_university-of-moratuwa-sample-users` | 16 sample users `u1@u.c` … `u16@u.c` with permissions, memberships and designations | email |
+
+- The units seeder walks the tree parent-first. A unit that already exists is skipped, and its id is still used as the parent of its children.
+- The seeders never overwrite edits made through the UI; correcting a name is a UI change, not a code change.
+- Sample users go through `UserAffiliationService`, so every affiliation rule applies. In particular, a user in a department must also be a member of its faculty: the sample data lists the faculty (usually without a designation) before each department.
+- The data lives in `src/db/seed/data/university-of-moratuwa/`. Items still to confirm with the Registrar are listed in Appendix A of `docs/organisational-structure-and-user-affiliations-phase-plan.md`.
+- `tests/unit/db/university-of-moratuwa-seed-data.test.ts` checks the data's integrity (codes, hierarchy, applicable unit types, single holders) and that every seeder is idempotent.
+
+### Sample users
+
+The sample users seeder runs only when `SEED_SAMPLE_USERS=true` (default `false`). They all receive `USER_DEFAULT_PASSWORD`, so **never enable it in production**. Their emails follow `u<n>@u.c` in sequence; profiles cover the Vice-Chancellor, Registrar, Deans, Heads of Department, lecturers, administrative staff, students and one user without affiliations. Every sample user in a department is also a member of that department's faculty.
+
+## Starting from scratch
+
+Seeders skip records that already exist, so changing seed data does not update a seeded database. To re-seed everything on a development database, reset the schema and run the pack again:
+
+```bash
+npm run migrate:pg:reset
+npm run migrate:pg:up
+npm run seed:pg:run
+```
+
+`migrate:pg:reset` rolls back every Postgres migration, which drops **all** Postgres data, including users and sessions created through the UI. Never run it against a database whose data you need.
+
+Rolling back only the organisation migration (`npm run migrate:pg:down`) drops every unit, designation and affiliation but keeps users. The sample users seeder then skips `u1@u.c` … `u16@u.c` because they still exist, and they end up with no affiliations. Remove the sample users as well, or use the full reset above.
 
 ## Writing a seeder
 

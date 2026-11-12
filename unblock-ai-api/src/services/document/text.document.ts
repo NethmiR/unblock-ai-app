@@ -11,7 +11,7 @@ export class TextDocumentRenderer implements IDocumentRenderer {
   render(doc: CompletionDocument): Promise<RenderedDocument> {
     const lines: string[] = [];
 
-    lines.push(doc.workflow_title);
+    lines.push(doc.workflow_template_title);
     lines.push(`Task reference: ${doc.reference}`);
     lines.push(`Status: Approved`);
     lines.push(`Submitted: ${formatDocumentDate(doc.submitted_at)}`);

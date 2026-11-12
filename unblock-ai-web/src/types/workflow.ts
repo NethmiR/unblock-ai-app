@@ -1,11 +1,3 @@
-/**
- * TypeScript mirror of unblock-ai-api/src/data/schemas/workflow.schema.json.
- *
- * WHEN THE SCHEMA CHANGES, CHANGE THIS FILE IN THE SAME COMMIT.
- * There is no codegen step; this is a hand-maintained contract, and a drifted
- * contract produces `undefined` at runtime with no compile error.
- */
-
 export type ActorResolution = "dynamic" | "static" | "requester" | "system";
 
 export interface Actor {
@@ -135,7 +127,6 @@ export interface WorkflowInput {
   collection_hint: string | null;
 }
 
-/** Added in backend Phase 2. Drives all retrieval. */
 export interface RetrievalSummary {
   one_liner: string;
   aliases: string[];
@@ -144,8 +135,6 @@ export interface RetrievalSummary {
   triggers: string[];
   not_for: string[];
 }
-
-export type ReviewStatus = "pending_admin_review" | "confirmed" | "rejected";
 
 export type InstitutionType = "university" | "school" | "company" | "hospital" | "government" | "other";
 
@@ -196,7 +185,6 @@ export interface CompletionAction {
 
 export interface Workflow {
   schema_version: string;
-  workflow_id: string;
   title: string;
   description: string;
   retrieval_summary: RetrievalSummary;
@@ -215,58 +203,10 @@ export interface Workflow {
   steps: WorkflowStep[];
   completion: { rule: CompletionRule; required_steps: string[]; actions: CompletionAction[] };
   metadata: {
-    created_from: "plain_text";
-    source_text_hash: string;
-    extraction_model: string;
-    extraction_timestamp: string;
     confidence: "high" | "medium" | "low";
     ambiguities: string[];
     unmapped_roles: string[];
-    review_status: ReviewStatus;
+    is_workflow: boolean;
   };
 }
 
-/** The list-endpoint projection - deliberately NOT the full document. */
-export interface WorkflowSummary {
-  workflow_id: string;
-  title: string;
-  description: string;
-  version: number;
-  schema_version: string;
-  review_status: ReviewStatus;
-  draft_id: string | null;
-  updated_at: string;
-}
-
-/** The full stored row from GET /workflows/:id/record - includes draft_id. */
-export interface WorkflowRecord {
-  workflow_id: string;
-  version: number;
-  draft_id: string | null;
-  review_status: ReviewStatus;
-  document: Workflow;
-  updated_at: string;
-  /** The originating draft's prose, inlined by the API. `null` if unavailable. */
-  draft_text?: string | null;
-}
-
-/**
- * A row from GET /workflows/deletions (Postgres `template_deletions`, D-2).
- * `versions_removed` reads 0 when the log landed but the Mongo delete did not
- * confirm - see the ordering comment on `WorkflowService.delete` in the API.
- */
-export interface TemplateDeletion {
-  id: string;
-  workflow_id: string;
-  template_title: string;
-  latest_version: number;
-  versions_removed: number;
-  institution_type: string | null;
-  review_status: string | null;
-  deleted_by_user_id: string;
-  deleted_by_email: string;
-  reason: string | null;
-  request_id: string | null;
-  snapshot: Record<string, unknown>;
-  deleted_at: string;
-}

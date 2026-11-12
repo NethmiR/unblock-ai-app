@@ -1,7 +1,7 @@
 {
   "name": "unblock-ai-api",
   "version": "1.0.0",
-  "description": "Express + TypeScript backend that extracts, stores, retrieves, and helps select institutional approval workflow templates.",
+  "description": "Express + TypeScript backend that generates, versions, retrieves and helps select institutional approval workflow templates.",
   "main": "dist/src/server.js",
   "engines": {
     "node": ">=20"
@@ -31,7 +31,6 @@
     "seed:pg:run": "tsx scripts/db/seed-postgres.script.ts run",
     "seed:pg:list": "tsx scripts/db/seed-postgres.script.ts list",
     "seed:pg:create": "tsx scripts/db/seed-postgres.script.ts create",
-    "backfill:summaries": "tsx scripts/maintenance/backfill-summaries.script.ts",
     "evaluate:selection": "tsx tests/evaluation/evaluate-selection.script.ts",
     "perf-test": "tsx tests/perf/perf-test.script.ts",
     "smoke-test:llm": "tsx tests/smoke/smoke-test-llm.script.ts",

@@ -87,8 +87,8 @@ export interface TaskDto {
   reference: string;
   session_id: string;
   created_by: string;
-  workflow_id: string;
-  version: number;
+  workflow_template_id: string;
+  workflow_template_version: number;
   status: TaskStatus;
   requirements: TaskRequirement[];
   values: Record<string, RequirementValue>;

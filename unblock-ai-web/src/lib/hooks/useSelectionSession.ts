@@ -73,7 +73,7 @@ export function useSelectionSession(requesterContext?: Record<string, unknown>) 
 
         case "matched": {
           try {
-            const matched = await selectionApi.getWorkflow(response.session_id);
+            const matched = await selectionApi.getWorkflowTemplate(response.session_id);
             // The clarifying questions have landed on one workflow with high
             // confidence. Stage it rather than committing: confirming is what
             // saves the job, and that must not happen until the person agrees
@@ -138,12 +138,12 @@ export function useSelectionSession(requesterContext?: Record<string, unknown>) 
    * give the person no chance to catch it.
    */
   const choose = useCallback(
-    async (workflowId: string) => {
+    async (workflowTemplateId: string) => {
       if (!sessionId) return;
       setIsBusy(true);
       try {
-        await selectionApi.choose(sessionId, workflowId);
-        setPendingMatch(await selectionApi.getWorkflow(sessionId));
+        await selectionApi.choose(sessionId, workflowTemplateId);
+        setPendingMatch(await selectionApi.getWorkflowTemplate(sessionId));
       } catch (err) {
         push({
           role: "system",

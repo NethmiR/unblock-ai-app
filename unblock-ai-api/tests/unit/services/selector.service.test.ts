@@ -10,7 +10,7 @@ import type { SelectorDecision } from "../../../src/lib/types/selection/decision
 
 const NO_MATCH_DECISION: SelectorDecision = {
   decision: "no_match",
-  workflow_id: null,
+  workflow_template_id: null,
   confidence: "high",
   question: null,
   options: [],
@@ -39,8 +39,8 @@ function replyingWith(payload: SelectorDecision): ILlmAdapter {
 
 function candidate(overrides: Partial<BoostedCandidate>): BoostedCandidate {
   return {
-    workflow_id: "x",
-    version: 1,
+    workflow_template_id: "x",
+    workflow_template_version: 1,
     title: "X",
     description: "",
     score: 0.8,
@@ -54,15 +54,15 @@ function candidate(overrides: Partial<BoostedCandidate>): BoostedCandidate {
 }
 
 const candidates: BoostedCandidate[] = [
-  candidate({ workflow_id: "it_leave", title: "IT Overseas Leave", score: 0.8 }),
-  candidate({ workflow_id: "eng_leave", title: "Eng Overseas Leave", score: 0.79 }),
+  candidate({ workflow_template_id: "it_leave", title: "IT Overseas Leave", score: 0.8 }),
+  candidate({ workflow_template_id: "eng_leave", title: "Eng Overseas Leave", score: 0.79 }),
 ];
 
-test("a hallucinated workflow_id is downgraded to ambiguous", async () => {
+test("a hallucinated workflow_template_id is downgraded to ambiguous", async () => {
   const service = new SelectorService({
     llmAdapter: replyingWith({
       decision: "matched",
-      workflow_id: "invented_id",
+      workflow_template_id: "invented_id",
       confidence: "high",
       question: null,
       options: [],
@@ -71,14 +71,14 @@ test("a hallucinated workflow_id is downgraded to ambiguous", async () => {
   });
   const out = await service.decide(candidates, [{ role: LlmMessageRole.USER, text: "leave" }]);
   assert.equal(out.decision, "ambiguous");
-  assert.equal(out.workflow_id, null);
+  assert.equal(out.workflow_template_id, null);
 });
 
 test("a low-confidence match is downgraded to ambiguous", async () => {
   const service = new SelectorService({
     llmAdapter: replyingWith({
       decision: "matched",
-      workflow_id: "it_leave",
+      workflow_template_id: "it_leave",
       confidence: "low",
       question: null,
       options: [],
@@ -94,7 +94,7 @@ test("an ambiguous verdict without a question gets one", async () => {
   const service = new SelectorService({
     llmAdapter: replyingWith({
       decision: "ambiguous",
-      workflow_id: null,
+      workflow_template_id: null,
       confidence: "medium",
       question: null,
       options: [],
@@ -121,7 +121,7 @@ test("a valid high-confidence match passes through untouched", async () => {
   const service = new SelectorService({
     llmAdapter: replyingWith({
       decision: "matched",
-      workflow_id: "it_leave",
+      workflow_template_id: "it_leave",
       confidence: "high",
       question: null,
       options: [],
@@ -130,7 +130,7 @@ test("a valid high-confidence match passes through untouched", async () => {
   });
   const out = await service.decide(candidates, [{ role: LlmMessageRole.USER, text: "IT overseas leave" }]);
   assert.equal(out.decision, "matched");
-  assert.equal(out.workflow_id, "it_leave");
+  assert.equal(out.workflow_template_id, "it_leave");
 });
 
 test("a transport failure surfaces as SelectionError", async () => {
@@ -164,7 +164,7 @@ test("a decision that does not match the decision schema surfaces as SelectionEr
     modelName: "fake-model",
     generateCompletion: () =>
       Promise.resolve({
-        content: JSON.stringify({ decision: "matched", workflow_id: "it_leave" }),
+        content: JSON.stringify({ decision: "matched", workflow_template_id: "it_leave" }),
         usage: { inputTokens: null, outputTokens: null, totalTokens: null },
         finishReason: LlmFinishReason.STOP,
       }),

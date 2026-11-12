@@ -1,5 +1,5 @@
 import type { RetrievalCandidate } from "../selection/candidate.type.js";
-import type { RetrievalProjection } from "../template/template.type.js";
+import type { WorkflowTemplateRetrievalProjection } from "../workflow-template/workflow-template.type.js";
 
 export interface VectorSearchOptions {
   k?: number;
@@ -10,8 +10,8 @@ export interface IVectorStore {
   search(queryVector: number[], options?: VectorSearchOptions): Promise<RetrievalCandidate[]>;
 }
 
-export interface ITemplateReader {
-  listForRetrieval(options: { institutionType?: string | null }): Promise<RetrievalProjection[]>;
+export interface IWorkflowTemplateRetrievalReader {
+  listForRetrieval(options: { institutionType?: string | null }): Promise<WorkflowTemplateRetrievalProjection[]>;
 }
 
 export interface EmbeddingMetadata {

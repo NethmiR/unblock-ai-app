@@ -1,12 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ExtractionService } from "../../src/services/extraction.service.js";
-import { ValidationService } from "../../src/services/validation.service.js";
 import { readInputFixture } from "../helpers/live.helper.js";
+import { generateDefinition } from "./workflow-template-generation.helper.js";
 
 test("Lab Equipment Purchase Request — unseen workflow generalises correctly", async () => {
-  const extractionService = new ExtractionService({ validationService: new ValidationService() });
-  const { workflow } = await extractionService.extract(readInputFixture("lab_equipment_purchase_request.txt"));
+  const workflow = await generateDefinition(readInputFixture("lab_equipment_purchase_request.txt"));
 
   const supervisorReview = workflow.steps.find((s) => s.type === "approval" && s.depends_on.length === 0);
   assert.ok(supervisorReview, "an entry-point approval step must exist for the Supervisor");

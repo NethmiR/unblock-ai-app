@@ -15,7 +15,7 @@ test("every gold fixture has a usable retrieval_summary", () => {
   for (const file of expectedFixtureNames()) {
     const fixture = loadExpectedFixture(file);
     const s = fixture.retrieval_summary;
-    assert.ok(s, `${fixture.workflow_id} is missing retrieval_summary`);
+    assert.ok(s, `${file} is missing retrieval_summary`);
     assert.ok(s.one_liner.length > 20, "one_liner must be a real sentence");
     assert.ok(s.aliases.length >= 2, "need at least 2 aliases");
     assert.ok(s.keywords.length >= 5, "need at least 5 keywords");

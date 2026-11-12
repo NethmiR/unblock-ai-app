@@ -1,6 +1,6 @@
 export interface ApprovalRequestContext {
   taskReference: string;
-  workflowTitle: string;
+  workflowTemplateTitle: string;
   stepName: string;
   approverName: string;
   approvalUrl: string;
@@ -8,21 +8,21 @@ export interface ApprovalRequestContext {
 
 export interface RejectionNoticeContext {
   taskReference: string;
-  workflowTitle: string;
+  workflowTemplateTitle: string;
   stepName: string;
   reason: string;
 }
 
 export interface CompletionNoticeContext {
   taskReference: string;
-  workflowTitle: string;
+  workflowTemplateTitle: string;
   documentUrl: string | null;
   hasAttachment: boolean;
 }
 
 export interface MoreInfoNoticeContext {
   taskReference: string;
-  workflowTitle: string;
+  workflowTemplateTitle: string;
   stepName: string;
   question: string;
 }
@@ -38,11 +38,11 @@ function wrap(heading: string, bodyHtml: string): string {
 }
 
 export function approvalRequestEmail(ctx: ApprovalRequestContext): RenderedEmail {
-  const subject = `Approval needed: ${ctx.workflowTitle} (${ctx.taskReference})`;
+  const subject = `Approval needed: ${ctx.workflowTemplateTitle} (${ctx.taskReference})`;
   const text = [
     `Hi ${ctx.approverName},`,
     "",
-    `${ctx.stepName} is waiting on your decision for ${ctx.workflowTitle} (${ctx.taskReference}).`,
+    `${ctx.stepName} is waiting on your decision for ${ctx.workflowTemplateTitle} (${ctx.taskReference}).`,
     "",
     `Review it here: ${ctx.approvalUrl}`,
   ].join("\n");
@@ -50,22 +50,22 @@ export function approvalRequestEmail(ctx: ApprovalRequestContext): RenderedEmail
     "Approval needed",
     `<p>Hi ${ctx.approverName},</p>` +
       `<p><strong>${ctx.stepName}</strong> is waiting on your decision for ` +
-      `${ctx.workflowTitle} (${ctx.taskReference}).</p>` +
+      `${ctx.workflowTemplateTitle} (${ctx.taskReference}).</p>` +
       `<p><a href="${ctx.approvalUrl}">Review the request</a></p>`,
   );
   return { subject, text, html };
 }
 
 export function rejectionNoticeEmail(ctx: RejectionNoticeContext): RenderedEmail {
-  const subject = `Request rejected: ${ctx.workflowTitle} (${ctx.taskReference})`;
+  const subject = `Request rejected: ${ctx.workflowTemplateTitle} (${ctx.taskReference})`;
   const text = [
-    `Your request for ${ctx.workflowTitle} (${ctx.taskReference}) was rejected at ${ctx.stepName}.`,
+    `Your request for ${ctx.workflowTemplateTitle} (${ctx.taskReference}) was rejected at ${ctx.stepName}.`,
     "",
     `Reason: ${ctx.reason}`,
   ].join("\n");
   const html = wrap(
     "Request rejected",
-    `<p>Your request for ${ctx.workflowTitle} (${ctx.taskReference}) was rejected at ` +
+    `<p>Your request for ${ctx.workflowTemplateTitle} (${ctx.taskReference}) was rejected at ` +
       `<strong>${ctx.stepName}</strong>.</p>` +
       `<p><strong>Reason:</strong> ${ctx.reason}</p>`,
   );
@@ -73,13 +73,13 @@ export function rejectionNoticeEmail(ctx: RejectionNoticeContext): RenderedEmail
 }
 
 export function completionNoticeEmail(ctx: CompletionNoticeContext): RenderedEmail {
-  const subject = `Request approved: ${ctx.workflowTitle} (${ctx.taskReference})`;
+  const subject = `Request approved: ${ctx.workflowTemplateTitle} (${ctx.taskReference})`;
 
   const textLines = [
-    `Your request for ${ctx.workflowTitle} (${ctx.taskReference}) has been approved and completed.`,
+    `Your request for ${ctx.workflowTemplateTitle} (${ctx.taskReference}) has been approved and completed.`,
   ];
   const htmlLines = [
-    `<p>Your request for ${ctx.workflowTitle} (${ctx.taskReference}) has been approved and completed.</p>`,
+    `<p>Your request for ${ctx.workflowTemplateTitle} (${ctx.taskReference}) has been approved and completed.</p>`,
   ];
 
   if (ctx.hasAttachment) {
@@ -97,16 +97,16 @@ export function completionNoticeEmail(ctx: CompletionNoticeContext): RenderedEma
 }
 
 export function moreInfoNoticeEmail(ctx: MoreInfoNoticeContext): RenderedEmail {
-  const subject = `More information needed: ${ctx.workflowTitle} (${ctx.taskReference})`;
+  const subject = `More information needed: ${ctx.workflowTemplateTitle} (${ctx.taskReference})`;
   const text = [
-    `${ctx.stepName} needs more information on your request for ${ctx.workflowTitle} (${ctx.taskReference}).`,
+    `${ctx.stepName} needs more information on your request for ${ctx.workflowTemplateTitle} (${ctx.taskReference}).`,
     "",
     `Question: ${ctx.question}`,
   ].join("\n");
   const html = wrap(
     "More information needed",
     `<p><strong>${ctx.stepName}</strong> needs more information on your request for ` +
-      `${ctx.workflowTitle} (${ctx.taskReference}).</p>` +
+      `${ctx.workflowTemplateTitle} (${ctx.taskReference}).</p>` +
       `<p><strong>Question:</strong> ${ctx.question}</p>`,
   );
   return { subject, text, html };

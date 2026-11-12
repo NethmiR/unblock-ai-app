@@ -10,7 +10,7 @@ export interface HealthStatus {
 
 /**
  * Liveness only. This endpoint does NOT touch Mongo or Azure, so a healthy
- * response means the process is up - it does not mean extraction or retrieval
+ * response means the process is up - it does not mean workflow template generation or retrieval
  * will succeed. Use it for a connection banner, never as a readiness gate.
  */
 export const healthApi = {

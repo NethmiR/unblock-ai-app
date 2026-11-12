@@ -1,15 +1,15 @@
-import type { ITemplateReader } from "../../src/lib/types/retrieval/retrieval.type.js";
-import type { RetrievalProjection } from "../../src/lib/types/template/template.type.js";
+import type { IWorkflowTemplateRetrievalReader } from "../../src/lib/types/retrieval/retrieval.type.js";
+import type { WorkflowTemplateRetrievalProjection } from "../../src/lib/types/workflow-template/workflow-template.type.js";
 
-export class FakeTemplateReader implements ITemplateReader {
-  readonly rows: RetrievalProjection[];
+export class FakeRetrievalReader implements IWorkflowTemplateRetrievalReader {
+  readonly rows: WorkflowTemplateRetrievalProjection[];
   readonly calls: Array<{ institutionType?: string | null }> = [];
 
-  constructor(rows: RetrievalProjection[]) {
+  constructor(rows: WorkflowTemplateRetrievalProjection[]) {
     this.rows = rows;
   }
 
-  listForRetrieval(options: { institutionType?: string | null }): Promise<RetrievalProjection[]> {
+  listForRetrieval(options: { institutionType?: string | null }): Promise<WorkflowTemplateRetrievalProjection[]> {
     this.calls.push(options);
     return Promise.resolve(this.rows);
   }

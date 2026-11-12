@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { messageForAuthError } from "@/lib/auth/auth-error-message";
-import { NEXT_QUERY_PARAMETER, RoutePath, safeRedirectPath } from "@/lib/routing/route-path";
+import { InternalApiPath, NEXT_QUERY_PARAMETER, RoutePath, safeRedirectPath } from "@/lib/routing/route-path";
 
 const INPUT_CLASS =
   "w-full rounded-control border border-line-admin bg-surface px-3.5 py-2.5 text-[13.5px] text-ink placeholder:text-faint focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:text-faint";
@@ -21,7 +21,7 @@ export function LoginForm() {
     setIsBusy(true);
 
     try {
-      const response = await fetch("/api/auth/login", {
+      const response = await fetch(InternalApiPath.LOGIN, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -34,7 +34,7 @@ export function LoginForm() {
       }
 
       const next = new URLSearchParams(window.location.search).get(NEXT_QUERY_PARAMETER);
-      router.replace(safeRedirectPath(next, RoutePath.ACCOUNT));
+      router.replace(safeRedirectPath(next, RoutePath.DASHBOARD));
       router.refresh();
     } catch {
       setError(messageForAuthError(undefined));

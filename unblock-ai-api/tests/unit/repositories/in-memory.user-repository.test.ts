@@ -6,7 +6,14 @@ import { UserStatus } from "../../../src/data/constants/user.constant.js";
 import { UserErrorCode } from "../../../src/data/constants/user-error.constant.js";
 import { ConflictError } from "../../../src/errors/conflict.error.js";
 import { ValidationError } from "../../../src/errors/validation.error.js";
-import type { CreateUserRecordInput } from "../../../src/lib/types/user/user.type.js";
+import { OrganisationalUnitType } from "../../../src/data/constants/organisational-unit.constant.js";
+import { USER_LIST_PAGINATION } from "../../../src/data/constants/user.constant.js";
+import { createInMemoryRepositoryRegistry } from "../../../src/repositories/repository-registry.factory.js";
+import type { CreateUserRecordInput, UserListFilter } from "../../../src/lib/types/user/user.type.js";
+
+function listFilter(overrides: Partial<UserListFilter> = {}): UserListFilter {
+  return { search: null, organisationalUnitId: null, limit: USER_LIST_PAGINATION.MAX_LIMIT, offset: 0, ...overrides };
+}
 
 function input(overrides: Partial<CreateUserRecordInput> = {}): CreateUserRecordInput {
   return {
@@ -60,10 +67,70 @@ test("list orders by full name case-insensitively", async () => {
   await repository.create(input({ email: "a@example.com", fullName: "Alice" }));
   await repository.create(input({ email: "b@example.com", fullName: "Bob" }));
 
+  const page = await repository.list(listFilter());
   assert.deepEqual(
-    (await repository.list()).map((user) => user.fullName),
+    page.users.map((user) => user.fullName),
     ["Alice", "Bob", "charlie"],
   );
+  assert.equal(page.total, 3);
+});
+
+test("list searches full name and email case-insensitively", async () => {
+  const repository = new InMemoryUserRepository();
+  await repository.create(input({ email: "kamal@uom.lk", fullName: "Kamal Perera" }));
+  await repository.create(input({ email: "nimal@uom.lk", fullName: "Nimal Silva" }));
+
+  assert.deepEqual((await repository.list(listFilter({ search: "PERERA" }))).users.map((user) => user.email), ["kamal@uom.lk"]);
+  assert.deepEqual((await repository.list(listFilter({ search: "nimal@" }))).users.map((user) => user.email), ["nimal@uom.lk"]);
+});
+
+test("list paginates while reporting the full total", async () => {
+  const repository = new InMemoryUserRepository();
+  for (const name of ["Alice", "Bob", "Charlie", "Dinuka"]) {
+    await repository.create(input({ email: `${name.toLowerCase()}@example.com`, fullName: name }));
+  }
+
+  const page = await repository.list(listFilter({ limit: 2, offset: 2 }));
+  assert.deepEqual(
+    page.users.map((user) => user.fullName),
+    ["Charlie", "Dinuka"],
+  );
+  assert.equal(page.total, 4);
+});
+
+test("list filters by organisational unit, including members of its child units", async () => {
+  const { userRepository, organisationalUnitRepository, userAffiliationRepository } = createInMemoryRepositoryRegistry();
+  const faculty = await organisationalUnitRepository.create({
+    code: "FOE",
+    name: "Faculty of Engineering",
+    unitType: OrganisationalUnitType.FACULTY,
+    parent: null,
+    description: null,
+    createdByUserId: null,
+  });
+  const department = await organisationalUnitRepository.create({
+    code: "CSE",
+    name: "Department of Computer Science & Engineering",
+    unitType: OrganisationalUnitType.DEPARTMENT,
+    parent: { id: faculty.id, unitType: faculty.unitType },
+    description: null,
+    createdByUserId: null,
+  });
+  const lecturer = await userRepository.create(input({ email: "lecturer@uom.lk", fullName: "Lecturer" }));
+  await userRepository.create(input({ email: "outsider@uom.lk", fullName: "Outsider" }));
+  await userAffiliationRepository.replaceForUser(
+    lecturer.id,
+    [{ organisationalUnitId: faculty.id, designationIds: [] }, { organisationalUnitId: department.id, designationIds: [] }],
+    lecturer.id,
+  );
+
+  for (const unitId of [faculty.id, department.id]) {
+    const page = await userRepository.list(listFilter({ organisationalUnitId: unitId }));
+    assert.deepEqual(
+      page.users.map((user) => user.email),
+      ["lecturer@uom.lk"],
+    );
+  }
 });
 
 test("recordFailedLogin counts within the window and restarts once it has passed", async () => {

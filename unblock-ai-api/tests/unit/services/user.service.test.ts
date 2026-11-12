@@ -1,23 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { UserService } from "../../../src/services/user.service.js";
-import { InMemoryUserRepository } from "../../../src/repositories/user-repository/in-memory.user-repository.js";
+import { createInMemoryRepositoryRegistry } from "../../../src/repositories/repository-registry.factory.js";
+import type { InMemoryUserRepository } from "../../../src/repositories/user-repository/in-memory.user-repository.js";
+import { createOrganisationWorld } from "../../helpers/organisation-world.helper.js";
 import { verifyPassword } from "../../../src/utils/shared/password.util.js";
 import { Permission } from "../../../src/data/constants/permission.constant.js";
-import { UserStatus, USER_FIELD_LIMIT } from "../../../src/data/constants/user.constant.js";
+import { UserStatus, USER_FIELD_LIMIT, USER_LIST_PAGINATION } from "../../../src/data/constants/user.constant.js";
 import { UserErrorCode } from "../../../src/data/constants/user-error.constant.js";
 import { ValidationError } from "../../../src/errors/validation.error.js";
 import { ConflictError } from "../../../src/errors/conflict.error.js";
 import { NotFoundError } from "../../../src/errors/not-found.error.js";
-import type { CreateUserInput } from "../../../src/lib/types/user/user.type.js";
+import type { CreateUserInput, UserListFilter } from "../../../src/lib/types/user/user.type.js";
 
 const DEFAULT_PASSWORD = "12345";
 const CREATOR_ID = "00000000-0000-4000-8000-000000000001";
 
 function build(): { service: UserService; repository: InMemoryUserRepository } {
-  const repository = new InMemoryUserRepository();
-  const service = new UserService({ userRepository: repository, userConfig: { defaultPassword: DEFAULT_PASSWORD } });
-  return { service, repository };
+  const { userRepository, userAffiliationRepository } = createInMemoryRepositoryRegistry();
+  const service = new UserService({
+    userRepository,
+    userAffiliationRepository,
+    userConfig: { defaultPassword: DEFAULT_PASSWORD },
+  });
+  return { service, repository: userRepository };
+}
+
+function listFilter(overrides: Partial<UserListFilter> = {}): UserListFilter {
+  return { search: null, organisationalUnitId: null, limit: USER_LIST_PAGINATION.DEFAULT_LIMIT, offset: 0, ...overrides };
 }
 
 function input(overrides: Partial<CreateUserInput> = {}): CreateUserInput {
@@ -106,5 +116,40 @@ test("listUsers returns every user", async () => {
   const { service } = build();
   await service.createUser(input(), null);
   await service.createUser(input({ email: "b@example.com", fullName: "Bob" }), null);
-  assert.equal((await service.listUsers()).length, 2);
+  const result = await service.listUsers(listFilter());
+  assert.equal(result.total, 2);
+  assert.equal(result.limit, USER_LIST_PAGINATION.DEFAULT_LIMIT);
+  assert.equal(result.offset, 0);
+});
+
+test("listUsers attaches each user's organisational units", async () => {
+  const world = await createOrganisationWorld();
+  const { userRepository, userAffiliationRepository } = world.repositories;
+  const service = new UserService({ userRepository, userAffiliationRepository, userConfig: { defaultPassword: DEFAULT_PASSWORD } });
+  await userAffiliationRepository.replaceForUser(
+    world.firstStaffMember.id,
+    [{ organisationalUnitId: world.engineering.id, designationIds: [] }, { organisationalUnitId: world.computerScience.id, designationIds: [] }],
+    world.administrator.id,
+  );
+
+  const result = await service.listUsers(listFilter({ search: "  amara  " }));
+  assert.deepEqual(
+    result.users.map((user) => [user.email, user.organisationalUnits.map((unit) => unit.code)]),
+    [["amara@uom.lk", ["FOE", "CSE"]]],
+  );
+});
+
+test("listUsers treats a blank search as no search and rejects out-of-range paging", async () => {
+  const { service } = build();
+  await service.createUser(input(), null);
+  assert.equal((await service.listUsers(listFilter({ search: "   " }))).total, 1);
+
+  for (const filter of [
+    listFilter({ limit: 0 }),
+    listFilter({ limit: USER_LIST_PAGINATION.MAX_LIMIT + 1 }),
+    listFilter({ offset: -1 }),
+    listFilter({ search: "x".repeat(USER_LIST_PAGINATION.SEARCH_MAX_LENGTH + 1) }),
+  ]) {
+    await assert.rejects(service.listUsers(filter), ValidationError);
+  }
 });

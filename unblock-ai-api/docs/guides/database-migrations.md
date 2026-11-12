@@ -20,13 +20,17 @@ src/db/migration/
 │  ├─ postgres.migration-engine.ts
 │  └─ migrations/
 │     ├─ 20261111000000_initial-schema.migration.ts
-│     └─ 20261111015501_unified-users-permissions-and-sessions.migration.ts
+│     ├─ 20261111015501_unified-users-permissions-and-sessions.migration.ts
+│     ├─ 20261111060534_organisational-structure-and-user-affiliations.migration.ts
+│     ├─ 20261111101054_workflow-template-archive-only.migration.ts
+│     └─ 20261111110611_department-faculty-membership-rule.migration.ts
 └─ mongo/
    ├─ mongo.migration-store.ts            tracking collection, lock document
    ├─ mongo.migration-template.ts
    ├─ mongo.migration-engine.ts
    └─ migrations/
-      └─ 20261111000000_initial-schema.migration.ts
+      ├─ 20261111000000_initial-schema.migration.ts
+      └─ 20261111101053_workflow-templates.migration.ts
 
 scripts/db/
 ├─ migrate-postgres.script.ts             CLI entry point for Postgres
@@ -81,21 +85,21 @@ Seeding is a separate pack with its own commands; see [database-seeding.md](./da
 ## Writing a migration
 
 ```bash
-npm run migrate:pg:create -- add task priority
+npm run migrate:pg:create -- add user phone
 ```
 
-This creates `src/db/migration/postgres/migrations/<yyyyMMddHHmmss>_add-task-priority.migration.ts`. Fill in `up` and `down`:
+This creates `src/db/migration/postgres/migrations/<yyyyMMddHHmmss>_add-user-phone.migration.ts`. Fill in `up` and `down`:
 
 ```ts
 import type { PostgresMigration } from "../../../../lib/types/migration/index.type.js";
 
 const migration: PostgresMigration = {
   async up({ client }) {
-    await client.query(`ALTER TABLE template_deletions ADD COLUMN priority INTEGER`);
+    await client.query(`ALTER TABLE users ADD COLUMN phone TEXT`);
   },
 
   async down({ client }) {
-    await client.query(`ALTER TABLE template_deletions DROP COLUMN priority`);
+    await client.query(`ALTER TABLE users DROP COLUMN phone`);
   },
 };
 
@@ -133,7 +137,19 @@ Rules:
 - **Locking.** A run holds a lock: the single `migrations_lock` row in Postgres, or the `migrations_lock` document in Mongo. A second concurrent run is refused. The Postgres lock is a row rather than an advisory lock, so it works through Supabase's transaction pooler. If a run is killed, clear the leftover lock with the `unlock` command.
 - **Missing files.** `status` flags applied migrations whose file no longer exists as `missing`. `down` refuses to revert them.
 - **Build output.** Migrations are TypeScript and compile into `dist/` with the rest of the code. The loader picks `.ts` or `.js` to match whatever runtime it is running under.
-- **Atlas vector index.** It is not part of the initial migration, because every environment currently runs `VECTOR_BACKEND=memory`. When switching to `atlas`, add a Mongo migration that calls `db.collection("templates").createSearchIndex(...)` on `retrieval.embedding`.
+- **Atlas vector index.** No migration creates it, because every environment currently runs `VECTOR_BACKEND=memory`. When switching to `atlas`, add a Mongo migration that calls `db.collection("workflow_templates").createSearchIndex(...)`, or create it in the Atlas UI. Name it after `ATLAS_VECTOR_INDEX` (default `template_vector_index`) and give it the vector path and the two filter fields that `WorkflowTemplateModel.vectorSearch` uses (`src/models/workflow-template.model.ts`):
+
+  ```json
+  {
+    "fields": [
+      { "type": "vector", "path": "retrieval.embedding", "numDimensions": 1536, "similarity": "cosine" },
+      { "type": "filter", "path": "status" },
+      { "type": "filter", "path": "retrieval.institution_type" }
+    ]
+  }
+  ```
+
+  `numDimensions` must equal `EMBEDDING_DIMENSIONS`. `archived_at` is not an index field; it is applied by a `$match` after the vector search.
 
 ## Postgres schema
 
@@ -141,13 +157,33 @@ Rules:
 |---|---|
 | `20261111000000_initial-schema` | Creates the first user tables and `template_deletions` |
 | `20261111015501_unified-users-permissions-and-sessions` | Replaces the first user tables with `permissions`, `users`, `user_permissions` and `user_sessions`, and points `template_deletions` at `users` |
+| `20261111060534_organisational-structure-and-user-affiliations` | Adds the `organisation:manage` permission (granted to every existing `user:manage` holder) and the organisational structure tables below |
+| `20261111101054_workflow-template-archive-only` | Drops `template_deletions` (templates are archived, never deleted) and rewords the `workflow:manage` permission description. `down` recreates the table empty |
+| `20261111110611_department-faculty-membership-rule` | Adds the deferred constraint trigger `enforce_department_member_in_faculty`: a department member must also be a member of that department's faculty |
 
-After both migrations the Postgres schema is:
+After these migrations the Postgres schema is:
 
-- `permissions` — the permission catalogue (`workflow:manage`, `task:create`, `task:approve`, `user:manage`), inserted by the migration as reference data.
+- `permissions` — the permission catalogue (`workflow:manage`, `task:create`, `task:approve`, `user:manage`, `organisation:manage`), inserted by migrations as reference data.
+- `organisational_units` — faculties, departments and divisions in one table, keyed by an immutable unique `code`. A composite foreign key `(parent_id, parent_unit_type)` plus a `CHECK` enforce the hierarchy: departments under a faculty, divisions under a faculty or none, faculties at the top.
+- `designations` and `designation_unit_types` — the designation catalogue and the unit types each designation can be held in. A deferred constraint trigger (`enforce_designation_has_unit_type`) keeps at least one unit type per designation.
+- `user_organisational_units` — memberships. A deferred constraint trigger (`enforce_department_member_in_faculty`) rejects, at commit, any transaction that leaves a department member outside that department's faculty — on adding a membership, removing a faculty membership, or moving a department to another faculty.
+- `user_designations` — designations held within a membership. Composite foreign keys guarantee the user is a member of the unit and the designation applies to its type; a partial unique index allows one holder per unit for `single_holder_per_unit` designations.
 - `users` — one row per person who can sign in. `email` is stored lower-cased and is unique; `status` is `active` or `disabled`.
 - `user_permissions` — which permissions each user holds. A deferred constraint trigger (`enforce_user_has_permission`) rejects, at commit, any transaction that leaves a user with no permission.
 - `user_sessions` — one row per signed-in session. Only the SHA-256 hash of the session token is stored; `revoked_at` and `revocation_reason` record sign-outs.
-- `template_deletions` — the template deletion log, attributed through `deleted_by_user_id` and `deleted_by_email`.
+MongoDB holds no user data; `tasks.created_by` and `workflow_templates.created_by` / `updated_by` store user ids as strings.
 
-MongoDB holds no user data; `tasks.created_by` stores the creating user's id as a string.
+## MongoDB schema
+
+| Migration | What it does |
+|---|---|
+| `20261111000000_initial-schema` | Creates `drafts`, `templates`, `selection_sessions`, `tasks`, `counters` and `audit_logs` with their indexes |
+| `20261111101053_workflow-templates` | Drops `templates` and `drafts`, creates `workflow_templates` and `workflow_template_versions`, and replaces the `tasks` index on `workflow_id` with one on `workflow_template_id` |
+
+> **`20261111101053_workflow-templates` does not migrate data.** It drops the `templates` and `drafts` collections outright; nothing is copied into the new collections. Existing tasks and selection sessions keep their old `workflow_id` / `version` / `selected_workflow_id` fields, which the code no longer reads, so they stop resolving. Recreate templates through `/api/workflow-templates` after applying it, and treat old tasks and sessions as unusable. `down` recreates `templates` and `drafts` empty; it does not bring their data back.
+
+After these migrations the collections are:
+
+- `workflow_templates` — one document per template, keyed by a string UUID `_id`: `title`, `description`, `status` (`draft` \| `unpublished` \| `published`), `draft_prompt`, `current_version`, `archived_at`, `created_by`, `updated_by`, timestamps, and `retrieval` — the current version's embedded text, vector, aliases, `retrieval_summary` and `institution_type`. Indexes: `workflow_template_archived_updated` (`archived_at`, `updated_at`) and `workflow_template_retrieval_filter` (`status`, `archived_at`, `retrieval.institution_type`).
+- `workflow_template_versions` — one immutable document per generated version: `workflow_template_id`, `version`, `prompt`, `definition`, `generation_attempts`, `created_by`, `created_at`. Unique index `workflow_template_version_unique` on (`workflow_template_id`, `version`).
+- `selection_sessions`, `tasks`, `counters` and `audit_logs` — as created by the initial schema; `tasks` is indexed on (`workflow_template_id`, `status`) as `task_workflow_template_status`.

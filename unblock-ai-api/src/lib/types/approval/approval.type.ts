@@ -10,7 +10,7 @@ export type ApproverStatus =
 
 export interface ApproverViewDto {
   task_reference: string;
-  workflow_title: string;
+  workflow_template_title: string;
   step: {
     step_id: string;
     name: string;
@@ -61,7 +61,7 @@ export interface TaskTimelineEntry {
 export interface TaskStatusDto {
   status: string;
   reference: string;
-  workflow_title: string;
+  workflow_template_title: string;
   current_steps: string[];
   rejected_at_step: string | null;
   rejected_by: string | null;

@@ -7,16 +7,16 @@ import { LlmMessageRole } from "../../../src/data/constants/llm.constant.js";
 import { FakeSelectionSessionModel } from "../../helpers/fake-model.helper.js";
 import type { RetrievalService } from "../../../src/services/retrieval.service.js";
 import type { SelectorService } from "../../../src/services/selector.service.js";
-import type { WorkflowService } from "../../../src/services/workflow.service.js";
+import type { WorkflowTemplateService } from "../../../src/services/workflow-template.service.js";
 import type { BoostedCandidate } from "../../../src/lib/types/selection/candidate.type.js";
 import type { SelectorDecision } from "../../../src/lib/types/selection/decision.type.js";
 import type { SelectorTranscriptTurn } from "../../../src/data/prompts/selector.prompt.js";
-import type { WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
+import type { PublishedWorkflowDefinition } from "../../../src/lib/types/workflow-template/workflow-template.type.js";
 
 function candidate(overrides: Partial<BoostedCandidate>): BoostedCandidate {
   return {
-    workflow_id: "x",
-    version: 1,
+    workflow_template_id: "x",
+    workflow_template_version: 1,
     title: "X",
     description: "",
     score: 0,
@@ -31,8 +31,8 @@ function candidate(overrides: Partial<BoostedCandidate>): BoostedCandidate {
 
 const CANDIDATES: BoostedCandidate[] = [
   candidate({
-    workflow_id: "it_leave",
-    version: 1,
+    workflow_template_id: "it_leave",
+    workflow_template_version: 1,
     title: "IT Overseas Leave",
     score: 0.81,
     base_score: 0.66,
@@ -40,8 +40,8 @@ const CANDIDATES: BoostedCandidate[] = [
     retrieval_summary: { one_liner: "Travel overseas as an IT undergraduate." } as BoostedCandidate["retrieval_summary"],
   }),
   candidate({
-    workflow_id: "eng_leave",
-    version: 1,
+    workflow_template_id: "eng_leave",
+    workflow_template_version: 1,
     title: "Eng Overseas Leave",
     score: 0.79,
     base_score: 0.79,
@@ -87,19 +87,19 @@ function fakeSelectorService(...decisions: SelectorDecision[]): SelectorService 
   } as unknown as SelectorService & { calls: FakeAgentCall[] };
 }
 
-function fakeWorkflowService(documents: Record<string, WorkflowDefinition> = {}): WorkflowService {
+function fakeWorkflowTemplateService(published: Record<string, PublishedWorkflowDefinition> = {}): WorkflowTemplateService {
   return {
-    getDocument(workflowId: string) {
-      const doc = documents[workflowId];
-      if (!doc) throw new Error(`no fake document for ${workflowId}`);
-      return Promise.resolve(doc);
+    getPublishedDefinition(workflowTemplateId: string) {
+      const found = published[workflowTemplateId];
+      if (!found) throw new Error(`no fake published definition for ${workflowTemplateId}`);
+      return Promise.resolve(found);
     },
-  } as unknown as WorkflowService;
+  } as unknown as WorkflowTemplateService;
 }
 
 const MATCHED: SelectorDecision = {
   decision: "matched",
-  workflow_id: "it_leave",
+  workflow_template_id: "it_leave",
   confidence: "high",
   question: null,
   options: [],
@@ -108,7 +108,7 @@ const MATCHED: SelectorDecision = {
 
 const AMBIGUOUS: SelectorDecision = {
   decision: "ambiguous",
-  workflow_id: null,
+  workflow_template_id: null,
   confidence: "medium",
   question: "Which faculty are you attached to?",
   options: ["Information Technology", "Engineering"],
@@ -117,7 +117,7 @@ const AMBIGUOUS: SelectorDecision = {
 
 const NO_MATCH: SelectorDecision = {
   decision: "no_match",
-  workflow_id: null,
+  workflow_template_id: null,
   confidence: "high",
   question: null,
   options: [],
@@ -128,20 +128,20 @@ function build({
   retrievalService,
   selectorService,
   sessionModel,
-  workflowService = fakeWorkflowService(),
+  workflowTemplateService = fakeWorkflowTemplateService(),
   maxRounds = 2,
 }: {
   retrievalService: RetrievalService;
   selectorService: SelectorService;
   sessionModel: FakeSelectionSessionModel;
-  workflowService?: WorkflowService;
+  workflowTemplateService?: WorkflowTemplateService;
   maxRounds?: number;
 }): SelectionService {
   return new SelectionService({
     retrievalService,
     selectorService,
     sessionModel: sessionModel as unknown as ConstructorParameters<typeof SelectionService>[0]["sessionModel"],
-    workflowService,
+    workflowTemplateService,
     maxRounds,
   });
 }
@@ -154,11 +154,11 @@ test("matched on round 1 finalizes the session", async () => {
   const out = await service.start("I want IT overseas leave");
 
   assert.equal(out.decision, "matched");
-  assert.equal(out.workflow_id, "it_leave");
+  assert.equal(out.workflow_template_id, "it_leave");
 
   const stored = await sessionModel.findById(out.session_id);
   assert.equal(stored?.outcome, "matched");
-  assert.equal(stored?.selected_workflow_id, "it_leave");
+  assert.equal(stored?.selected_workflow_template_id, "it_leave");
   assert.equal(stored?.rounds.length, 0, "a clean match asks nothing");
 });
 
@@ -169,7 +169,7 @@ test("no_match finalizes the session with the no_match outcome", async () => {
   const out = await service.start("I want to buy a boat");
 
   assert.equal(out.decision, "no_match");
-  assert.equal(out.workflow_id, null);
+  assert.equal(out.workflow_template_id, null);
   assert.equal((await sessionModel.findById(out.session_id))?.outcome, "no_match");
 });
 
@@ -201,7 +201,7 @@ test("answer() never re-runs retrieval", async () => {
 
   assert.equal(retrievalService.calls.length, 1, "the candidate set is frozen at round 1");
   assert.equal(out.decision, "matched");
-  assert.equal(out.workflow_id, "it_leave");
+  assert.equal(out.workflow_template_id, "it_leave");
 });
 
 test("answer() replays the full transcript against the frozen candidates", async () => {
@@ -219,7 +219,7 @@ test("answer() replays the full transcript against the frozen candidates", async
     { role: LlmMessageRole.USER, text: "Information Technology" },
   ]);
   assert.deepEqual(
-    secondCall?.candidates.map((c) => c.workflow_id),
+    secondCall?.candidates.map((c) => c.workflow_template_id),
     ["it_leave", "eng_leave"],
   );
 });
@@ -253,14 +253,14 @@ test("choose() finalizes on a candidate the session actually offered", async () 
   const out = await service.choose(started.session_id, "eng_leave");
 
   assert.equal(out.decision, "matched");
-  assert.equal(out.workflow_id, "eng_leave");
+  assert.equal(out.workflow_template_id, "eng_leave");
 
   const stored = await sessionModel.findById(started.session_id);
   assert.equal(stored?.outcome, "matched");
-  assert.equal(stored?.selected_workflow_id, "eng_leave");
+  assert.equal(stored?.selected_workflow_template_id, "eng_leave");
 });
 
-test("choose() rejects a workflow_id that was never a candidate", async () => {
+test("choose() rejects a workflow_template_id that was never a candidate", async () => {
   const sessionModel = new FakeSelectionSessionModel();
   const service = build({ retrievalService: fakeRetrievalService(), selectorService: fakeSelectorService(AMBIGUOUS), sessionModel });
 
@@ -287,7 +287,7 @@ test("the response never leaks the model's reasoning", async () => {
     "options",
     "question",
     "session_id",
-    "workflow_id",
+    "workflow_template_id",
   ]);
 });
 
@@ -301,13 +301,13 @@ test("candidates are projected to the client shape with rounded scores", async (
   const out = await service.start("I want overseas leave");
   assert.deepEqual(out.candidates, [
     {
-      workflow_id: "it_leave",
+      workflow_template_id: "it_leave",
       title: "IT Overseas Leave",
       one_liner: "Travel overseas as an IT undergraduate.",
       score: 0.81,
     },
     {
-      workflow_id: "eng_leave",
+      workflow_template_id: "eng_leave",
       title: "Eng Overseas Leave",
       one_liner: "Travel overseas as an Engineering undergraduate.",
       score: 0.79,
@@ -341,29 +341,41 @@ test("institutionType is passed through to the retriever", async () => {
   assert.equal(retrievalService.calls[0]?.options.institutionType, "university");
 });
 
-test("getMatchedWorkflow returns a ConflictError before a match exists", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
+test("getMatchedWorkflowTemplateId throws a ConflictError before a match exists", async () => {
   const service = build({
     retrievalService: fakeRetrievalService(),
     selectorService: fakeSelectorService(AMBIGUOUS),
-    sessionModel,
+    sessionModel: new FakeSelectionSessionModel(),
   });
 
   const started = await service.start("I want overseas leave");
-  await assert.rejects(() => service.getMatchedWorkflow(started.session_id), ConflictError);
+  await assert.rejects(() => service.getMatchedWorkflowTemplateId(started.session_id), ConflictError);
+  await assert.rejects(() => service.getMatchedWorkflowTemplate(started.session_id), ConflictError);
 });
 
-test("getMatchedWorkflow returns the matched workflow document after a match", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
-  const workflowDoc = { workflow_id: "it_leave", title: "IT Overseas Leave" } as unknown as WorkflowDefinition;
+test("getMatchedWorkflowTemplateId returns the matched workflow template id after a match", async () => {
   const service = build({
     retrievalService: fakeRetrievalService(),
     selectorService: fakeSelectorService(MATCHED),
-    sessionModel,
-    workflowService: fakeWorkflowService({ it_leave: workflowDoc }),
+    sessionModel: new FakeSelectionSessionModel(),
   });
 
   const started = await service.start("I want IT overseas leave");
-  const workflow = await service.getMatchedWorkflow(started.session_id);
-  assert.equal(workflow.workflow_id, "it_leave");
+  assert.equal(await service.getMatchedWorkflowTemplateId(started.session_id), "it_leave");
+});
+
+test("getMatchedWorkflowTemplate returns the published definition of the matched workflow template", async () => {
+  const published = {
+    version: 2,
+    definition: { title: "IT Overseas Leave" },
+  } as unknown as PublishedWorkflowDefinition;
+  const service = build({
+    retrievalService: fakeRetrievalService(),
+    selectorService: fakeSelectorService(MATCHED),
+    sessionModel: new FakeSelectionSessionModel(),
+    workflowTemplateService: fakeWorkflowTemplateService({ it_leave: published }),
+  });
+
+  const started = await service.start("I want IT overseas leave");
+  assert.deepEqual(await service.getMatchedWorkflowTemplate(started.session_id), published);
 });

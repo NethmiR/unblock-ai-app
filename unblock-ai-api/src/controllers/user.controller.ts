@@ -1,7 +1,15 @@
 import type { Request, Response } from "express";
 import { requireAuthContext } from "../utils/http/auth-context.util.js";
-import { requireNonEmptyString, requireStringArray, requireUuid } from "../utils/http/request-validator.util.js";
-import { serializeUser } from "../utils/http/user-serializer.util.js";
+import {
+  parseIntegerQuery,
+  parseOptionalStringQuery,
+  parseOptionalUuidQuery,
+  requireNonEmptyString,
+  requireStringArray,
+  requireUuid,
+} from "../utils/http/request-validator.util.js";
+import { serializeUser, serializeUserListResult } from "../utils/http/user-serializer.util.js";
+import { USER_LIST_PAGINATION } from "../data/constants/user.constant.js";
 import type { UserService } from "../services/user.service.js";
 
 export interface UserControllerOptions {
@@ -27,9 +35,14 @@ export class UserController {
     res.status(201).json({ user: serializeUser(user) });
   };
 
-  list = async (_req: Request, res: Response): Promise<void> => {
-    const users = await this.userService.listUsers();
-    res.status(200).json({ users: users.map(serializeUser) });
+  list = async (req: Request, res: Response): Promise<void> => {
+    const result = await this.userService.listUsers({
+      search: parseOptionalStringQuery(req.query.search, "search"),
+      organisationalUnitId: parseOptionalUuidQuery(req.query.organisational_unit_id, "organisational_unit_id"),
+      limit: parseIntegerQuery(req.query.limit, "limit", USER_LIST_PAGINATION.DEFAULT_LIMIT),
+      offset: parseIntegerQuery(req.query.offset, "offset", 0),
+    });
+    res.status(200).json(serializeUserListResult(result));
   };
 
   getById = async (req: Request, res: Response): Promise<void> => {

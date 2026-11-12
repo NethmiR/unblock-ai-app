@@ -72,13 +72,13 @@ export class SelectionSessionModel {
   async finalize(
     id: string | ObjectId,
     outcome: SessionOutcome,
-    selectedWorkflowId: string | null,
+    selectedWorkflowTemplateId: string | null,
   ): Promise<SelectionSessionDocument | null> {
     try {
       const sessions = await this.collection();
       await sessions.updateOne(
         { _id: toObjectId(id) },
-        { $set: { outcome, selected_workflow_id: selectedWorkflowId, updated_at: new Date() } },
+        { $set: { outcome, selected_workflow_template_id: selectedWorkflowTemplateId, updated_at: new Date() } },
       );
     } catch (err) {
       throw new DatabaseError("Failed to finalize selection session", { cause: err });

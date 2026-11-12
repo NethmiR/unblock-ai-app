@@ -1,36 +1,28 @@
 import { cosineSimilarity } from "../../utils/retrieval/vector-math.util.js";
-import type { IVectorStore, ITemplateReader, VectorSearchOptions } from "../../lib/types/retrieval/retrieval.type.js";
+import { toRetrievalCandidate } from "../../utils/retrieval/retrieval-candidate.util.js";
+import type {
+  IVectorStore,
+  IWorkflowTemplateRetrievalReader,
+  VectorSearchOptions,
+} from "../../lib/types/retrieval/retrieval.type.js";
 import type { RetrievalCandidate } from "../../lib/types/selection/candidate.type.js";
 
 export interface InMemoryVectorStoreOptions {
-  templateReader: ITemplateReader;
+  retrievalReader: IWorkflowTemplateRetrievalReader;
 }
 
-// Exhaustive cosine search over every confirmed template. O(n * d) is well
-// under a millisecond for n <= 200 templates at d = 1536.
 export class InMemoryVectorStore implements IVectorStore {
-  private readonly templateReader: ITemplateReader;
+  private readonly retrievalReader: IWorkflowTemplateRetrievalReader;
 
-  constructor({ templateReader }: InMemoryVectorStoreOptions) {
-    this.templateReader = templateReader;
+  constructor({ retrievalReader }: InMemoryVectorStoreOptions) {
+    this.retrievalReader = retrievalReader;
   }
 
   async search(queryVector: number[], options: VectorSearchOptions = {}): Promise<RetrievalCandidate[]> {
-    const k = options.k ?? 5;
-    const rows = await this.templateReader.listForRetrieval({ institutionType: options.institutionType });
-
+    const rows = await this.retrievalReader.listForRetrieval({ institutionType: options.institutionType });
     return rows
-      .map((row) => ({
-        workflow_id: row.workflow_id,
-        version: row.version,
-        title: row.title,
-        description: row.description,
-        score: cosineSimilarity(queryVector, row.retrieval.embedding),
-        aliases_lower: row.retrieval.aliases_lower ?? [],
-        retrieval_summary: row.document?.retrieval_summary ?? null,
-        retrieval_text: row.retrieval.text,
-      }))
+      .map((row) => toRetrievalCandidate(row, cosineSimilarity(queryVector, row.retrieval.embedding)))
       .sort((a, b) => b.score - a.score)
-      .slice(0, k);
+      .slice(0, options.k ?? 5);
   }
 }

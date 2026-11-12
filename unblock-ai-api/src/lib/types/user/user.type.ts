@@ -1,5 +1,9 @@
 import type { Permission } from "../../../data/constants/permission.constant.js";
 import type { UserStatus } from "../../../data/constants/user.constant.js";
+import type {
+  OrganisationalUnitReference,
+  OrganisationalUnitReferenceDto,
+} from "../organisational-unit/organisational-unit.type.js";
 
 export interface UserRecord {
   id: string;
@@ -43,4 +47,48 @@ export interface UserDto {
   created_by_user_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface UserReference {
+  id: string;
+  fullName: string;
+  email: string;
+}
+
+export interface UserReferenceDto {
+  id: string;
+  full_name: string;
+  email: string;
+}
+
+export interface UserListFilter {
+  search: string | null;
+  organisationalUnitId: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface UserListPage {
+  users: UserRecord[];
+  total: number;
+}
+
+export interface UserListItemRecord extends UserRecord {
+  organisationalUnits: OrganisationalUnitReference[];
+}
+
+export interface UserListResult {
+  users: UserListItemRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface UserListItemDto extends UserDto {
+  organisational_units: OrganisationalUnitReferenceDto[];
+}
+
+export interface UserListResponseDto {
+  users: UserListItemDto[];
+  page: { total: number; limit: number; offset: number };
 }

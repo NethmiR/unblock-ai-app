@@ -56,8 +56,7 @@ function StatusIcon({ status }: { status: TaskStatus }) {
 }
 
 export interface JobRowTask extends TaskDto {
-  /** Joined from `workflowsApi.list()` - `TaskDto` carries no title of its own. */
-  workflow_title: string;
+  workflow_template_title: string;
 }
 
 /** Finished business, whichever way it finished - `DELETE /tasks/:id` takes all three. */
@@ -109,9 +108,9 @@ export function JobRow({
   return (
     <div className="relative flex items-center gap-5 rounded-card border border-line bg-surface px-6 py-[22px] transition-all hover:border-slate-300 hover:shadow-[0_2px_10px_rgba(15,23,42,.06)]">
       <Link
-        href={`/portal/jobs/${job.id}`}
+        href={`/old/portal/jobs/${job.id}`}
         className="absolute inset-0 z-0 rounded-card"
-        aria-label={`Open ${job.workflow_title}`}
+        aria-label={`Open ${job.workflow_template_title}`}
       />
 
       <div className="pointer-events-none relative">
@@ -119,7 +118,7 @@ export function JobRow({
       </div>
 
       <div className="pointer-events-none relative min-w-0 flex-1">
-        <div className="text-[16.5px] font-semibold tracking-tight">{job.workflow_title}</div>
+        <div className="text-[16.5px] font-semibold tracking-tight">{job.workflow_template_title}</div>
         <div className="mt-[5px] text-sm leading-normal text-muted">{job.reference}</div>
       </div>
 

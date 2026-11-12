@@ -3,6 +3,7 @@ export enum Permission {
   TASK_CREATE = "task:create",
   TASK_APPROVE = "task:approve",
   USER_MANAGE = "user:manage",
+  ORGANISATION_MANAGE = "organisation:manage",
 }
 
 export const PERMISSIONS: readonly Permission[] = Object.values(Permission);

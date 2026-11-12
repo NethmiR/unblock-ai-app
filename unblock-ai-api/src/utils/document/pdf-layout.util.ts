@@ -24,7 +24,7 @@ function ensureSpace(doc: PDFDoc, height: number): void {
 }
 
 export function heading(doc: PDFDoc, completionDocument: CompletionDocument): number {
-  doc.font("Helvetica-Bold").fontSize(18).fillColor("#000000").text(completionDocument.workflow_title);
+  doc.font("Helvetica-Bold").fontSize(18).fillColor("#000000").text(completionDocument.workflow_template_title);
   doc.moveDown(0.4);
 
   doc.font("Helvetica").fontSize(10).fillColor("#444444");

@@ -20,8 +20,8 @@ export interface ApprovalRow {
 
 export interface CompletionDocument {
   reference: string;
-  workflow_title: string;
-  workflow_description: string;
+  workflow_template_title: string;
+  workflow_template_description: string;
   institution_name: string;
   submitted_at: Date;
   completed_at: Date;

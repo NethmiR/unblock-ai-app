@@ -5,13 +5,13 @@ import type { SelectorDecision } from "../../lib/types/selection/decision.type.j
 export const decisionSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["decision", "workflow_id", "confidence", "question", "options", "reasoning"],
+  required: ["decision", "workflow_template_id", "confidence", "question", "options", "reasoning"],
   properties: {
     decision: {
       type: "string",
       enum: ["matched", "ambiguous", "no_match"],
     },
-    workflow_id: {
+    workflow_template_id: {
       type: ["string", "null"],
       description: "Set ONLY when decision is 'matched'. Must be one of the given candidate ids.",
     },

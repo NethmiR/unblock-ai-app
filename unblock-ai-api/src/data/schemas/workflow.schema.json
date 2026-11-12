@@ -6,7 +6,6 @@
   "additionalProperties": false,
   "required": [
     "schema_version",
-    "workflow_id",
     "title",
     "description",
     "retrieval_summary",
@@ -20,7 +19,6 @@
   ],
   "properties": {
     "schema_version": { "type": "string" },
-    "workflow_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
     "title": { "type": "string" },
     "description": { "type": "string" },
     "retrieval_summary": { "$ref": "#/$defs/retrieval_summary" },
@@ -482,16 +480,8 @@
     "metadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "created_from", "source_text_hash", "extraction_model",
-        "extraction_timestamp", "confidence", "ambiguities",
-        "unmapped_roles", "review_status"
-      ],
+      "required": ["confidence", "ambiguities", "unmapped_roles", "is_workflow"],
       "properties": {
-        "created_from": { "type": "string", "enum": ["plain_text"] },
-        "source_text_hash": { "type": "string" },
-        "extraction_model": { "type": "string" },
-        "extraction_timestamp": { "type": "string" },
         "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
         "ambiguities": {
           "type": "array",
@@ -501,10 +491,7 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "review_status": {
-          "type": "string",
-          "enum": ["pending_admin_review", "confirmed", "rejected"]
-        }
+        "is_workflow": { "type": "boolean" }
       }
     }
   }

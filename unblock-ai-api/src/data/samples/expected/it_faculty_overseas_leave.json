@@ -1,6 +1,5 @@
 {
   "schema_version": "1.0",
-  "workflow_id": "it_faculty_overseas_leave",
   "title": "IT Faculty Overseas Leave Approval",
   "description": "Application and approval process for IT Faculty undergraduates travelling overseas during the academic term.",
 
@@ -259,13 +258,9 @@
   },
 
   "metadata": {
-    "created_from": "plain_text",
-    "source_text_hash": "sha256:placeholder",
-    "extraction_model": "gpt-4o-2024-08-06",
-    "extraction_timestamp": "2026-07-30T10:00:00Z",
     "confidence": "high",
     "ambiguities": [],
     "unmapped_roles": [],
-    "review_status": "pending_admin_review"
+    "is_workflow": true
   }
 }

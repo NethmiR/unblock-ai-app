@@ -1,6 +1,6 @@
 # RAG Pipeline Implementation Guide — UNBLOCK-AI
 
-> Historical planning document. Paths and file names below predate the TypeScript restructure — see docs/architecture/folder-structure.md for the current layout.
+> Historical planning document. Paths and file names below predate the TypeScript restructure — see docs/architecture/folder-structure.md for the current layout. The drafts, `/workflows` endpoints and Postgres store it proposes were never built that way and the draft concept has since been removed: templates now live in the MongoDB `workflow_templates` and `workflow_template_versions` collections, managed through `/api/workflow-templates` (see [rag-mongodb-azure-search.md](./rag-mongodb-azure-search.md) and [../api/api-documentation.md](../api/api-documentation.md)).
 
 > **Goal:** persist both the original plain-text **draft** and the extracted **workflow template**, index the template into a **vector database**, and use that index as a **RAG retrieval layer** over the workflow knowledge bank.
 >

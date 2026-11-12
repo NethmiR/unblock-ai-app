@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { TemplateModel } from "../../../src/models/template.model.js";
+import { WorkflowTemplateModel } from "../../../src/models/workflow-template.model.js";
 import { createVectorStore } from "../../../src/services/vector-store/index.vector-store.js";
 import { RetrievalService } from "../../../src/services/retrieval.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
@@ -19,23 +19,21 @@ let retrievalService: RetrievalService;
 
 /**
  * Mirrors `SelectionService.start()` - the first thing that happens when a
- * normal user types what they want: retrieval finds candidate workflows,
+ * normal user types what they want: retrieval finds candidate workflow templates,
  * then the selector model decides matched/ambiguous/no_match. Clarifying
  * follow-up turns (`SelectionService.answer`) are out of scope on purpose;
  * this measures only that first decision.
  *
  * Retrieval runs for real (embeddings + vector search against whatever
- * templates are seeded in the configured DB) because the selector prompt's
+ * templates are published in the configured DB) because the selector prompt's
  * size, and therefore its token cost, depends on the candidates it returns.
  */
 export const taskRequestOperation: PerfOperation = {
   name: "task-request",
 
   async setup(): Promise<void> {
-    const templateModel = new TemplateModel();
     const vectorStore = createVectorStore(config.retrieval.vectorBackend, {
-      templateReader: templateModel,
-      templateModel,
+      workflowTemplateModel: new WorkflowTemplateModel(),
       indexName: config.retrieval.atlasIndexName,
     });
     retrievalService = new RetrievalService({ vectorStore, embeddingService: new EmbeddingService() });

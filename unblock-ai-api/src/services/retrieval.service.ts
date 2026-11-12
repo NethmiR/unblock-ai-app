@@ -37,7 +37,7 @@ export class RetrievalService {
     logger.debug("retrieved candidates", {
       query: userQuery.slice(0, 80),
       candidates: boosted.map((c) => ({
-        id: c.workflow_id,
+        id: c.workflow_template_id,
         score: Number(c.score.toFixed(4)),
         alias_hits: c.alias_hits,
       })),

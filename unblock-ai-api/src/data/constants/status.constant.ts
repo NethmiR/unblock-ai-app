@@ -1,16 +1,3 @@
-export const DRAFT_STATUS = {
-  PENDING: "pending",
-  EXTRACTED: "extracted",
-  FAILED: "failed",
-  REJECTED: "rejected",
-} as const;
-
-export const REVIEW_STATUS = {
-  PENDING: "pending_admin_review",
-  CONFIRMED: "confirmed",
-  REJECTED: "rejected",
-} as const;
-
 export const SELECTION_DECISION = {
   MATCHED: "matched",
   AMBIGUOUS: "ambiguous",

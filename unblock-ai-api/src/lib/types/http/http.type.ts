@@ -1,4 +1,3 @@
-import type { ReviewStatus, WorkflowDefinition } from "../workflow/workflow.type.js";
 import type { AuthContext } from "../auth/auth.type.js";
 
 declare global {
@@ -16,22 +15,3 @@ export interface ErrorResponseBody {
   details: unknown;
 }
 
-export interface ValidationResultDto {
-  valid: boolean;
-  errors: string[];
-}
-
-export interface ExtractResponseDto {
-  workflow: WorkflowDefinition;
-  validation: ValidationResultDto;
-  attempts: number;
-}
-
-export interface DraftExtractResponseDto {
-  draft_id: string;
-  workflow_id: string;
-  version: number;
-  attempts: number;
-  review_status: ReviewStatus;
-  workflow: WorkflowDefinition;
-}

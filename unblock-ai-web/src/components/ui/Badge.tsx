@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils/cn";
 import type { HTMLAttributes, ReactNode } from "react";
 
-type Tone = "neutral" | "warn" | "success" | "danger";
+type Tone = "neutral" | "accent" | "warn" | "success" | "danger";
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: Tone;
@@ -11,6 +11,7 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 /** Tone styles as data - a new status color is one line, not a new component. */
 const TONES: Record<Tone, string> = {
   neutral: "bg-bg text-muted border border-line-admin",
+  accent: "bg-accent/10 text-accent border border-accent/20",
   warn: "bg-warn-bg text-warn-ink border border-warn-border",
   success: "bg-success/10 text-success border border-success/20",
   danger: "bg-danger/10 text-danger border border-danger/20",

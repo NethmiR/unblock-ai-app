@@ -130,7 +130,7 @@ Once MongoDB and PostgreSQL are reachable, run this from `unblock-ai-api/`:
 npm run migrate:up
 ```
 
-This applies every pending Postgres migration (users, permissions, user sessions and the template deletion log) and Mongo migration (collections and indexes). Re-running it applies nothing new. Check where each database stands with `npm run migrate:status`.
+This applies every pending Postgres migration (users, permissions, user sessions and the organisational structure) and Mongo migration (collections and indexes). Re-running it applies nothing new. Check where each database stands with `npm run migrate:status`.
 
 Expected output on a fresh database:
 
@@ -163,8 +163,8 @@ collections map to the app as follows:
 
 | Collection           | Holds                                                              |
 | -------------------- | ------------------------------------------------------------------ |
-| `drafts`             | Admin-submitted raw text awaiting/after LLM extraction              |
-| `templates`          | Extracted workflow templates (versioned; `is_latest` marks current) |
+| `workflow_templates` | One document per workflow template: title, status, current version, retrieval embedding |
+| `workflow_template_versions` | Immutable generated versions: the prompt and the generated definition |
 | `selection_sessions` | Selector-agent conversation sessions                                |
 | `tasks`              | Approval requests and their step state                              |
 | `counters`           | Per-year sequence for task references                               |
@@ -210,7 +210,7 @@ AZURE_OPENAI_API_VERSION=2024-10-21
 AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o
 GEMINI_API_KEY=<your-google-ai-studio-key>
 GEMINI_CHAT_MODEL=gemini-3.8-flash
-EXTRACTION_MAX_ATTEMPTS=3
+WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS=3
 
 # Embedding provider: azure-openai | gemini (switching requires re-embedding stored templates)
 EMBEDDING_PROVIDER=azure-openai
@@ -303,7 +303,6 @@ npm run test:live               # tests that hit live Azure/Mongo services (test
 npm run smoke-test:llm          # sanity-check the configured LLM provider
 npm run smoke-test:embeddings   # sanity-check the configured embedding provider
 npm run evaluate:selection      # evaluate the selector agent
-npm run backfill:summaries      # backfill workflow summaries in MongoDB
 ```
 
 ---

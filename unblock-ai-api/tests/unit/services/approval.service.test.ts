@@ -16,11 +16,11 @@ import { STEP_STATE, TASK_STATUS } from "../../../src/data/constants/status.cons
 import { FakeAuditLogModel, FakeTaskModel } from "../../helpers/fake-model.helper.js";
 import { AuditService } from "../../../src/services/audit.service.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
+import { LEAVE_WORKFLOW_TEMPLATE_ID, stubWorkflowTemplateService } from "../../helpers/workflow-template.helper.js";
 import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
 import type { IDocumentRenderer } from "../../../src/services/document/document.interface.js";
 import type { MailMessage, MailSendResult } from "../../../src/lib/types/approval/mail.type.js";
 import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
-import type { WorkflowService } from "../../../src/services/workflow.service.js";
 import type { TaskDocument, TaskStepState } from "../../../src/lib/types/task/task.type.js";
 import type { WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
 import type { CompletionDocument, RenderedDocument } from "../../../src/lib/types/document/document.type.js";
@@ -53,14 +53,6 @@ class FakeMailer implements IMailer {
   }
 }
 
-function fakeWorkflowService(workflow: WorkflowDefinition): WorkflowService {
-  return {
-    getDocument() {
-      return Promise.resolve(workflow);
-    },
-  } as unknown as WorkflowService;
-}
-
 function finalizedTask(workflow: WorkflowDefinition, overrides: Partial<TaskDocument> = {}): TaskDocument {
   const planner = new PlannerService();
   const { requirements, steps } = planner.compile(workflow);
@@ -77,8 +69,8 @@ function finalizedTask(workflow: WorkflowDefinition, overrides: Partial<TaskDocu
     reference: "TASK-2026-00099",
     session_id: "session-1",
     created_by: "user-1",
-    workflow_id: workflow.workflow_id,
-    version: 1,
+    workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID,
+    workflow_template_version: 1,
     status: TASK_STATUS.IN_PROGRESS,
     requirements,
     values: {},
@@ -119,7 +111,7 @@ function build(
   const taskService = new TaskService({
     taskModel: taskModel as unknown as ConstructorParameters<typeof TaskService>[0]["taskModel"],
     selectionService: {} as unknown as ConstructorParameters<typeof TaskService>[0]["selectionService"],
-    workflowService: fakeWorkflowService(workflow),
+    workflowTemplateService: stubWorkflowTemplateService(workflow),
     plannerService: new PlannerService(),
     executionService,
     notificationService,
@@ -133,7 +125,7 @@ function build(
   });
   const service = new ApprovalService({
     taskModel: taskModel as unknown as ConstructorParameters<typeof ApprovalService>[0]["taskModel"],
-    workflowService: fakeWorkflowService(workflow),
+    workflowTemplateService: stubWorkflowTemplateService(workflow),
     executionService,
     notificationService,
     taskService,

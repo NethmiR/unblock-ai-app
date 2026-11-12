@@ -4,7 +4,7 @@ export type SelectionDecisionKind = "matched" | "ambiguous" | "no_match" | "manu
 
 export interface SelectorDecision {
   decision: Exclude<SelectionDecisionKind, "manual_choice">;
-  workflow_id: string | null;
+  workflow_template_id: string | null;
   confidence: Confidence;
   question: string | null;
   options: string[];
@@ -13,7 +13,7 @@ export interface SelectorDecision {
 
 export interface AppliedDecision {
   decision: SelectionDecisionKind;
-  workflow_id: string | null;
+  workflow_template_id: string | null;
   confidence: Confidence;
   question: string | null;
   options: string[];

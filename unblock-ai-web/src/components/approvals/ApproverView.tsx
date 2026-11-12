@@ -93,7 +93,7 @@ export function ApproverView({ token, initialView: view }: { token: string; init
       <div className="mb-2 text-xs font-medium uppercase tracking-[.14em] text-muted">
         {view.task_reference}
       </div>
-      <h1 className="mb-8 text-2xl font-semibold tracking-tight">{view.workflow_title}</h1>
+      <h1 className="mb-8 text-2xl font-semibold tracking-tight">{view.workflow_template_title}</h1>
 
       <Card className="mb-6 px-7 py-6">
         <div className="mb-1.5 text-[15px] font-semibold tracking-tight">{view.step.name}</div>

@@ -1,7 +1,7 @@
 import type { ObjectId } from "mongodb";
 import { RetrievalService } from "./retrieval.service.js";
 import { SelectorService } from "./selector.service.js";
-import { WorkflowService } from "./workflow.service.js";
+import { WorkflowTemplateService } from "./workflow-template.service.js";
 import { SelectionSessionModel } from "../models/selection-session.model.js";
 import { config } from "../config/index.config.js";
 import { logger } from "../utils/shared/logger.util.js";
@@ -18,13 +18,13 @@ import type {
   SelectionSessionDocument,
   SessionCandidate,
 } from "../lib/types/selection/session.type.js";
-import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
+import type { PublishedWorkflowDefinition } from "../lib/types/workflow-template/workflow-template.type.js";
 
 export interface SelectionServiceOptions {
   retrievalService: RetrievalService;
   selectorService: SelectorService;
   sessionModel: SelectionSessionModel;
-  workflowService: WorkflowService;
+  workflowTemplateService: WorkflowTemplateService;
   maxRounds?: number;
 }
 
@@ -32,20 +32,20 @@ export class SelectionService {
   private readonly retrievalService: RetrievalService;
   private readonly selectorService: SelectorService;
   private readonly sessionModel: SelectionSessionModel;
-  private readonly workflowService: WorkflowService;
+  private readonly workflowTemplateService: WorkflowTemplateService;
   private readonly maxRounds: number;
 
   constructor({
     retrievalService,
     selectorService,
     sessionModel,
-    workflowService,
+    workflowTemplateService,
     maxRounds = config.retrieval.maxSelectionRounds,
   }: SelectionServiceOptions) {
     this.retrievalService = retrievalService;
     this.selectorService = selectorService;
     this.sessionModel = sessionModel;
-    this.workflowService = workflowService;
+    this.workflowTemplateService = workflowTemplateService;
     this.maxRounds = maxRounds;
   }
 
@@ -59,8 +59,8 @@ export class SelectionService {
 
     const now = new Date();
     const sessionCandidates: SessionCandidate[] = candidates.map((c) => ({
-      workflow_id: c.workflow_id,
-      version: c.version,
+      workflow_template_id: c.workflow_template_id,
+      workflow_template_version: c.workflow_template_version,
       title: c.title,
       score: c.score,
       base_score: c.base_score,
@@ -73,7 +73,7 @@ export class SelectionService {
       candidates: sessionCandidates,
       rounds: [],
       outcome: null,
-      selected_workflow_id: null,
+      selected_workflow_template_id: null,
       requester_context: options.requesterContext ?? null,
       created_at: now,
       updated_at: now,
@@ -117,8 +117,8 @@ export class SelectionService {
 
   private toBoostedCandidates(session: SelectionSessionDocument): BoostedCandidate[] {
     return session.candidates.map((c) => ({
-      workflow_id: c.workflow_id,
-      version: c.version,
+      workflow_template_id: c.workflow_template_id,
+      workflow_template_version: c.workflow_template_version,
       title: c.title,
       description: "",
       score: c.score,
@@ -139,10 +139,10 @@ export class SelectionService {
     const roundsUsed = session.rounds?.length ?? 0;
 
     if (decision.decision === SELECTION_DECISION.MATCHED) {
-      await this.sessionModel.finalize(sessionId, SESSION_OUTCOME.MATCHED, decision.workflow_id);
+      await this.sessionModel.finalize(sessionId, SESSION_OUTCOME.MATCHED, decision.workflow_template_id);
       logger.info("selection matched", {
         sessionId: String(sessionId),
-        workflow_id: decision.workflow_id,
+        workflow_template_id: decision.workflow_template_id,
         rounds: roundsUsed,
         reasoning: decision.reasoning,
       });
@@ -186,12 +186,12 @@ export class SelectionService {
     return {
       session_id: String(sessionId),
       decision: decision.decision,
-      workflow_id: decision.workflow_id ?? null,
+      workflow_template_id: decision.workflow_template_id ?? null,
       confidence: decision.confidence,
       question: decision.question ?? null,
       options: decision.options ?? [],
       candidates: candidates.map((c) => ({
-        workflow_id: c.workflow_id,
+        workflow_template_id: c.workflow_template_id,
         title: c.title,
         one_liner: c.retrieval_summary?.one_liner ?? c.description ?? null,
         score: Number(c.score.toFixed(4)),
@@ -199,31 +199,40 @@ export class SelectionService {
     };
   }
 
-  async choose(sessionId: string | ObjectId, workflowId: string): Promise<{
+  async choose(sessionId: string | ObjectId, workflowTemplateId: string): Promise<{
     session_id: string;
     decision: string;
-    workflow_id: string;
+    workflow_template_id: string;
   }> {
     const session = await this.sessionModel.findById(sessionId);
     if (!session) throw NotFoundError.of("Selection session", String(sessionId));
 
-    const chosen = session.candidates.find((c) => c.workflow_id === workflowId);
+    const chosen = session.candidates.find((c) => c.workflow_template_id === workflowTemplateId);
     if (!chosen) {
-      throw new ValidationError(`'${workflowId}' was not among this session's candidates`);
+      throw new ValidationError(`'${workflowTemplateId}' was not among this session's candidates`);
     }
 
-    await this.sessionModel.finalize(session._id, SESSION_OUTCOME.MATCHED, workflowId);
-    return { session_id: String(session._id), decision: SELECTION_DECISION.MATCHED, workflow_id: workflowId };
+    await this.sessionModel.finalize(session._id, SESSION_OUTCOME.MATCHED, workflowTemplateId);
+    return {
+      session_id: String(session._id),
+      decision: SELECTION_DECISION.MATCHED,
+      workflow_template_id: workflowTemplateId,
+    };
   }
 
-  async getMatchedWorkflow(sessionId: string | ObjectId): Promise<WorkflowDefinition> {
+  async getMatchedWorkflowTemplateId(sessionId: string | ObjectId): Promise<string> {
     const session = await this.sessionModel.findById(sessionId);
     if (!session) throw NotFoundError.of("Selection session", String(sessionId));
 
-    if (session.selected_workflow_id === null) {
-      throw new ConflictError("This session has not matched a workflow yet");
+    if (session.selected_workflow_template_id === null) {
+      throw new ConflictError("This session has not matched a workflow template yet");
     }
 
-    return this.workflowService.getDocument(session.selected_workflow_id);
+    return session.selected_workflow_template_id;
+  }
+
+  async getMatchedWorkflowTemplate(sessionId: string | ObjectId): Promise<PublishedWorkflowDefinition> {
+    const workflowTemplateId = await this.getMatchedWorkflowTemplateId(sessionId);
+    return this.workflowTemplateService.getPublishedDefinition(workflowTemplateId);
   }
 }

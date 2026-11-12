@@ -1,7 +1,7 @@
 import type { ObjectId } from "mongodb";
 import { TaskModel } from "../models/task.model.js";
 import { SelectionService } from "./selection.service.js";
-import { WorkflowService } from "./workflow.service.js";
+import { WorkflowTemplateService } from "./workflow-template.service.js";
 import { PlannerService } from "./planner.service.js";
 import { ExecutionService } from "./execution.service.js";
 import { NotificationService } from "./notification.service.js";
@@ -26,7 +26,7 @@ import type { RenderedDocument } from "../lib/types/document/document.type.js";
 export interface TaskServiceOptions {
   taskModel: TaskModel;
   selectionService: SelectionService;
-  workflowService: WorkflowService;
+  workflowTemplateService: WorkflowTemplateService;
   plannerService: PlannerService;
   executionService: ExecutionService;
   notificationService: NotificationService;
@@ -38,7 +38,7 @@ export interface TaskServiceOptions {
 export class TaskService {
   private readonly taskModel: TaskModel;
   private readonly selectionService: SelectionService;
-  private readonly workflowService: WorkflowService;
+  private readonly workflowTemplateService: WorkflowTemplateService;
   private readonly plannerService: PlannerService;
   private readonly executionService: ExecutionService;
   private readonly notificationService: NotificationService;
@@ -49,7 +49,7 @@ export class TaskService {
   constructor({
     taskModel,
     selectionService,
-    workflowService,
+    workflowTemplateService,
     plannerService,
     executionService,
     notificationService,
@@ -59,7 +59,7 @@ export class TaskService {
   }: TaskServiceOptions) {
     this.taskModel = taskModel;
     this.selectionService = selectionService;
-    this.workflowService = workflowService;
+    this.workflowTemplateService = workflowTemplateService;
     this.plannerService = plannerService;
     this.executionService = executionService;
     this.notificationService = notificationService;
@@ -69,9 +69,9 @@ export class TaskService {
   }
 
   async create(sessionId: string | ObjectId, createdBy: string): Promise<TaskDocument> {
-    const workflow = await this.selectionService.getMatchedWorkflow(sessionId);
-    const record = await this.workflowService.getRecord(workflow.workflow_id);
-    const { requirements, steps } = this.plannerService.compile(workflow);
+    const workflowTemplateId = await this.selectionService.getMatchedWorkflowTemplateId(sessionId);
+    const { version, definition } = await this.workflowTemplateService.getPublishedDefinition(workflowTemplateId);
+    const { requirements, steps } = this.plannerService.compile(definition);
 
     const seq = await this.taskModel.nextSequence();
     const reference = buildReference(seq);
@@ -81,8 +81,8 @@ export class TaskService {
       reference,
       session_id: String(sessionId),
       created_by: createdBy,
-      workflow_id: record.workflow_id,
-      version: record.version,
+      workflow_template_id: workflowTemplateId,
+      workflow_template_version: version,
       status: TASK_STATUS.COLLECTING,
       requirements,
       values: {},
@@ -160,7 +160,7 @@ export class TaskService {
     const steps = this.attachAssignees(task);
 
     if (isReopen) {
-      const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+      const workflow = await this.workflowTemplateService.getDefinition(task.workflow_template_id, task.workflow_template_version);
       const result = this.executionService.advance({ ...task, steps }, workflow);
       const stepsWithTokens = issueTokensForDispatched(
         String(task._id),
@@ -204,7 +204,7 @@ export class TaskService {
       throw new ConflictError(`Task '${String(id)}' is not ready to start (status: ${task.status})`);
     }
 
-    const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+    const workflow = await this.workflowTemplateService.getDefinition(task.workflow_template_id, task.workflow_template_version);
     const result = this.executionService.advance(task, workflow);
     const stepsWithTokens = issueTokensForDispatched(
       String(task._id),
@@ -236,7 +236,7 @@ export class TaskService {
 
   async getStatus(id: string | ObjectId): Promise<TaskStatusDto> {
     const task = await this.get(id);
-    const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+    const workflow = await this.workflowTemplateService.getDefinition(task.workflow_template_id, task.workflow_template_version);
 
     const currentSteps = task.steps
       .filter((s) => s.state === STEP_STATE.PENDING_APPROVAL)
@@ -260,7 +260,7 @@ export class TaskService {
     return {
       status: task.status,
       reference: task.reference,
-      workflow_title: workflow.title,
+      workflow_template_title: workflow.title,
       current_steps: currentSteps,
       rejected_at_step: rejectedStep ? workflow.steps.find((ws) => ws.id === rejectedStep.step_id)?.name ?? rejectedStep.step_id : null,
       rejected_by: rejectedStep?.assignee?.name ?? null,
@@ -284,7 +284,7 @@ export class TaskService {
       throw new ConflictError("A record is only issued once every step is approved");
     }
 
-    const workflow = await this.workflowService.getDocument(task.workflow_id, task.version);
+    const workflow = await this.workflowTemplateService.getDefinition(task.workflow_template_id, task.workflow_template_version);
     const record = task.completion_document;
     const completedAt = record ? record.generated_at : task.updated_at;
 
@@ -337,7 +337,7 @@ export class TaskService {
     await this.taskModel.setStatus(id, TASK_STATUS.COLLECTING);
     const reopened = await this.appendAudit(id, "more_info_requested", stepId);
 
-    const workflow = await this.workflowService.getDocument(reopened.workflow_id, reopened.version);
+    const workflow = await this.workflowTemplateService.getDefinition(reopened.workflow_template_id, reopened.workflow_template_version);
     await this.notificationService.sendMoreInfoNotice(reopened, workflow, step);
 
     return reopened;
@@ -390,8 +390,8 @@ export class TaskService {
       actor,
       snapshot: {
         reference: task.reference,
-        workflow_id: task.workflow_id,
-        version: task.version,
+        workflow_template_id: task.workflow_template_id,
+        workflow_template_version: task.workflow_template_version,
         status: task.status,
         created_at: task.created_at,
         step_outcomes: task.steps.map((step) => ({
@@ -407,10 +407,6 @@ export class TaskService {
     if (!deleted) throw NotFoundError.of("Task", String(id));
 
     logger.info("task deleted", { taskId: String(task._id), reference: task.reference, status: task.status });
-  }
-
-  countByWorkflow(workflowId: string, statuses?: TaskStatus[]): Promise<number> {
-    return this.taskModel.countByWorkflow(workflowId, statuses);
   }
 
   list(filters: { created_by?: string; session_id?: string; status?: TaskStatus }): Promise<TaskDocument[]> {

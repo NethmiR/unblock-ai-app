@@ -117,22 +117,15 @@ export interface WorkflowCompletion {
 
 export type Confidence = "high" | "medium" | "low";
 
-export type ReviewStatus = "pending_admin_review" | "confirmed" | "rejected";
-
 export interface WorkflowMetadata {
-  created_from: "plain_text";
-  source_text_hash: string;
-  extraction_model: string;
-  extraction_timestamp: string;
   confidence: Confidence;
   ambiguities: string[];
   unmapped_roles: string[];
-  review_status: ReviewStatus;
+  is_workflow: boolean;
 }
 
 export interface WorkflowDefinition {
   schema_version: string;
-  workflow_id: string;
   title: string;
   description: string;
   retrieval_summary: RetrievalSummary;

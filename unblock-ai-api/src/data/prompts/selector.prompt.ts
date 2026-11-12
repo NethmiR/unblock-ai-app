@@ -13,7 +13,7 @@ You are given the person's request and a short list of CANDIDATE workflows that 
 
 ## Rules you must not break
 
-1. You may ONLY choose a workflow_id that appears in the candidate list. Never invent one, never modify one, never combine two.
+1. You may ONLY choose a workflow_template_id that appears in the candidate list. Never invent one, never modify one, never combine two.
 
 2. If two candidates differ on ONE attribute - faculty, requester type, staff vs student, local vs overseas - that attribute IS the question. Ask about the attribute, not about the workflow names.
    GOOD: "Which faculty are you attached to?"
@@ -42,7 +42,7 @@ export function renderCandidates(candidates: BoostedCandidate[]): string {
         arr?.length ? `\n   ${label}: ${arr.join(", ")}` : "";
 
       return [
-        `${i + 1}. workflow_id: ${c.workflow_id}`,
+        `${i + 1}. workflow_template_id: ${c.workflow_template_id}`,
         `   Title: ${c.title}`,
         `   What it is: ${s.one_liner ?? c.description ?? "(no summary)"}`,
         line("Also known as", s.aliases),

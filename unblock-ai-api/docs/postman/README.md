@@ -2,11 +2,13 @@
 
 Two files:
 
-- `unblock-ai.postman_collection.json` — requests across 9 folders, run in order:
-  **Health → Auth → Users → Drafts → Workflows → Selection → Tasks → Approvals → Error cases**.
+- `unblock-ai.postman_collection.json` — requests across 10 folders, run in order:
+  **Health → Auth → Users → Organisation → User affiliations → Workflow Templates → Selection →
+  Tasks → Approvals → Error cases**.
 - `unblock-ai.postman_environment.json` — just `baseUrl`. `loginEmail`, `loginPassword`,
-  `authToken`, `secondAuthToken`, `otherUserSessionId`, `logoutToken`, `userId`, `draftId`,
-  `workflowId`, `sessionId`, `templateVersion`, `selectionDecision`, `taskId`,
+  `authToken`, `secondAuthToken`, `otherUserSessionId`, `logoutToken`, `userId`,
+  `facultyId`, `departmentId`, `designationId`, `workflowTemplateId`,
+  `draftWorkflowTemplateId`, `sessionId`, `templateVersion`, `selectionDecision`, `taskId`,
   `requirementKey`, `requirementType`, `requirementLabel`, `requirementValue`, and
   `approvalToken` live only as **collection** variables (declared on the collection
   itself, visible under the collection's *Variables* tab) so that
@@ -23,7 +25,7 @@ Two files:
    `SEED_ADMINISTRATOR_FULL_NAME` in `.env`.
 2. Run `npm run migrate:up`, then `npm run seed:pg:run`. This creates the bootstrap
    administrator, who holds every permission (`workflow:manage`, `task:create`,
-   `task:approve`, `user:manage`). Their password is `USER_DEFAULT_PASSWORD`.
+   `task:approve`, `user:manage`, `organisation:manage`). Their password is `USER_DEFAULT_PASSWORD`.
    Re-running the seed is safe; it skips an email that is already registered.
 3. In the collection's *Variables* tab, set `loginEmail` to that
    `SEED_ADMINISTRATOR_EMAIL` and `loginPassword` to `USER_DEFAULT_PASSWORD`. The
@@ -65,12 +67,14 @@ with only `task:create` and a `{{$timestamp}}`-based email (so re-runs do not hi
 
 Each route is guarded by a permission rather than a user type:
 
-- `workflow:manage` — Drafts, and every write on Workflows plus the deletion log.
-- `workflow:manage` **or** `task:create` — `GET /workflows`, `GET /workflows/:id` and
-  `GET /workflows/:id/record`.
+- `workflow:manage` — every write in Workflow Templates (save draft, generate, rename,
+  publish, archive, restore).
+- `workflow:manage` **or** `task:create` — `GET /workflow-templates`,
+  `GET /workflow-templates/:workflowTemplateId` and the two `…/versions` reads.
 - `task:create` — Selection and Tasks. A user only sees their own tasks; another
   user's task id answers `404`.
 - `user:manage` — Users.
+- `organisation:manage` — writes in Organisation.
 - Approvals and Health need no session.
 
 A token without the needed permission gets `403 PERMISSION_DENIED`. To exercise that,
@@ -87,8 +91,9 @@ and §13 for users.
 
 ## Required timeout setting
 
-`POST /workflows/extract` and `POST /drafts/:id/extract` call Azure OpenAI and can take
-10–60 seconds. Before running either request (or the whole collection), raise Postman's
+`POST /workflow-templates/generate` and `POST /workflow-templates/:workflowTemplateId/generate`
+call the configured LLM provider and can take 10–60 seconds. Before running them (or the
+whole collection), raise Postman's
 request timeout: **Settings → General → Request timeout in ms** — set it to at least
 `90000`. The default timeout will abort these requests as a false failure.
 
@@ -99,32 +104,44 @@ request timeout: **Settings → General → Request timeout in ms** — set it t
 - The server is running (`npm run dev` or `npm run build && npm start`), `npm run
   migrate:up` has been run to create the collections, indexes and tables, and `npm run
   seed:pg:run` has created the administrator you log in as (see *Auth*).
-- At least one workflow template exists with `review_status: "confirmed"` before the
-  **Selection** folder can find anything. The **Drafts** and **Workflows** folders each
-  create and publish one — run one of them first, or run the whole collection with the
-  Collection Runner so the ordering happens automatically.
+- At least one **published**, non-archived workflow template exists before the
+  **Selection** folder can find anything. The **Workflow Templates** folder generates and
+  publishes one from `src/data/samples/demo-drafts/workshop_event.txt`, which matches the
+  Selection query — run it first, or run the whole collection with the Collection Runner
+  so the ordering happens automatically.
 
 ## Running the whole collection
 
 Use the **Collection Runner** (or `newman run unblock-ai.postman_collection.json -e
-unblock-ai.postman_environment.json`) and select all 9 folders in their listed order.
+unblock-ai.postman_environment.json`) and select all 10 folders in their listed order.
 Apart from `loginEmail` / `loginPassword` (see *Auth*), no manual variable entry is
-required — every token and id (`authToken`, `userId`, `draftId`, `workflowId`,
-`sessionId`, `templateVersion`, `taskId`) is written into a collection variable by a
+required — every token and id (`authToken`, `userId`, `workflowTemplateId`,
+`draftWorkflowTemplateId`, `sessionId`, `templateVersion`, `taskId`) is written into a collection variable by a
 `pm.test` script in an earlier request and read by a later one.
 
-**`Delete workflow`** (in the Workflows folder) is **not** meant to run as part
-of a routine full-collection pass — it permanently deletes `{{workflowId}}`, which every
-later folder (Selection, Tasks) depends on. Leave it unchecked in the Collection Runner
-and only run it by hand, against a scratch template you created for that purpose.
+## Workflow Templates folder
+
+**Generate workflow template** creates a template and its version 1 and stores the id in
+`{{workflowTemplateId}}` (and `current_version` in `{{templateVersion}}`). The rest of
+the folder renames it and saves a prompt edit (**PATCH**), publishes it, regenerates it
+(the template stays published and version 2 goes live at once), reads the version
+history, then archives and restores it — restore brings it back as published, so the
+Selection folder still finds it. **Save draft workflow template** saves a title and
+prompt without generating and stores that id in `{{draftWorkflowTemplateId}}`, which the
+Error cases folder uses to show `409 WORKFLOW_TEMPLATE_NOT_GENERATED`.
+
+There is no delete endpoint; each run leaves its templates behind. Archive the ones you
+no longer want from the web app or with **Archive workflow template**.
 
 Two requests carry conditional logic in a pre-request script and call
 `postman.setNextRequest(...)` to skip a step that does not apply to the current session:
 
 - **Answer clarifying question (round 2+)** only runs if `Start session (round 1)`
-  returned `decision: "ambiguous"`; otherwise it jumps to `Choose workflow manually`.
-- **Choose workflow manually** only meaningfully runs if the decision was
-  `"manual_choice"`; otherwise it jumps to `Get matched workflow document`.
+  returned `decision: "ambiguous"`; otherwise it jumps to `Choose workflow template manually`.
+- **Choose workflow template manually** only meaningfully runs if the decision was
+  `"manual_choice"`; otherwise it jumps to `Get matched workflow template`. Its body sends
+  `{ "workflow_template_id": "{{workflowTemplateId}}" }`, which must be one of the
+  session's candidates.
 
 Each pass of the **Selection** folder therefore takes a different path through those two
 requests depending on what the Selector Agent decided — this is expected, not a failure.
@@ -138,7 +155,7 @@ to be run in a loop until `next` reports `complete: true`.
 The loop is **type-aware**, so it no longer needs hand-editing per requirement.
 `POST /tasks/:id/values` coerces strictly by the requirement's `type`, and a single
 `"example value"` string is rejected with a 400 by every non-string type — including
-`requester_email`, the `type: "email"` input that every workflow now declares. So:
+`requester_email`, the `type: "email"` input that every workflow template now declares. So:
 
 - `Get next requirement` stores `requirement.key` **and** `requirement.type` into
   `{{requirementKey}}` / `{{requirementType}}`.
@@ -162,6 +179,10 @@ One request per error class defined in `src/errors/`, asserting the `{ error, co
 details }` shape produced by `error-handler.middleware.ts`, including three auth cases:
 login with an unregistered email (`401 INVALID_CREDENTIALS` — an unregistered email so it
 never counts toward any account's lockout), `GET /users` with no token
-(`401 AUTHENTICATION_REQUIRED`), and an unknown user id (`404 USER_NOT_FOUND`). These
+(`401 AUTHENTICATION_REQUIRED`), and an unknown user id (`404 USER_NOT_FOUND`). The
+workflow template cases cover a missing prompt (`400`), an unknown and a non-UUID
+`workflowTemplateId` (`404 WORKFLOW_TEMPLATE_NOT_FOUND`, `400`), publishing a draft or an
+already-published template (`409`), and a prompt that is not a workflow
+(`422 WORKFLOW_TEMPLATE_PROMPT_REJECTED` — decided by the model, so it can be flaky). These
 requests are expected to fail with their documented status code — that is a passing test, not a bug in the
 server.

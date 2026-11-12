@@ -25,11 +25,11 @@ export class SelectorService {
       // model call to be told the obvious.
       return {
         decision: SELECTION_DECISION.NO_MATCH,
-        workflow_id: null,
+        workflow_template_id: null,
         confidence: "high",
         question: null,
         options: [],
-        reasoning: "No confirmed templates were retrieved for this query.",
+        reasoning: "No published workflow templates were retrieved for this query.",
       };
     }
 
@@ -50,17 +50,17 @@ export class SelectorService {
   }
 
   private sanitize(decision: SelectorDecision, candidates: BoostedCandidate[]): SelectorDecision {
-    const validIds = new Set(candidates.map((c) => c.workflow_id));
+    const validIds = new Set(candidates.map((c) => c.workflow_template_id));
 
-    if (decision.decision === SELECTION_DECISION.MATCHED && !validIds.has(decision.workflow_id ?? "")) {
-      logger.warn("selector hallucinated a workflow_id", {
-        returned: decision.workflow_id,
+    if (decision.decision === SELECTION_DECISION.MATCHED && !validIds.has(decision.workflow_template_id ?? "")) {
+      logger.warn("selector hallucinated a workflow_template_id", {
+        returned: decision.workflow_template_id,
         offered: [...validIds],
       });
       return {
         ...decision,
         decision: SELECTION_DECISION.AMBIGUOUS,
-        workflow_id: null,
+        workflow_template_id: null,
         question: decision.question ?? "Could you describe what you need in a bit more detail?",
         options: [],
       };
@@ -68,12 +68,12 @@ export class SelectorService {
 
     if (decision.decision === SELECTION_DECISION.MATCHED && decision.confidence === "low") {
       logger.info("downgrading low-confidence match to ambiguous", {
-        workflow_id: decision.workflow_id,
+        workflow_template_id: decision.workflow_template_id,
       });
       return {
         ...decision,
         decision: SELECTION_DECISION.AMBIGUOUS,
-        workflow_id: null,
+        workflow_template_id: null,
         question: decision.question ?? "Which of these best describes your situation?",
         options: decision.options?.length ? decision.options : candidates.map((c) => c.title),
       };

@@ -2,9 +2,8 @@ export { AzureOpenAILlmAdapter, GeminiLlmAdapter, createLlmAdapter } from "./llm
 export { AzureOpenAIEmbeddingAdapter, GeminiEmbeddingAdapter, createEmbeddingAdapter } from "./embedding-adapter/index.embedding-adapter.js";
 export { ValidationService } from "./validation.service.js";
 export { EmbeddingService } from "./embedding.service.js";
-export { ExtractionService } from "./extraction.service.js";
-export { DraftService } from "./draft.service.js";
-export { WorkflowService } from "./workflow.service.js";
+export { WorkflowTemplateGenerationService } from "./workflow-template-generation.service.js";
+export { WorkflowTemplateService } from "./workflow-template.service.js";
 export { RetrievalService } from "./retrieval.service.js";
 export { SelectorService } from "./selector.service.js";
 export { SelectionService } from "./selection.service.js";

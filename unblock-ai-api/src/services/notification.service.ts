@@ -35,7 +35,7 @@ export class NotificationService {
 
     const email = approvalRequestEmail({
       taskReference: task.reference,
-      workflowTitle: workflow.title,
+      workflowTemplateTitle: workflow.title,
       stepName: step.name,
       approverName: step.assignee.name,
       approvalUrl: `${this.config.mail.appPublicUrl}/approvals/${step.approval_token}`,
@@ -50,7 +50,7 @@ export class NotificationService {
 
     const email = rejectionNoticeEmail({
       taskReference: task.reference,
-      workflowTitle: workflow.title,
+      workflowTemplateTitle: workflow.title,
       stepName: workflowStepName(workflow, step.step_id),
       reason: step.reason ?? "",
     });
@@ -73,7 +73,7 @@ export class NotificationService {
 
     const email = completionNoticeEmail({
       taskReference: task.reference,
-      workflowTitle: workflow.title,
+      workflowTemplateTitle: workflow.title,
       documentUrl: `${this.config.mail.appPublicUrl}/portal/jobs/${task._id}`,
       hasAttachment: attach,
     });
@@ -91,7 +91,7 @@ export class NotificationService {
 
     const email = moreInfoNoticeEmail({
       taskReference: task.reference,
-      workflowTitle: workflow.title,
+      workflowTemplateTitle: workflow.title,
       stepName: workflowStepName(workflow, step.step_id),
       question: step.reason ?? "",
     });

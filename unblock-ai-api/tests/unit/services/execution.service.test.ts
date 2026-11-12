@@ -7,6 +7,7 @@ import { ValidationError } from "../../../src/errors/validation.error.js";
 import { ConflictError } from "../../../src/errors/conflict.error.js";
 import { STEP_STATE, TASK_STATUS } from "../../../src/data/constants/status.constant.js";
 import { loadExpectedFixture, stepById } from "../../helpers/fixture.helper.js";
+import { LEAVE_WORKFLOW_TEMPLATE_ID } from "../../helpers/workflow-template.helper.js";
 import type { TaskDocument, TaskStepState } from "../../../src/lib/types/task/task.type.js";
 import type { WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
 
@@ -28,8 +29,8 @@ function finalizedTask(workflow: WorkflowDefinition): TaskDocument {
     reference: "REF-0001",
     session_id: "session-1",
     created_by: "user-1",
-    workflow_id: workflow.workflow_id,
-    version: 1,
+    workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID,
+    workflow_template_version: 1,
     status: TASK_STATUS.READY,
     requirements,
     values: {},

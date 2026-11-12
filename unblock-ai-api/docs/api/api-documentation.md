@@ -5,7 +5,7 @@ manual testing in Postman.
 
 - **Server entry point:** `src/server.ts`
 - **App builder:** `src/app.ts`
-- **Route modules:** `src/routes/health.route.ts`, `src/routes/auth.route.ts`, `src/routes/user-session.route.ts`, `src/routes/user.route.ts`, `src/routes/workflow.route.ts`, `src/routes/draft.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`, `src/routes/approval.route.ts`
+- **Route modules:** `src/routes/health.route.ts`, `src/routes/auth.route.ts`, `src/routes/user-session.route.ts`, `src/routes/user.route.ts`, `src/routes/workflow-template.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`, `src/routes/approval.route.ts`
 
 ---
 
@@ -30,8 +30,8 @@ The port comes from the `PORT` environment variable and defaults to `3000`.
 | `loginPassword` | `USER_DEFAULT_PASSWORD` from `.env` |
 | `authToken`     | (filled in from `POST /auth/login`) |
 | `userId`        | (filled in from `POST /users`) |
-| `draftId`       | (filled in from a response) |
-| `workflowId`    | (filled in from a response) |
+| `workflowTemplateId` | (filled in from a response) |
+| `draftWorkflowTemplateId` | (filled in from a response) |
 | `sessionId`     | (filled in from a response) |
 | `taskId`        | (filled in from a response) |
 | `approvalToken` | (read from the console mailer's stdout log) |
@@ -92,16 +92,18 @@ keep working for an approver with no account at all.
 
 | Permission | Grants |
 | --- | --- |
-| `workflow:manage` | Create, edit, review and delete workflow templates and drafts |
-| `task:create` | Find a workflow (selection) and create, complete and manage **their own** tasks |
+| `workflow:manage` | Create, generate, publish and archive workflow templates (§4) |
+| `task:create` | Find a workflow template (selection) and create, complete and manage **their own** tasks |
 | `task:approve` | Can be granted, but currently gates no endpoint — approvers act through approval links (§8) |
 | `user:manage` | Create and view users and their permissions (§13) |
+| `organisation:manage` | Configure faculties, departments, divisions and designations (§14–§15) |
 
 A user with several permissions passes any guard that lists one of them. The
-bootstrap administrator from `npm run seed:pg:run` holds all four.
+bootstrap administrator from `npm run seed:pg:run` holds all five.
 
-`POST /api/drafts` records the authenticated user's id as the draft's
-`submitted_by` (stored, not returned in the draft response).
+Every workflow template write (§4) records the authenticated user's id as the
+template's `updated_by` (and `created_by` on create); responses resolve both to
+the user's name and email.
 
 Request bodies are capped at **1 MB** (`express.json({ limit: "1mb" })`, `src/middlewares/json-body.middleware.ts`).
 
@@ -126,40 +128,54 @@ only affects browsers; Postman ignores it.
 | 8 | `POST`   | `/api/users`                           | Create a user (§13.1) | `user:manage` |
 | 9 | `GET`    | `/api/users`                           | List users (§13.2) | `user:manage` |
 | 10 | `GET`   | `/api/users/:userId`                   | Get one user (§13.3) | `user:manage` |
-| 11 | `POST`  | `/api/workflows/extract`               | Extract a workflow JSON from prose (does **not** save) | `workflow:manage` |
-| 12 | `POST`  | `/api/workflows`                       | Save a workflow document as a new version | `workflow:manage` |
-| 13 | `GET`   | `/api/workflows`                       | List latest workflow summaries | `workflow:manage` or `task:create` |
-| 14 | `GET`   | `/api/workflows/:id`                   | Get one workflow document | `workflow:manage` or `task:create` |
-| 15 | `PUT`   | `/api/workflows/:id`                   | Update a workflow (saves a new version) | `workflow:manage` |
-| 16 | `POST`  | `/api/workflows/:id/validate`          | Validate a workflow without saving | `workflow:manage` |
-| 17 | `PATCH` | `/api/workflows/:id/title`             | Rename a template | `workflow:manage` |
-| 18 | `DELETE` | `/api/workflows/:id`                  | Permanently delete a template; logs the deleting user (§4.7) | `workflow:manage` |
-| 19 | `GET`   | `/api/workflows/deletions`             | The template deletion log, newest first (§4.8) | `workflow:manage` |
-| 20 | `POST`  | `/api/drafts`                          | Save raw prose as a draft (idempotent) | `workflow:manage` |
-| 21 | `GET`   | `/api/drafts`                          | List drafts | `workflow:manage` |
-| 22 | `GET`   | `/api/drafts/:id`                      | Get one draft | `workflow:manage` |
-| 23 | `POST`  | `/api/drafts/:id/extract`              | Generate + save a template from a draft | `workflow:manage` |
-| 24 | `GET`   | `/api/workflows/:id/record`            | Get the full stored row (template editor) | `workflow:manage` or `task:create` |
-| 25 | `PATCH` | `/api/workflows/:id/review`            | Publish / reject a template | `workflow:manage` |
-| 26 | `POST`  | `/api/selection/sessions`              | Start a selection conversation (round 1) | `task:create` |
-| 27 | `POST`  | `/api/selection/sessions/:id/answer`   | Answer a clarifying question (round 2+) | `task:create` |
-| 28 | `POST`  | `/api/selection/sessions/:id/choose`   | Pick a workflow manually | `task:create` |
-| 29 | `GET`   | `/api/selection/sessions/:id/workflow` | Get the matched workflow document | `task:create` |
-| 30 | `POST`  | `/api/tasks`                           | Create a task from a matched selection session | `task:create` |
-| 31 | `GET`   | `/api/tasks`                           | List the caller's own tasks (filter by `session_id` / `status`) | `task:create` |
-| 32 | `GET`   | `/api/tasks/:id`                       | Get one task | `task:create` + owner |
-| 33 | `GET`   | `/api/tasks/:id/next`                  | Get the next unfilled requirement | `task:create` + owner |
-| 34 | `POST`  | `/api/tasks/:id/values`                | Submit a value for a requirement | `task:create` + owner |
-| 35 | `POST`  | `/api/tasks/:id/finalize`              | Finalize a task once all required values are filled | `task:create` + owner |
-| 36 | `PATCH` | `/api/tasks/:id/status`                | Cancel a task | `task:create` + owner |
-| 37 | `POST`  | `/api/tasks/:id/start`                 | Start the approval chain — dispatches the first step(s) and sends email | `task:create` + owner |
-| 38 | `GET`   | `/api/tasks/:id/status`                | Requester-facing status timeline | `task:create` + owner |
-| 39 | `GET`   | `/api/tasks/:id/document`              | Download the completion-document PDF record (§7.10) | `task:create` + owner |
-| 40 | `DELETE` | `/api/tasks/:id`                      | Permanently delete a finished or never-started task | `task:create` + owner |
-| 41 | `GET`   | `/api/approvals/:token`                | Approver view — the decision page's data | none — the approval token IS the auth |
-| 42 | `POST`  | `/api/approvals/:token/decision`       | Submit an approve / reject / request-more-info decision | none — the approval token IS the auth |
+| 11 | `GET`   | `/api/workflow-templates`              | List workflow templates (§4.1) | `workflow:manage` or `task:create` |
+| 12 | `POST`  | `/api/workflow-templates`              | Save a draft template — title + prompt, nothing generated (§4.2) | `workflow:manage` |
+| 13 | `POST`  | `/api/workflow-templates/generate`     | Create a template and generate version 1 (§4.3) | `workflow:manage` |
+| 14 | `GET`   | `/api/workflow-templates/:workflowTemplateId` | Get one template with its current version (§4.4) | `workflow:manage` or `task:create` |
+| 15 | `PATCH` | `/api/workflow-templates/:workflowTemplateId` | Rename and/or save prompt edits (§4.5) | `workflow:manage` |
+| 16 | `POST`  | `/api/workflow-templates/:workflowTemplateId/generate` | Generate a new version from a prompt (§4.6) | `workflow:manage` |
+| 17 | `POST`  | `/api/workflow-templates/:workflowTemplateId/publish` | Offer the template to requesters (§4.7) | `workflow:manage` |
+| 18 | `POST`  | `/api/workflow-templates/:workflowTemplateId/archive` | Archive a template (§4.8) | `workflow:manage` |
+| 19 | `POST`  | `/api/workflow-templates/:workflowTemplateId/restore` | Restore an archived template (§4.9) | `workflow:manage` |
+| 20 | `GET`   | `/api/workflow-templates/:workflowTemplateId/versions` | Version history, newest first (§4.10) | `workflow:manage` or `task:create` |
+| 21 | `GET`   | `/api/workflow-templates/:workflowTemplateId/versions/:version` | One version with its prompt and definition (§4.11) | `workflow:manage` or `task:create` |
+| 22 | `POST`  | `/api/selection/sessions`              | Start a selection conversation (round 1) | `task:create` |
+| 23 | `POST`  | `/api/selection/sessions/:id/answer`   | Answer a clarifying question (round 2+) | `task:create` |
+| 24 | `POST`  | `/api/selection/sessions/:id/choose`   | Pick a workflow template manually | `task:create` |
+| 25 | `GET`   | `/api/selection/sessions/:id/workflow-template` | Get the matched template's published definition | `task:create` |
+| 26 | `POST`  | `/api/tasks`                           | Create a task from a matched selection session | `task:create` |
+| 27 | `GET`   | `/api/tasks`                           | List the caller's own tasks (filter by `session_id` / `status`) | `task:create` |
+| 28 | `GET`   | `/api/tasks/:id`                       | Get one task | `task:create` + owner |
+| 29 | `GET`   | `/api/tasks/:id/next`                  | Get the next unfilled requirement | `task:create` + owner |
+| 30 | `POST`  | `/api/tasks/:id/values`                | Submit a value for a requirement | `task:create` + owner |
+| 31 | `POST`  | `/api/tasks/:id/finalize`              | Finalize a task once all required values are filled | `task:create` + owner |
+| 32 | `PATCH` | `/api/tasks/:id/status`                | Cancel a task | `task:create` + owner |
+| 33 | `POST`  | `/api/tasks/:id/start`                 | Start the approval chain — dispatches the first step(s) and sends email | `task:create` + owner |
+| 34 | `GET`   | `/api/tasks/:id/status`                | Requester-facing status timeline | `task:create` + owner |
+| 35 | `GET`   | `/api/tasks/:id/document`              | Download the completion-document PDF record (§7.10) | `task:create` + owner |
+| 36 | `DELETE` | `/api/tasks/:id`                      | Permanently delete a finished or never-started task | `task:create` + owner |
+| 37 | `GET`   | `/api/approvals/:token`                | Approver view — the decision page's data | none — the approval token IS the auth |
+| 38 | `POST`  | `/api/approvals/:token/decision`       | Submit an approve / reject / request-more-info decision | none — the approval token IS the auth |
+| 39 | `GET`   | `/api/organisational-units`            | List faculties, departments and divisions (§14.1) | authenticated |
+| 40 | `POST`  | `/api/organisational-units`            | Create an organisational unit (§14.2) | `organisation:manage` |
+| 41 | `GET`   | `/api/organisational-units/:unitId`    | Get one organisational unit (§14.3) | authenticated |
+| 42 | `PATCH` | `/api/organisational-units/:unitId`    | Rename, re-parent or describe a unit (§14.4) | `organisation:manage` |
+| 43 | `POST`  | `/api/organisational-units/:unitId/archive` | Archive a unit (§14.5) | `organisation:manage` |
+| 44 | `POST`  | `/api/organisational-units/:unitId/restore` | Restore an archived unit (§14.5) | `organisation:manage` |
+| 45 | `DELETE` | `/api/organisational-units/:unitId`   | Delete an unused unit (§14.6) | `organisation:manage` |
+| 46 | `GET`   | `/api/organisational-units/:unitId/members` | Members of a unit with their designations there (§16.4) | `user:manage` or `organisation:manage` |
+| 47 | `GET`   | `/api/designations`                    | List designations (§15.1) | authenticated |
+| 48 | `POST`  | `/api/designations`                    | Create a designation (§15.2) | `organisation:manage` |
+| 49 | `GET`   | `/api/designations/:designationId`     | Get one designation (§15.3) | authenticated |
+| 50 | `PATCH` | `/api/designations/:designationId`     | Update a designation (§15.4) | `organisation:manage` |
+| 51 | `POST`  | `/api/designations/:designationId/archive` | Archive a designation (§15.5) | `organisation:manage` |
+| 52 | `POST`  | `/api/designations/:designationId/restore` | Restore an archived designation (§15.5) | `organisation:manage` |
+| 53 | `DELETE` | `/api/designations/:designationId`    | Delete a designation nobody holds (§15.6) | `organisation:manage` |
+| 54 | `GET`   | `/api/users/:userId/affiliations`      | A user's memberships and designations (§16.1) | `user:manage` |
+| 55 | `PUT`   | `/api/users/:userId/affiliations`      | Replace a user's affiliations (§16.2) | `user:manage` |
+| 56 | `GET`   | `/api/auth/me/affiliations`            | The caller's own affiliations (§16.3) | authenticated |
 
-42 route bindings. **authenticated** means `requireAuthentication()` — any
+56 route bindings. **authenticated** means `requireAuthentication()` — any
 active session, whatever its permissions. A permission name means
 `requireAnyPermission(...)`; "`workflow:manage` or `task:create`" passes with
 either. **+ owner** adds the task-ownership guard: a task created by another
@@ -188,572 +204,481 @@ Liveness check — no dependencies (Mongo, Azure) are touched.
 
 ---
 
-## 4. Workflow endpoints
+## 4. Workflow template endpoints
 
-### 4.1 `POST /api/workflows/extract`
+`src/routes/workflow-template.route.ts` + `src/controllers/workflow-template.controller.ts`,
+backed by `WorkflowTemplateService` (`src/services/workflow-template.service.ts`).
 
-Sends prose to the configured LLM provider and returns the extracted workflow JSON. Nothing is
-persisted — use this to preview extraction. It retries internally (up to
-`config.extraction.maxAttempts`, default 3), feeding validation errors
-back to the model as repair prompts.
+A workflow template is authored from a plain-language **prompt**. The model turns the
+prompt into a workflow definition (§5); each generation is stored as a new, immutable
+**version**. Two Mongo collections hold the data:
 
-**Request body**
+- `workflow_templates` — one document per template, keyed by a string UUID `_id`. Holds
+  the `title`, `status`, `current_version`, `draft_prompt`, `archived_at`,
+  `created_by` / `updated_by`, and the `retrieval` block (text, embedding, aliases,
+  `retrieval_summary` and `institution_type`) of the current version.
+- `workflow_template_versions` — one document per generated version: the `prompt` it was
+  generated from, the generated `definition`, and `generation_attempts`. Never updated
+  or deleted.
 
-| Field  | Type   | Required | Notes                    |
-| ------ | ------ | -------- | ------------------------ |
-| `text` | string | yes      | Must be non-empty after trimming |
+**Lifecycle**
+
+| `status` | Meaning | Reached by |
+| -------- | ------- | ---------- |
+| `draft` | Title and prompt saved; nothing generated yet. No versions. | `POST /workflow-templates` (§4.2) |
+| `unpublished` | Generated at least once; not offered to requesters. | `POST /workflow-templates/generate` (§4.3), or the first `POST …/:id/generate` (§4.6) on a draft |
+| `published` | The current version is offered to requesters through selection (§6). | `POST …/:id/publish` (§4.7) |
+
+- **Regenerating creates a new version.** Versions number from 1 per template, and
+  `current_version` always points to the newest. On a **published** template the new
+  version is live immediately — the status stays `published` and there is no
+  re-publish step. Older versions stay stored, so tasks pinned to them (§7) keep
+  working.
+- **The title lives on the template, not on a version.** Renaming (§4.5) never creates
+  a version. Every read of a definition — including the task status page, the approver
+  view and emails for tasks pinned to older versions — shows the template's current
+  title.
+- **Pending prompt edits.** `draft_prompt` holds a prompt that has been saved but not
+  generated. On a `draft` template it *is* the prompt. On a generated template a
+  non-null `draft_prompt` means edits that have not been generated yet, reported as
+  `has_ungenerated_changes: true`; generating clears it.
+- **Archive replaces delete.** There is no delete endpoint. Archiving (§4.8) keeps the
+  status but hides the template from the default list, takes it out of selection, and
+  makes it read-only until it is restored (§4.9).
+- **Only published, non-archived templates are retrievable** by selection (§6).
+- **Who changed it.** `created_by` and `updated_by` store user ids; responses resolve
+  them to `{ "id", "full_name", "email" }`, or `null` when the user no longer exists.
+  Every write sets `updated_by` to the caller.
+
+**Permissions.** The `GET` routes accept `workflow:manage` **or** `task:create`;
+every other route requires `workflow:manage`. A caller without `workflow:manage` only
+ever sees **published** templates: drafts and unpublished templates are left out of the
+list and return `404 WORKFLOW_TEMPLATE_NOT_FOUND` from the single-template and version
+routes. Archived published templates stay readable (with `include_archived=true` on the
+list) so older tasks can still resolve their template.
+
+**The template object.** Every single-template response is wrapped as
+`{ "workflow_template": { ... } }` (`serializeWorkflowTemplate`,
+`src/utils/http/workflow-template-serializer.util.ts`):
 
 ```json
 {
-  "text": "Any undergraduate student of the Faculty of Information Technology who intends to travel overseas during the academic term must obtain prior approval before leaving the country. The student submits a request stating their full name, index number, the destination country, the departure date, the return date, and the reason for the trip. The request first goes to the student's Academic Advisor for approval. Once the Academic Advisor approves, it goes to the Head of the Department of Information Technology."
-}
-```
-
-**200 OK**
-
-```json
-{
-  "workflow": {
-    "schema_version": "1.0",
-    "workflow_id": "it_faculty_overseas_leave",
+  "workflow_template": {
+    "id": "3b2f6c1e-8a4d-4f0b-9c7e-2d1a5e6f7a8b",
     "title": "IT Faculty Overseas Leave Approval",
-    "description": "...",
-    "retrieval_summary": { "...": "..." },
-    "scope": { "...": "..." },
-    "requester": { "...": "..." },
-    "inputs": [],
-    "computed": [],
-    "steps": [],
-    "completion": { "...": "..." },
-    "metadata": { "...": "..." }
-  },
-  "validation": { "valid": true, "errors": [] },
-  "attempts": 1
-}
-```
-
-`attempts` is how many model calls it took. `validation` is always
-`{ valid: true, errors: [] }` here, because an invalid result throws instead of
-returning.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `text` missing, not a string, or blank |
-| `422`  | Extraction failed after all attempts, or the text does not describe a workflow |
-| `500`  | Unhandled error (e.g. Azure network failure) |
-
-422 body:
-
-```json
-{
-  "error": "Source text does not describe a workflow",
-  "code": "EXTRACTION_ERROR",
-  "details": ["The text is a menu, not a process."]
-}
-```
-
-**Note:** this call is slow — expect **10–60 seconds**. Raise the Postman
-request timeout before testing it.
-
----
-
-### 4.2 `POST /api/workflows`
-
-Validates a full workflow document and saves it as a **new version**. Version
-numbers auto-increment per `workflow_id`; the previous latest is demoted
-(`is_latest: false`). An embedding is generated during the save.
-
-**Request body**
-
-| Field      | Type   | Required | Notes |
-| ---------- | ------ | -------- | ----- |
-| `workflow` | object | yes      | Must satisfy `src/data/schemas/workflow.schema.json` and the graph rules |
-
-```json
-{
-  "workflow": {
-    "schema_version": "1.0",
-    "workflow_id": "departmental_event_workshop",
-    "title": "Departmental Event & Workshop Organization",
-    "description": "Approval process for departments organizing an event or workshop.",
-    "retrieval_summary": {
-      "one_liner": "Get approval to run a departmental event or workshop.",
-      "aliases": ["event approval", "workshop approval"],
-      "keywords": ["book a hall", "run a workshop", "seminar"],
-      "requester_types": ["academic staff"],
-      "triggers": ["running a workshop for the department"],
-      "not_for": ["personal or private venue bookings"]
-    },
-    "scope": {
-      "institution_type": "university",
-      "applies_to": { "actor_type": "staff", "constraints": [] }
-    },
-    "requester": { "actor_type": "staff", "identifier_field": "department_id" },
-    "inputs": [
-      {
-        "id": "event_name",
-        "label": "Event Name",
-        "description": "Name of the event or workshop.",
-        "type": "string",
-        "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
-        "required": true,
-        "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
-        "collection_hint": null
-      }
-    ],
-    "computed": [],
-    "steps": [
-      {
-        "id": "hall_booking",
-        "name": "Hall Booking Approval",
-        "type": "approval",
-        "description": "Approval of the venue booking for the event.",
-        "assignee": { "resolution": "static", "role": "venue_admin", "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": "Hall Warden" },
-        "depends_on": [],
-        "initial_state": "auto",
-        "blocked_reason": null,
-        "condition": null,
-        "instructions_to_approver": "Confirm venue availability and capacity.",
-        "response_fields": [
-          { "id": "venue_name", "label": "Assigned Venue", "type": "string", "required_on_outcome": ["approved"] }
-        ],
-        "context_from_steps": [],
-        "outcomes": {
-          "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
-          "rejected": { "action": "terminate_workflow", "notify": [], "include_reason": true, "return_to_step": null, "prompt_source": null },
-          "request_more_info": null
-        },
-        "notifications": {
-          "on_assign": { "channel": "email", "template": "approval_request" },
-          "on_outcome": { "channel": "email", "template": "approval_result" }
-        },
-        "sla": { "reminder_after_hours": 48, "escalate_after_hours": 120 }
-      }
-    ],
-    "completion": {
-      "rule": "all_required_steps_complete",
-      "required_steps": ["hall_booking"],
-      "actions": []
-    },
-    "metadata": {
-      "created_from": "plain_text",
-      "source_text_hash": "sha256:placeholder",
-      "extraction_model": "gpt-4o-2024-08-06",
-      "extraction_timestamp": "2026-07-30T10:00:00Z",
-      "confidence": "medium",
-      "ambiguities": [],
-      "unmapped_roles": [],
-      "review_status": "pending_admin_review"
+    "description": "Approval process for IT undergraduates travelling overseas during term.",
+    "status": "published",
+    "current_version": 2,
+    "has_ungenerated_changes": false,
+    "is_archived": false,
+    "archived_at": null,
+    "created_by": { "id": "0f6d2a52-6b1c-4d3e-9a8f-1b2c3d4e5f60", "full_name": "Ops Lead", "email": "ops.lead@example.edu" },
+    "updated_by": { "id": "0f6d2a52-6b1c-4d3e-9a8f-1b2c3d4e5f60", "full_name": "Ops Lead", "email": "ops.lead@example.edu" },
+    "created_at": "2026-11-11T09:10:00.000Z",
+    "updated_at": "2026-11-11T09:40:12.511Z",
+    "draft_prompt": null,
+    "current": {
+      "version": 2,
+      "generation_attempts": 1,
+      "created_by": { "id": "0f6d2a52-6b1c-4d3e-9a8f-1b2c3d4e5f60", "full_name": "Ops Lead", "email": "ops.lead@example.edu" },
+      "created_at": "2026-11-11T09:40:12.511Z",
+      "prompt": "Any undergraduate student of the Faculty of Information Technology who intends to travel overseas ...",
+      "definition": { "schema_version": "1.0", "description": "...", "retrieval_summary": { "...": "..." }, "...": "see §5" }
     }
   }
 }
 ```
 
-> The schema uses `"additionalProperties": false` and lists **every** field as
-> required — including the nullable ones. You cannot omit `blocked_reason`,
-> `condition`, or the `validation` sub-object; send them as `null` / all-null.
-> A complete working example lives at
-> `src/data/samples/expected/departmental_event_workshop.json`.
+| Field | Notes |
+| ----- | ----- |
+| `id` | String UUID — the `{{workflowTemplateId}}` used in every path below |
+| `description` | Copied from the current version's definition; `null` until generated |
+| `status` | `draft` \| `unpublished` \| `published` |
+| `current_version` | Newest version number; `null` on a draft |
+| `has_ungenerated_changes` | `true` when a generated template has a saved `draft_prompt`; always `false` on a draft |
+| `is_archived` / `archived_at` | `archived_at` is the ISO time it was archived, or `null` |
+| `draft_prompt` | The saved, not-yet-generated prompt (see *Pending prompt edits*) |
+| `current` | The current version with its `prompt` and `definition`; `null` on a draft |
 
-**201 Created**
+The list (§4.1) returns the **summary** shape: the same fields without `draft_prompt`
+and `current`.
 
-```json
-{ "id": "departmental_event_workshop", "version": 1 }
-```
+### 4.1 `GET /api/workflow-templates`
 
-**Errors**
+Lists templates, newest `updated_at` first.
 
-| Status | Body |
-| ------ | ---- |
-| `400`  | `{ "error": "Body must include a 'workflow' object", "code": "VALIDATION_ERROR", "details": null }` |
-| `400`  | `{ "error": "Workflow failed validation", "code": "VALIDATION_ERROR", "details": ["/steps/0: must have required property 'sla'"] }` |
-| `502`  | `{ "error": "...", "code": "EMBEDDING_ERROR", "details": null }` — embedding service failure |
+| Parameter | In | Required | Notes |
+| --------- | -- | -------- | ----- |
+| `include_archived` | query | no | `true` or `false` (default `false`). `false` returns only non-archived templates; `true` returns all of them. Any other value is a 400 |
 
-A schema- or graph-invalid workflow is a **400**, not a 422: `ValidationService.assertValid`
-throws `ValidationError`, and the failing rules arrive in `details` as a string array.
-422 is reserved for `ExtractionError` — the model failing to produce a workflow — so the
-status distinguishes "your document is wrong" from "we could not build one from your prose".
-
----
-
-### 4.3 `GET /api/workflows`
-
-Lists the latest version of every workflow, newest `updated_at` first.
-
-**Query parameters**
-
-| Name               | Type   | Required | Notes |
-| ------------------ | ------ | -------- | ----- |
-| `institution_type` | string | no       | One of `university`, `school`, `company`, `hospital`, `government`, `other` |
-
-`GET {{baseUrl}}/workflows?institution_type=university`
-
-**200 OK** — an array (empty array when nothing matches, not a 404):
-
-```json
-[
-  {
-    "workflow_id": "departmental_event_workshop",
-    "title": "Departmental Event & Workshop Organization",
-    "description": "Approval process for departments organizing an event or workshop.",
-    "version": 2,
-    "schema_version": "1.0",
-    "review_status": "confirmed",
-    "draft_id": "6710f1a2b3c4d5e6f7089abc",
-    "updated_at": "2026-08-10T09:12:44.301Z"
-  }
-]
-```
-
-> The route only forwards `institution_type`. The store also understands a
-> `review_status` filter, but no route passes it, so `?review_status=` is ignored.
-
----
-
-### 4.4 `GET /api/workflows/:id`
-
-Returns the bare workflow **document** — no storage metadata. This is what the
-selector preview consumes.
-
-| Parameter | In    | Required | Notes |
-| --------- | ----- | -------- | ----- |
-| `id`      | path  | yes      | The `workflow_id`, e.g. `departmental_event_workshop` |
-| `version` | query | no       | A specific version number; omit for the latest |
-
-`GET {{baseUrl}}/workflows/departmental_event_workshop?version=1`
-
-**200 OK** — the full workflow object (same shape as `workflow` in §4.1).
-
-**400 Bad Request** — `version` was present but not a positive integer. An empty
-`?version=` is treated as absent (latest), so a Postman param left blank is harmless:
-
-```json
-{ "error": "version must be a positive integer", "code": "VALIDATION_ERROR", "details": null }
-```
-
-**404 Not Found**
-
-```json
-{ "error": "Workflow 'unknown_id' not found", "code": "NOT_FOUND", "details": null }
-```
-
----
-
-### 4.5 `PUT /api/workflows/:id`
-
-Validates and saves a new version. `workflow_id` in the body is overridden by
-the `:id` path parameter, so the two can differ without error — the path wins.
-
-This is **not** a partial update: send the entire document, exactly as in §4.2.
-
-**Request body** — identical to `POST /api/workflows`.
-
-**200 OK** (note: 200, not 201)
-
-```json
-{ "id": "departmental_event_workshop", "version": 3 }
-```
-
-**Errors:** `400`, `502` — same as §4.2 (a validation failure is a 400, not a 422).
-
-> Calling `PUT` against an `:id` that has never been saved does not 404. It
-> creates version 1 of that id.
-
----
-
-### 4.6 `POST /api/workflows/:id/validate`
-
-Runs schema + graph validation and reports the result. Nothing is saved, and
-the `:id` path parameter is **not used** by the handler — any value works.
-
-**Request body** — same `{ "workflow": { ... } }` envelope as §4.2.
-
-**200 OK** — valid:
-
-```json
-{ "valid": true, "errors": [] }
-```
-
-**200 OK** — invalid (still 200; check the `valid` flag):
-
-```json
-{
-  "valid": false,
-  "errors": [
-    "/steps/0/depends_on/0/step_id: references unknown step 'missing_step'",
-    "/metadata: must have required property 'confidence'"
-  ]
-}
-```
-
-**400 Bad Request** — `{ "error": "Body must include a 'workflow' object", "code": "VALIDATION_ERROR", "details": null }`
-
----
-
-### 4.7 `DELETE /api/workflows/:id`
-
-Permanently deletes every version of a template and writes a `template_deletions`
-row (Postgres) naming which user did it. Requires `workflow:manage` — any
-other caller gets `403 PERMISSION_DENIED`.
-
-Deliberately gated on a **typed confirmation**, re-checked server-side so the
-guard survives a caller that skips the web UI:
-
-```json
-{ "confirmation": "delete", "confirm_title": "Overseas Leave Request" }
-```
-
-| Field           | Required | Notes |
-| --------------- | -------- | ----- |
-| `confirmation`  | yes      | Must be the literal word `delete` (case-insensitive) |
-| `confirm_title` | yes      | Must match the template's current title, case- and whitespace-insensitive |
-
-**204 No Content** — deleted. No body.
-
-**400 Bad Request** — wrong confirmation word or a title that doesn't match:
-
-```json
-{ "error": "confirm_title must exactly match the template title", "code": "VALIDATION_ERROR", "details": null }
-```
-
-**404 Not Found** — no template with that `workflow_id`.
-
-**409 Conflict** — the template still has requests in `collecting` / `ready` /
-`in_progress`:
-
-```json
-{ "error": "Template 'overseas_leave' has 2 requests still in progress - wait for them to finish or cancel them before deleting it", "code": "CONFLICT", "details": null }
-```
-
-> The deletion log row is written **before** the Mongo delete runs, not after.
-> If the row exists but `versions_removed` still reads `0`, the delete itself
-> failed after the log landed — see §4.8. This ordering is deliberate so a
-> failed delete still leaves a visible trail instead of a silent gap.
-
----
-
-### 4.8 `GET /api/workflows/deletions`
-
-The template deletion log, newest first. Requires `workflow:manage`.
-
-| Parameter     | In    | Required | Notes |
-| ------------- | ----- | -------- | ----- |
-| `limit`       | query | no       | Positive integer, defaults to `50` |
-| `workflow_id` | query | no       | Filter to one template's deletion history |
-
-`GET {{baseUrl}}/workflows/deletions?limit=20`
+`GET {{baseUrl}}/workflow-templates?include_archived=true`
 
 **200 OK**
 
 ```json
-[
-  {
-    "id": "14",
-    "workflow_id": "overseas_leave",
-    "template_title": "Overseas Leave Request",
-    "latest_version": 3,
-    "versions_removed": 3,
-    "institution_type": "faculty",
-    "review_status": "confirmed",
-    "deleted_by_user_id": "3f9a1e2b-...",
-    "deleted_by_email": "ops.lead@example.edu",
-    "reason": null,
-    "request_id": null,
-    "snapshot": { "title": "Overseas Leave Request", "latest_version": 3 },
-    "deleted_at": "2026-08-20T11:02:31.000Z"
-  }
-]
+{
+  "workflow_templates": [
+    {
+      "id": "3b2f6c1e-8a4d-4f0b-9c7e-2d1a5e6f7a8b",
+      "title": "IT Faculty Overseas Leave Approval",
+      "description": "Approval process for IT undergraduates travelling overseas during term.",
+      "status": "published",
+      "current_version": 2,
+      "has_ungenerated_changes": false,
+      "is_archived": false,
+      "archived_at": null,
+      "created_by": { "id": "0f6d2a52-...", "full_name": "Ops Lead", "email": "ops.lead@example.edu" },
+      "updated_by": { "id": "0f6d2a52-...", "full_name": "Ops Lead", "email": "ops.lead@example.edu" },
+      "created_at": "2026-11-11T09:10:00.000Z",
+      "updated_at": "2026-11-11T09:40:12.511Z"
+    }
+  ]
+}
 ```
 
-`deleted_by_user_id` references the `users` row of the caller who deleted the
-template. `deleted_by_email` is that user's email, copied onto the row at
-delete time so the log stays readable without a join.
+There is no status, search or "archived only" filter on the server; the web app's
+search box and Active/Archived/All filter work on the client over this list.
+
+**400 Bad Request** — `{ "error": "include_archived must be 'true' or 'false'", "code": "VALIDATION_ERROR", "details": null }`
 
 ---
 
-## 5. Draft endpoints (template authoring path)
+### 4.2 `POST /api/workflow-templates`
 
-Every route in this section requires `workflow:manage`. The authoring flow is:
-**save draft → extract → review → publish.**
-
-### 5.1 `POST /api/drafts`
-
-Stores raw prose. **Idempotent by SHA-256 of the text** — submitting identical
-text twice returns the original draft (still with status `201`), it does not
-create a second row.
+Saves a **draft**: a title and a prompt, with nothing generated. No model call.
 
 **Request body**
 
-| Field   | Type           | Required | Default | Notes |
-| ------- | -------------- | -------- | ------- | ----- |
-| `text`  | string         | yes      | —       | Non-empty after trimming; stored as `raw_text` and never modified |
-| `title` | string \| null | no       | `null`  | Display label |
+| Field | Type | Required | Notes |
+| ----- | ---- | -------- | ----- |
+| `title` | string | yes | Whitespace is collapsed; at most 200 characters |
+| `prompt` | string | yes | Trimmed; at most 20,000 characters |
 
 ```json
 {
-  "title": "IT Faculty Overseas Leave",
-  "text": "Any undergraduate student of the Faculty of Information Technology who intends to travel overseas during the academic term must obtain prior approval before leaving the country. The student submits a request stating their full name, index number, the destination country, the departure date, the return date, and the reason for the trip. The request first goes to the student's Academic Advisor for approval. Once the Academic Advisor approves, it goes to the Head of the Department of Information Technology."
+  "title": "IT Faculty Overseas Leave Approval",
+  "prompt": "Any undergraduate student of the Faculty of Information Technology who intends to travel overseas during the academic term must obtain prior approval before leaving the country. The student submits a request stating their full name, index number, the destination country, the departure date, the return date, and the reason for the trip. The request first goes to the student's Academic Advisor for approval. Once the Academic Advisor approves, it goes to the Head of the Department of Information Technology."
 }
 ```
 
-**201 Created**
+**201 Created** — the template object with `status: "draft"`, `current_version: null`,
+`current: null`, `description: null` and `draft_prompt` set to the prompt.
+
+**400 Bad Request**
 
 ```json
-{
-  "id": "6710f1a2b3c4d5e6f7089abc",
-  "title": "IT Faculty Overseas Leave",
-  "raw_text": "Any undergraduate student of the Faculty ...",
-  "status": "pending",
-  "failure_reason": null,
-  "workflow_id": null,
-  "created_at": "2026-08-10T09:10:00.000Z",
-  "updated_at": "2026-08-10T09:10:00.000Z"
-}
+{ "error": "Body must include a non-empty 'title' field", "code": "VALIDATION_ERROR", "details": null }
 ```
-
-`status` is one of `pending`, `extracted`, `failed`, `rejected`.
-
-Save `id` into `{{draftId}}` — the next call needs it.
-
-**400 Bad Request** — `{ "error": "Body must include a non-empty 'text' field", "code": "VALIDATION_ERROR", "details": null }`
-
----
-
-### 5.2 `GET /api/drafts`
-
-Lists drafts, newest `created_at` first, **capped at 50** (not configurable via
-query string — the limit is a store default).
-
-**200 OK** — array of the same objects as §5.1. Empty array when there are none.
-
----
-
-### 5.3 `GET /api/drafts/:id`
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | 24-character hex Mongo ObjectId |
-
-**200 OK** — one draft object (same shape as §5.1).
-
-**404 Not Found** — `{ "error": "Draft not found", "code": "NOT_FOUND", "details": null }`
-
-> A malformed id (not 24-hex) throws inside the ObjectId constructor and
-> surfaces as **500**, not 404.
-
----
-
-### 5.4 `POST /api/drafts/:id/extract`
-
-The core authoring action, "Generate template". It extracts the workflow from the
-draft's `raw_text`, saves it as a new version with its embedding, and links the
-draft to the resulting `workflow_id`.
-
-**Request body:** none.
-
-**201 Created**
 
 ```json
-{
-  "draft_id": "6710f1a2b3c4d5e6f7089abc",
-  "workflow_id": "it_faculty_overseas_leave",
-  "version": 1,
-  "attempts": 1,
-  "review_status": "pending_admin_review",
-  "workflow": { "...": "the full extracted document" }
-}
+{ "error": "Workflow template title must be 200 characters or fewer", "code": "VALIDATION_ERROR", "details": { "field": "title" } }
 ```
 
-The new template is saved with `review_status: "pending_admin_review"`, which
-means it is **not yet selectable** by the selection endpoints. Publish it via
-§5.6 first.
+---
+
+### 4.3 `POST /api/workflow-templates/generate`
+
+Creates a template and generates version 1 in one call. The result is `unpublished`.
+
+**Request body**
+
+| Field | Type | Required | Notes |
+| ----- | ---- | -------- | ----- |
+| `prompt` | string | yes | Same rules as §4.2 |
+| `title` | string | no | Same rules as §4.2. When omitted, the title the model generated is used (whitespace collapsed, cut to 200 characters) |
+
+```json
+{ "prompt": "Any undergraduate student of the Faculty of Information Technology who intends to travel overseas ..." }
+```
+
+**201 Created** — the template object with `status: "unpublished"`,
+`current_version: 1` and `current` holding version 1.
 
 **Errors**
 
 | Status | Cause |
 | ------ | ----- |
-| `404`  | `{ "error": "Draft not found", "code": "NOT_FOUND", "details": null }` |
-| `422`  | Extraction failed or the text is not a workflow |
-| `500`  | Unhandled failure |
-
-On a 422 the draft is updated as a side effect before the error is returned:
-`status` becomes `rejected` when the text does not describe a workflow, and
-`failed` otherwise — with the reason in `failure_reason`. Re-fetch the draft
-(§5.3) to see it.
-
-Same latency caveat as §4.1 — allow up to a minute.
-
----
-
-### 5.5 `GET /api/workflows/:id/record`
-
-The full stored row rather than the bare document. The template editor needs
-`draft_id` so it can load the original prose beside the generated template.
-
-| Parameter | In    | Required | Notes |
-| --------- | ----- | -------- | ----- |
-| `id`      | path  | yes      | The `workflow_id` |
-| `version` | query | no       | Defaults to the latest |
-
-**200 OK**
+| `400` | `prompt` missing or blank, or `title`/`prompt` over its limit |
+| `422` | `WORKFLOW_TEMPLATE_PROMPT_REJECTED` — the prompt does not describe a workflow; `details` lists the model's reasons |
+| `422` | `WORKFLOW_TEMPLATE_GENERATION_FAILED` — no valid definition after every attempt (`details` holds the last validation errors), or the model returned invalid JSON |
+| `502` | `EMBEDDING_ERROR` — the embedding call failed |
 
 ```json
 {
-  "workflow_id": "it_faculty_overseas_leave",
-  "version": 1,
-  "draft_id": "6710f1a2b3c4d5e6f7089abc",
-  "review_status": "pending_admin_review",
-  "document": { "...": "the full workflow" },
-  "updated_at": "2026-08-10T09:12:44.301Z"
+  "error": "The prompt does not describe a workflow",
+  "code": "WORKFLOW_TEMPLATE_PROMPT_REJECTED",
+  "details": ["The text is a menu, not a process."]
 }
 ```
 
-**404 Not Found** — `{ "error": "Workflow 'unknown_id' not found", "code": "NOT_FOUND", "details": null }`
+Nothing is stored when generation fails.
+
+**Note:** generation is slow — expect **10–60 seconds**. Raise the Postman request
+timeout before testing it. The same applies to §4.6.
 
 ---
 
-### 5.6 `PATCH /api/workflows/:id/review`
+### 4.4 `GET /api/workflow-templates/:workflowTemplateId`
 
-**The only thing that makes a template selectable.** Retrieval considers a
-template a candidate only when `review_status` is `confirmed`.
+| Parameter | In | Required | Notes |
+| --------- | -- | -------- | ----- |
+| `workflowTemplateId` | path | yes | The template's UUID |
 
-**Request body**
-
-| Field           | Type   | Required | Notes |
-| --------------- | ------ | -------- | ----- |
-| `review_status` | string | yes      | `pending_admin_review` \| `confirmed` \| `rejected` |
-| `version`       | number | no       | Defaults to the latest version |
-
-```json
-{ "review_status": "confirmed" }
-```
-
-**200 OK** — the updated summary:
-
-```json
-{
-  "workflow_id": "it_faculty_overseas_leave",
-  "title": "IT Faculty Overseas Leave Approval",
-  "description": "...",
-  "version": 1,
-  "schema_version": "1.0",
-  "review_status": "confirmed",
-  "draft_id": "6710f1a2b3c4d5e6f7089abc",
-  "updated_at": "2026-08-10T09:20:11.884Z"
-}
-```
-
-This writes the status in two places: the row's `review_status` and the
-document's `metadata.review_status`.
+**200 OK** — `{ "workflow_template": { ... } }`. Archived templates are returned too.
 
 **Errors**
 
 | Status | Body |
 | ------ | ---- |
-| `400`  | `{ "error": "review_status must be one of: pending_admin_review, confirmed, rejected", "code": "VALIDATION_ERROR", "details": null }` |
-| `404`  | `{ "error": "Workflow not found", "code": "NOT_FOUND", "details": null }` |
+| `400` | `{ "error": "workflowTemplateId must be a valid UUID", "code": "VALIDATION_ERROR", "details": null }` |
+| `404` | `{ "error": "Workflow template '<id>' not found", "code": "WORKFLOW_TEMPLATE_NOT_FOUND", "details": null }` |
+
+---
+
+### 4.5 `PATCH /api/workflow-templates/:workflowTemplateId`
+
+Renames the template and/or saves prompt edits without generating. Both fields are
+optional; send only what changes.
+
+**Request body**
+
+| Field | Type | Required | Notes |
+| ----- | ---- | -------- | ----- |
+| `title` | string | no | Same rules as §4.2. Never creates a version. On a generated template the retrieval text is rebuilt and re-embedded with the new title |
+| `draft_prompt` | string \| null | no | A string saves an edited prompt (same rules as `prompt`). A prompt identical to the current version's prompt is stored as `null`. `null` discards pending edits — not allowed on a `draft`, which must keep its prompt |
+
+```json
+{ "title": "Overseas Travel Approval (IT Faculty)", "draft_prompt": "Any undergraduate student ... must also notify the Dean." }
+```
+
+**200 OK** — `{ "workflow_template": { ... } }`. When nothing actually changes, the
+template is returned as-is and `updated_at` / `updated_by` are not touched.
+
+**Errors**
+
+| Status | Body |
+| ------ | ---- |
+| `400` | `{ "error": "A draft workflow template must keep its prompt", "code": "VALIDATION_ERROR", "details": { "field": "draft_prompt" } }` |
+| `400` | A blank or over-long `title`, or `draft_prompt` that is not a string or `null` |
+| `404` | `WORKFLOW_TEMPLATE_NOT_FOUND` |
+| `409` | `{ "error": "The workflow template is archived; restore it before changing it", "code": "WORKFLOW_TEMPLATE_ARCHIVED", "details": null }` |
+| `502` | `EMBEDDING_ERROR` — re-embedding after a rename failed |
+
+---
+
+### 4.6 `POST /api/workflow-templates/:workflowTemplateId/generate`
+
+Generates (or regenerates) from a prompt and stores the result as version
+`current_version + 1`.
+
+**Request body**
+
+| Field | Type | Required | Notes |
+| ----- | ---- | -------- | ----- |
+| `prompt` | string | yes | Same rules as §4.2. Usually the editor's current prompt (`draft_prompt` if set, else `current.prompt`) |
+| `title` | string | no | Renames the template in the same request; applied only if generation succeeds. Omit to keep the current title (the model's suggested title is ignored) |
+
+```json
+{ "prompt": "Any undergraduate student ... must also notify the Dean." }
+```
+
+**201 Created** — `{ "workflow_template": { ... } }` with the new version in `current`
+and `draft_prompt: null`. Status after the call:
+
+| Before | After |
+| ------ | ----- |
+| `draft` | `unpublished` |
+| `unpublished` | `unpublished` |
+| `published` | `published` — the new version is offered to requesters immediately |
+
+**Errors** — as §4.3, plus `404 WORKFLOW_TEMPLATE_NOT_FOUND` and
+`409 WORKFLOW_TEMPLATE_ARCHIVED`. A failed generation creates no version and leaves
+the template, including its title and `draft_prompt`, unchanged.
+
+---
+
+### 4.7 `POST /api/workflow-templates/:workflowTemplateId/publish`
+
+Offers the current version to requesters. **Request body:** none.
+
+**200 OK** — `{ "workflow_template": { ... } }` with `status: "published"`.
+
+**Errors**
+
+| Status | Body |
+| ------ | ---- |
+| `404` | `WORKFLOW_TEMPLATE_NOT_FOUND` |
+| `409` | `{ "error": "Generate the workflow template before publishing it", "code": "WORKFLOW_TEMPLATE_NOT_GENERATED", "details": null }` — still a `draft` |
+| `409` | `{ "error": "The workflow template is already published", "code": "WORKFLOW_TEMPLATE_ALREADY_PUBLISHED", "details": null }` |
+| `409` | `WORKFLOW_TEMPLATE_ARCHIVED` |
+
+There is no unpublish endpoint. To take a template out of selection, archive it.
+
+---
+
+### 4.8 `POST /api/workflow-templates/:workflowTemplateId/archive`
+
+**Request body:** none.
+
+**200 OK** — `{ "workflow_template": { ... } }` with `is_archived: true` and
+`archived_at` set. `status` is unchanged.
+
+An archived template:
+
+- is left out of §4.1 unless `include_archived=true`;
+- is never a selection candidate (§6);
+- cannot start new tasks — a session already matched to it gets
+  `409 WORKFLOW_TEMPLATE_NOT_PUBLISHED` from §6.4 and `POST /tasks` (§7.1);
+- rejects §4.5, §4.6 and §4.7 with `409 WORKFLOW_TEMPLATE_ARCHIVED`.
+
+Tasks already created from it keep running against their pinned version.
+
+**Errors** — `404 WORKFLOW_TEMPLATE_NOT_FOUND`; `409 WORKFLOW_TEMPLATE_ARCHIVED` when it
+is already archived.
+
+---
+
+### 4.9 `POST /api/workflow-templates/:workflowTemplateId/restore`
+
+**Request body:** none.
+
+**200 OK** — `{ "workflow_template": { ... } }` with `is_archived: false`. The template
+returns with the status it had; a restored `published` template is selectable again.
+
+**Errors** — `404 WORKFLOW_TEMPLATE_NOT_FOUND`;
+`409 { "error": "The workflow template is not archived", "code": "WORKFLOW_TEMPLATE_NOT_ARCHIVED", "details": null }`.
+
+---
+
+### 4.10 `GET /api/workflow-templates/:workflowTemplateId/versions`
+
+The version history, newest first, without prompts or definitions.
+
+**200 OK**
+
+```json
+{
+  "versions": [
+    { "version": 2, "generation_attempts": 1, "created_by": { "id": "0f6d2a52-...", "full_name": "Ops Lead", "email": "ops.lead@example.edu" }, "created_at": "2026-11-11T09:40:12.511Z" },
+    { "version": 1, "generation_attempts": 2, "created_by": { "id": "0f6d2a52-...", "full_name": "Ops Lead", "email": "ops.lead@example.edu" }, "created_at": "2026-11-11T09:12:44.301Z" }
+  ]
+}
+```
+
+A draft returns `{ "versions": [] }`.
+
+**Errors** — `400` non-UUID id; `404 WORKFLOW_TEMPLATE_NOT_FOUND`.
+
+---
+
+### 4.11 `GET /api/workflow-templates/:workflowTemplateId/versions/:version`
+
+One version in full — this is what the editor's read-only historic view
+(`?version=N`) shows.
+
+| Parameter | In | Required | Notes |
+| --------- | -- | -------- | ----- |
+| `workflowTemplateId` | path | yes | The template's UUID |
+| `version` | path | yes | Positive integer |
+
+**200 OK**
+
+```json
+{
+  "version": {
+    "version": 1,
+    "generation_attempts": 2,
+    "created_by": { "id": "0f6d2a52-...", "full_name": "Ops Lead", "email": "ops.lead@example.edu" },
+    "created_at": "2026-11-11T09:12:44.301Z",
+    "prompt": "Any undergraduate student of the Faculty of Information Technology ...",
+    "definition": { "schema_version": "1.0", "...": "see §5" }
+  }
+}
+```
+
+**Errors**
+
+| Status | Body |
+| ------ | ---- |
+| `400` | `{ "error": "version must be a positive integer", "code": "VALIDATION_ERROR", "details": null }` |
+| `404` | `WORKFLOW_TEMPLATE_NOT_FOUND` |
+| `404` | `{ "error": "Workflow template '<id>' has no version 3", "code": "WORKFLOW_TEMPLATE_VERSION_NOT_FOUND", "details": null }` |
+
+---
+
+### 4.12 Error codes
+
+`src/data/constants/workflow-template-error.constant.ts`:
+
+| Code | Status | Raised by |
+| ---- | ------ | --------- |
+| `WORKFLOW_TEMPLATE_NOT_FOUND` | 404 | Any `:workflowTemplateId` route with an unknown id |
+| `WORKFLOW_TEMPLATE_VERSION_NOT_FOUND` | 404 | §4.11 with an unknown version |
+| `WORKFLOW_TEMPLATE_ARCHIVED` | 409 | §4.5, §4.6, §4.7 on an archived template; §4.8 when already archived |
+| `WORKFLOW_TEMPLATE_NOT_ARCHIVED` | 409 | §4.9 on a template that is not archived |
+| `WORKFLOW_TEMPLATE_NOT_GENERATED` | 409 | §4.7 on a draft |
+| `WORKFLOW_TEMPLATE_ALREADY_PUBLISHED` | 409 | §4.7 on a published template |
+| `WORKFLOW_TEMPLATE_NOT_PUBLISHED` | 409 | §6.4 and §7.1 when the matched template is no longer published or has been archived |
+| `WORKFLOW_TEMPLATE_GENERATION_FAILED` | 422 | §4.3, §4.6 — no valid definition after every attempt, or unparseable model output |
+| `WORKFLOW_TEMPLATE_PROMPT_REJECTED` | 422 | §4.3, §4.6 — the model judged the prompt not to be a workflow |
+
+---
+
+## 5. The workflow definition
+
+`current.definition` (§4) and `version.definition` (§4.11) hold the generated
+definition, which must satisfy `src/data/schemas/workflow.schema.json` and the graph
+rules in `ValidationService`. The schema uses `"additionalProperties": false` and
+lists **every** field as required — including the nullable ones. Complete examples
+live in `src/data/samples/expected/`.
+
+**How generation works.** `WorkflowTemplateGenerationService`
+(`src/services/workflow-template-generation.service.ts`) sends the prompt to the
+configured LLM provider and validates the reply. Invalid output is sent back to the
+model with the validation errors as a repair prompt, up to
+`WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` model calls in total (default 3).
+`generation_attempts` on the version records how many it took. If
+`metadata.is_workflow` comes back `false`, the call fails with
+`422 WORKFLOW_TEMPLATE_PROMPT_REJECTED` and `metadata.ambiguities` as `details`.
+
+**What is stored.** The model returns a `title` along with the definition. The title
+is moved onto the template (§4) and is **not** stored in the version's `definition`;
+endpoints that hand a definition to a runtime consumer — §6.4 — put the template's
+current title back. The definition has no id of its own: a template is identified by
+its UUID and a version number.
+
+```json
+{
+  "schema_version": "1.0",
+  "description": "Approval process for departments organizing an event or workshop.",
+  "retrieval_summary": {
+    "one_liner": "Get approval to run a departmental event or workshop.",
+    "aliases": ["event approval", "workshop approval"],
+    "keywords": ["book a hall", "run a workshop", "seminar"],
+    "requester_types": ["academic staff"],
+    "triggers": ["running a workshop for the department"],
+    "not_for": ["personal or private venue bookings"]
+  },
+  "scope": { "institution_type": "university", "applies_to": { "actor_type": "staff", "constraints": [] } },
+  "requester": { "...": "..." },
+  "inputs": [],
+  "computed": [],
+  "steps": [],
+  "completion": { "rule": "all_required_steps_complete", "required_steps": ["hall_booking"], "actions": [] },
+  "metadata": {
+    "confidence": "medium",
+    "ambiguities": [],
+    "unmapped_roles": [],
+    "is_workflow": true
+  }
+}
+```
+
+`retrieval_summary` is what selection searches on: the template's title plus this
+summary is rendered into the `retrieval.text` that gets embedded, and
+`scope.institution_type` becomes `retrieval.institution_type` (the
+`institution_type` filter in §6.1). Definitions cannot be edited directly through the
+API — change the prompt and regenerate (§4.6).
 
 ---
 
@@ -762,11 +687,11 @@ document's `metadata.review_status`.
 Every route in this section requires `task:create`.
 
 A multi-round conversation that maps a plain-language request onto one
-confirmed template. The agent returns one of four decisions:
+published template. The agent returns one of four decisions:
 
 | `decision`      | Meaning |
 | --------------- | ------- |
-| `matched`       | One template chosen; `workflow_id` is set. Terminal. |
+| `matched`       | One template chosen; `workflow_template_id` is set. Terminal. |
 | `ambiguous`     | A clarifying question is being asked; answer it via §6.2 |
 | `no_match`      | Nothing suitable. Terminal. |
 | `manual_choice` | The round budget ran out; the user must pick from `options`. Produced by the service loop, never by the model. |
@@ -800,19 +725,19 @@ conversation), asks the selector agent to decide, and persists the session.
 {
   "session_id": "6710f9c0a1b2c3d4e5f60789",
   "decision": "matched",
-  "workflow_id": "departmental_event_workshop",
+  "workflow_template_id": "8c1d4e2f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
   "confidence": "high",
   "question": null,
   "options": [],
   "candidates": [
     {
-      "workflow_id": "departmental_event_workshop",
+      "workflow_template_id": "8c1d4e2f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
       "title": "Departmental Event & Workshop Organization",
       "one_liner": "Get approval to run a departmental event or workshop.",
       "score": 0.8471
     },
     {
-      "workflow_id": "it_faculty_overseas_leave",
+      "workflow_template_id": "3b2f6c1e-8a4d-4f0b-9c7e-2d1a5e6f7a8b",
       "title": "IT Faculty Overseas Leave Approval",
       "one_liner": "Get approval before travelling overseas during term.",
       "score": 0.4113
@@ -827,7 +752,7 @@ conversation), asks the selector agent to decide, and persists the session.
 {
   "session_id": "6710f9c0a1b2c3d4e5f60789",
   "decision": "ambiguous",
-  "workflow_id": null,
+  "workflow_template_id": null,
   "confidence": "medium",
   "question": "Is this an academic workshop for your department, or a private booking?",
   "options": ["Departmental workshop", "Private booking"],
@@ -841,7 +766,7 @@ conversation), asks the selector agent to decide, and persists the session.
 {
   "session_id": "6710f9c0a1b2c3d4e5f60789",
   "decision": "no_match",
-  "workflow_id": null,
+  "workflow_template_id": null,
   "confidence": "high",
   "question": null,
   "options": [],
@@ -862,7 +787,8 @@ values change. `score` is the retrieval similarity rounded to 4 decimals, and
 | `502`  | Selector or embedding call failed — `{ "error": "Selector call failed: ...", "code": "SELECTION_ERROR", "details": null }` |
 
 > If you get `no_match` with an empty `candidates` array, the usual cause is
-> that no template has been published. Run §5.6 with `"confirmed"` first.
+> that no template has been published. Publish one with §4.7 first. Only
+> published, non-archived templates are candidates.
 
 ---
 
@@ -894,7 +820,7 @@ Once the round budget is exhausted, an ambiguous verdict is converted to:
 {
   "session_id": "6710f9c0a1b2c3d4e5f60789",
   "decision": "manual_choice",
-  "workflow_id": null,
+  "workflow_template_id": null,
   "confidence": "low",
   "question": "I could not narrow it down. Which of these do you want?",
   "options": ["Departmental Event & Workshop Organization", "IT Faculty Overseas Leave Approval"],
@@ -902,7 +828,7 @@ Once the round budget is exhausted, an ambiguous verdict is converted to:
 }
 ```
 
-`options` then holds candidate **titles**, but §6.3 expects a `workflow_id` —
+`options` then holds candidate **titles**, but §6.3 expects a `workflow_template_id` —
 map the chosen title back through the `candidates` array to get its id.
 
 **Errors**
@@ -924,10 +850,10 @@ the session as `matched`.
 
 | Field         | Type   | Required | Notes |
 | ------------- | ------ | -------- | ----- |
-| `workflow_id` | string | yes      | Must be one of this session's `candidates` |
+| `workflow_template_id` | string | yes      | A UUID; must be one of this session's `candidates` |
 
 ```json
-{ "workflow_id": "departmental_event_workshop" }
+{ "workflow_template_id": "8c1d4e2f-5a6b-4c7d-8e9f-0a1b2c3d4e5f" }
 ```
 
 **200 OK** — a short body; there is no `candidates` array here:
@@ -936,7 +862,7 @@ the session as `matched`.
 {
   "session_id": "6710f9c0a1b2c3d4e5f60789",
   "decision": "matched",
-  "workflow_id": "departmental_event_workshop"
+  "workflow_template_id": "8c1d4e2f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
 }
 ```
 
@@ -944,35 +870,48 @@ the session as `matched`.
 
 | Status | Cause |
 | ------ | ----- |
-| `400`  | `{ "error": "Body must include a non-empty 'workflow_id' field", "code": "VALIDATION_ERROR", "details": null }` |
-| `400`  | `{ "error": "'<workflow_id>' was not among this session's candidates", "code": "VALIDATION_ERROR", "details": null }` |
+| `400`  | `{ "error": "workflow_template_id must be a valid UUID", "code": "VALIDATION_ERROR", "details": null }` — missing or not a UUID |
+| `400`  | `{ "error": "'<workflow_template_id>' was not among this session's candidates", "code": "VALIDATION_ERROR", "details": null }` |
 | `404`  | `{ "error": "Selection session '<id>' not found", "code": "NOT_FOUND", "details": null }` |
 | `500`  | The `:id` is not a 24-character hex ObjectId — see the note in §6.4 |
 
 ---
 
-### 6.4 `GET /api/selection/sessions/:id/workflow`
+### 6.4 `GET /api/selection/sessions/:id/workflow-template`
 
-The full document for the matched workflow — this drives the plan preview.
+The published definition of the matched workflow template — this drives the plan
+preview. It always returns the template's **current** version, with the template's
+title put back into the definition (§5).
 
 | Parameter | In   | Required | Notes |
 | --------- | ---- | -------- | ----- |
 | `id`      | path | yes      | `session_id` |
 
-**200 OK** — the full workflow document (same shape as §4.4).
+**200 OK**
+
+```json
+{
+  "workflow_template_version": 2,
+  "definition": { "schema_version": "1.0", "title": "Departmental Event & Workshop Organization", "description": "...", "...": "see §5" }
+}
+```
+
+`POST /api/tasks` (§7.1) pins the version that is current at that moment, which may be
+newer than the one previewed if the template was regenerated in between.
 
 **Errors**
 
 | Status | Body | Cause |
 | ------ | ---- | ----- |
-| `409`  | `{ "error": "This session has not matched a workflow yet", "code": "CONFLICT", "details": null }` | Session is still ambiguous or ended in `no_match` |
+| `409`  | `{ "error": "This session has not matched a workflow template yet", "code": "CONFLICT", "details": null }` | Session is still ambiguous or ended in `no_match` |
 | `404`  | `{ "error": "Selection session '<id>' not found", "code": "NOT_FOUND", "details": null }` | The session id is unknown |
-| `404`  | `{ "error": "Workflow '<id>' not found", "code": "NOT_FOUND", "details": null }` | The session matched an id that no longer exists |
+| `409`  | `{ "error": "Workflow template '<id>' is not available to requesters", "code": "WORKFLOW_TEMPLATE_NOT_PUBLISHED", "details": null }` | The matched template has since been archived (or is otherwise not published) |
+| `404`  | `{ "error": "Workflow template '<id>' not found", "code": "WORKFLOW_TEMPLATE_NOT_FOUND", "details": null }` | The session matched an id that no longer exists |
 | `500`  | `{ "error": "Failed to look up selection session", "code": "DATABASE_ERROR", "details": null }` | The `:id` is not a valid ObjectId |
 
 > **Known rough edge.** A `session_id` that is not a 24-character hex ObjectId
 > surfaces as a **500 `DATABASE_ERROR`** rather than a 400 — see
-> [§9.1](#91-malformed-objectid-parameters-return-500), which covers drafts too.
+> [§9.1](#91-malformed-objectid-parameters-return-500), which covers tasks too.
 
 ---
 
@@ -1016,8 +955,8 @@ A `TaskDto` (the shape returned by every endpoint below except §7.4) looks like
   "id": "6710fa11b2c3d4e5f6078912",
   "reference": "TASK-2026-00042",
   "session_id": "6710f9c0a1b2c3d4e5f60789",
-  "workflow_id": "it_faculty_overseas_leave",
-  "version": 1,
+  "workflow_template_id": "3b2f6c1e-8a4d-4f0b-9c7e-2d1a5e6f7a8b",
+  "workflow_template_version": 1,
   "status": "collecting",
   "requirements": [
     {
@@ -1109,8 +1048,8 @@ value is `{ "name": string, "email": string }`.
 
 ### 7.1 `POST /api/tasks`
 
-Creates a task from a matched selection session. Resolves the pinned workflow
-version, compiles requirements and step states (`PlannerService.compile`), assigns a
+Creates a task from a matched selection session. Pins the matched template's
+**current** version (`workflow_template_id` + `workflow_template_version`), compiles requirements and step states (`PlannerService.compile`), assigns a
 sequential human-readable `reference`, and inserts with `status: "collecting"`.
 
 **Request body**
@@ -1134,7 +1073,8 @@ Save `id` into `{{taskId}}`.
 | ------ | ----- |
 | `400`  | `{ "error": "Body must include a non-empty 'session_id' field", "code": "VALIDATION_ERROR", "details": null }` |
 | `404`  | Unknown session id |
-| `409`  | `{ "error": "This session has not matched a workflow yet", "code": "CONFLICT", "details": null }` — same rule as §6.4 |
+| `409`  | `{ "error": "This session has not matched a workflow template yet", "code": "CONFLICT", "details": null }` — same rule as §6.4 |
+| `409`  | `WORKFLOW_TEMPLATE_NOT_PUBLISHED` — the matched template was archived after the match (§4.8) |
 
 ---
 
@@ -1241,7 +1181,7 @@ A `person` requirement (actor collection):
 { "key": "actor:advisor_review", "value": { "name": "Dr. Perera", "email": "perera@university.edu" } }
 ```
 
-The `requester_email` input (`type: "email"`, present on every workflow extracted since
+The `requester_email` input (`type: "email"`, present on every workflow template generated since
 that input was added — see §7):
 
 ```json
@@ -1396,7 +1336,7 @@ this endpoint returns a smaller, presentation-oriented shape.
 {
   "status": "in_progress",
   "reference": "TASK-2026-00042",
-  "workflow_title": "IT Faculty Overseas Leave Approval",
+  "workflow_template_title": "IT Faculty Overseas Leave Approval",
   "current_steps": ["hod_review"],
   "rejected_at_step": null,
   "rejected_by": null,
@@ -1412,7 +1352,8 @@ this endpoint returns a smaller, presentation-oriented shape.
 }
 ```
 
-`current_steps` lists the names of steps currently `pending_approval`. `timeline` is
+`workflow_template_title` is the template's current title, even when the task is
+pinned to an older version (§4). `current_steps` lists the names of steps currently `pending_approval`. `timeline` is
 every step with a non-null `outcome`, oldest first. On a `rejected` task,
 `rejected_at_step` / `rejected_by` / `reason` are lifted from the step whose outcome
 resolved to `terminate_workflow` — this is what lets a requester see **who** rejected
@@ -1444,7 +1385,7 @@ Content-Length: 48213
 ```
 
 The task is **immutable** once completed and its workflow is **version-pinned**
-(`task.workflow_id` + `task.version`), so the document is regenerated on every
+(`task.workflow_template_id` + `task.workflow_template_version`), so the document is regenerated on every
 request rather than stored — this route is a pure function of data that already
 exists. A task that completed before this feature existed, or whose generation
 failed at completion time, has `completion_document: null`; this route generates
@@ -1496,7 +1437,7 @@ without a second round trip.
 ```json
 {
   "task_reference": "TASK-2026-00042",
-  "workflow_title": "IT Faculty Overseas Leave Approval",
+  "workflow_template_title": "IT Faculty Overseas Leave Approval",
   "step": {
     "step_id": "advisor_review",
     "name": "Academic Advisor Approval",
@@ -1515,6 +1456,9 @@ without a second round trip.
   "decided_at": null
 }
 ```
+
+`workflow_template_title` is the template's current title; the step itself comes from
+the version the task is pinned to.
 
 `allowed_outcomes` reflects only the outcomes this **specific step** declares
 (`workflow.steps[].outcomes`, non-null entries) — never a hardcoded
@@ -1608,9 +1552,9 @@ hierarchy) instead of maintaining a separate status lookup table:
 | `400`  | `{ "error", "code": "VALIDATION_ERROR", "details" }` | `ValidationError` — per-route body checks |
 | `401`  | `{ "error", "code": "AUTHENTICATION_REQUIRED" \| "INVALID_CREDENTIALS", "details": null }` | `UnauthorizedError` — no usable session on a guarded route (§1), or a bad login (§12.1) |
 | `403`  | `{ "error", "code": "PERMISSION_DENIED" \| "ACCOUNT_LOCKED" \| "ACCOUNT_DISABLED", "details": null }` | `ForbiddenError` — authenticated but missing every permission the route accepts; or a login refused for a locked or disabled account (§12.1) |
-| `404`  | `{ "error", "code": "NOT_FOUND" \| "USER_NOT_FOUND" \| "USER_SESSION_NOT_FOUND", "details" }` | `NotFoundError` — missing draft, workflow, selection session or task (including another user's task, §7); unknown user (§13.3); a session id that is not one of the caller's active sessions (§12.6) |
-| `409`  | `{ "error", "code": "CONFLICT" \| "EMAIL_ALREADY_REGISTERED", "details" }` | `ConflictError` — §6.4 on an unmatched session, §4.7 on an in-progress-requests delete, §13.1 on a duplicate email |
-| `422`  | `{ "error", "code": "EXTRACTION_ERROR", "details": <errors\|null> }` | `ExtractionError` only — the model could not produce a valid workflow |
+| `404`  | `{ "error", "code": "NOT_FOUND" \| "WORKFLOW_TEMPLATE_NOT_FOUND" \| "WORKFLOW_TEMPLATE_VERSION_NOT_FOUND" \| "USER_NOT_FOUND" \| "USER_SESSION_NOT_FOUND", "details" }` | `NotFoundError` — missing workflow template or version (§4), selection session or task (including another user's task, §7); unknown user (§13.3); a session id that is not one of the caller's active sessions (§12.6) |
+| `409`  | `{ "error", "code": "CONFLICT" \| "WORKFLOW_TEMPLATE_*" \| "EMAIL_ALREADY_REGISTERED", "details" }` | `ConflictError` — §6.4 on an unmatched session, the workflow template lifecycle rules (§4.12), §13.1 on a duplicate email |
+| `422`  | `{ "error", "code": "WORKFLOW_TEMPLATE_GENERATION_FAILED" \| "WORKFLOW_TEMPLATE_PROMPT_REJECTED", "details": <errors\|null> }` | `WorkflowTemplateGenerationError` only — the model could not produce a valid workflow template (§4.3, §4.6) |
 | `500`  | `{ "error": "Internal server error", "code": "INTERNAL_ERROR", "details": null }` | Anything untyped — details are logged, never returned |
 | `502`  | `{ "error", "code": "SELECTION_ERROR" \| "EMBEDDING_ERROR", "details": <cause\|null> }` | `SelectionError`, `EmbeddingError` — upstream Azure failure |
 
@@ -1623,31 +1567,31 @@ the route guard itself, before the controller ever runs — so it carries no
 
 `details` is `null` unless the error carried one explicitly. Every handled error
 uses the same three keys — there is no separate `errors` key on any response. A
-workflow validation failure is a **400** carrying the failing rules in `details`:
+failed generation is a **422** carrying the last validation errors in `details`:
 
 ```json
 {
-  "error": "Workflow failed validation",
-  "code": "VALIDATION_ERROR",
+  "error": "Failed to generate a valid workflow template after 3 attempts",
+  "code": "WORKFLOW_TEMPLATE_GENERATION_FAILED",
   "details": ["/steps/0: must have required property 'sla'"]
 }
 ```
 
-The split is deliberate: **400** means the document you sent is wrong, **422** means
-extraction could not build one from your prose. Both are client-visible failures, but
-only the second implies the LLM was involved.
+The split is deliberate: **400** means the request you sent is wrong, **422** means
+the model could not build a workflow template from your prompt. Both are client-visible
+failures, but only the second implies the LLM was involved.
 
 ### 9.1 Malformed ObjectId parameters return 500
 
-Routes whose `:id` is a **MongoDB ObjectId** — every `/drafts/:id*` route, every
+Routes whose `:id` is a **MongoDB ObjectId** — every
 `/selection/sessions/:id*` route, and every `/tasks/:id*` route — behave differently
 depending on *how* the id is wrong. `/approvals/:token*` is unaffected — the token is
 not an ObjectId, and an invalid one is a clean 404 (§8.1) rather than a 500:
 
 | `:id` you send | Status | Body |
 | -------------- | ------ | ---- |
-| 24 hex chars, no matching row | `404` | `{ "error": "Draft '<id>' not found", "code": "NOT_FOUND" }` |
-| Anything else (`not-an-objectid`, `123`) | `500` | `{ "error": "Failed to look up draft by id", "code": "DATABASE_ERROR" }` |
+| 24 hex chars, no matching row | `404` | `{ "error": "Selection session '<id>' not found", "code": "NOT_FOUND" }` |
+| Anything else (`not-an-objectid`, `123`) | `500` | `{ "error": "Failed to look up selection session", "code": "DATABASE_ERROR" }` |
 
 `/tasks/:id*` routes are the exception: the ownership guard (§1) validates the id
 before any lookup, so a malformed task id returns `400` with
@@ -1658,8 +1602,9 @@ reported as a database fault rather than the 400 the input actually deserves. No
 sensitive leaks — the generic message is all the client sees — but when testing, read a
 500 from these routes as **"check the id format first"** rather than as a server bug.
 
-Workflow routes are unaffected: `/workflows/:id` takes a human-readable `workflow_id`
-string (`departmental_event_workshop`), not an ObjectId, so any unknown value is a clean 404.
+Workflow template routes are unaffected: `/workflow-templates/:workflowTemplateId` takes a
+UUID, validated before any lookup — a malformed id is a clean 400 and an unknown one a
+404 (§4.4).
 
 ---
 
@@ -1674,7 +1619,7 @@ Collection Runner pass needs no manual variable entry.
 | --- | ---- | ------- |
 | Health | `GET /health` | confirm `status: "ok"` |
 | Auth | `POST /auth/login` with `{{loginEmail}}` / `{{loginPassword}}` (the seeded administrator, §12.1) | `token` → `{{authToken}}` |
-| Auth | `GET /auth/me` with `Authorization: Bearer {{authToken}}` | confirm the `user` and its four `permissions` |
+| Auth | `GET /auth/me` with `Authorization: Bearer {{authToken}}` | confirm the `user` and its `permissions` |
 | Auth | `POST /auth/login` again | `token` → `{{secondAuthToken}}` — a second concurrent session |
 | Auth | `GET /auth/sessions` | the newest session with `is_current: false` → `{{otherUserSessionId}}` |
 | Auth | `DELETE /auth/sessions/{{otherUserSessionId}}` | `204`; `{{secondAuthToken}}` now gets `401` |
@@ -1683,22 +1628,21 @@ Collection Runner pass needs no manual variable entry.
 | Users | `POST /users` with a unique email | `user.id` → `{{userId}}` |
 | Users | `GET /users` | the new user appears in the list |
 | Users | `GET /users/{{userId}}` | the same `UserDto` |
-| Drafts | `POST /drafts` with prose from `src/data/samples/demo-drafts/it_overseas_leave.txt` (send `Authorization: Bearer {{authToken}}` — every call below does the same) | `id` → `{{draftId}}` |
-| Drafts | `GET /drafts` | confirm the array includes the new draft |
-| Drafts | `GET /drafts/{{draftId}}` | confirm `status: "pending"` |
-| Drafts | `POST /drafts/{{draftId}}/extract` | `workflow_id` → `{{workflowId}}`, `version` → `{{templateVersion}}` (slow) |
-| Workflows | `POST /workflows/extract` | preview only, does not persist |
-| Workflows | `POST /workflows` | `id` → `{{workflowId}}`, `version` → `{{templateVersion}}` |
-| Workflows | `GET /workflows` | the template appears in the list |
-| Workflows | `GET /workflows/{{workflowId}}` | the bare workflow document |
-| Workflows | `PUT /workflows/{{workflowId}}` | new `version` → `{{templateVersion}}` |
-| Workflows | `POST /workflows/any-id/validate` | `{ valid, errors }` |
-| Workflows | `GET /workflows/{{workflowId}}/record` | confirm `review_status: "pending_admin_review"` |
-| Workflows | `PATCH /workflows/{{workflowId}}/review` with `{"review_status":"confirmed"}` | now selectable |
+| Workflow Templates | `POST /workflow-templates/generate` with the prompt from `src/data/samples/demo-drafts/workshop_event.txt` (send `Authorization: Bearer {{authToken}}` — every call below does the same) | `workflow_template.id` → `{{workflowTemplateId}}`, `current_version` → `{{templateVersion}}`; `status: "unpublished"` (slow) |
+| Workflow Templates | `GET /workflow-templates` | the template appears in the list |
+| Workflow Templates | `GET /workflow-templates?include_archived=true` | archived templates included |
+| Workflow Templates | `GET /workflow-templates/{{workflowTemplateId}}` | `current` holds version 1 |
+| Workflow Templates | `PATCH /workflow-templates/{{workflowTemplateId}}` with a new `title` and `draft_prompt` | `current_version` unchanged, `has_ungenerated_changes: true` |
+| Workflow Templates | `POST /workflow-templates/{{workflowTemplateId}}/publish` | `status: "published"` — now selectable |
+| Workflow Templates | `POST /workflow-templates/{{workflowTemplateId}}/generate` with the edited prompt | `current_version` 2, still `published` (slow) |
+| Workflow Templates | `GET /workflow-templates/{{workflowTemplateId}}/versions` | two versions, newest first |
+| Workflow Templates | `GET /workflow-templates/{{workflowTemplateId}}/versions/1` | version 1's `prompt` and `definition` |
+| Workflow Templates | `POST /workflow-templates/{{workflowTemplateId}}/archive`, then `…/restore` | `is_archived` true, then false; status stays `published` |
+| Workflow Templates | `POST /workflow-templates` with a title and prompt | `workflow_template.id` → `{{draftWorkflowTemplateId}}`; `status: "draft"` |
 | Selection | `POST /selection/sessions` with a matching query | `session_id` → `{{sessionId}}` |
 | Selection | `POST /selection/sessions/{{sessionId}}/answer` | only if `decision` was `ambiguous` |
 | Selection | `POST /selection/sessions/{{sessionId}}/choose` | only if `decision` was `manual_choice` |
-| Selection | `GET /selection/sessions/{{sessionId}}/workflow` | the full plan document |
+| Selection | `GET /selection/sessions/{{sessionId}}/workflow-template` | `workflow_template_version` and the published `definition` |
 | Tasks | `POST /tasks` with `{{sessionId}}` | `id` → `{{taskId}}`, confirm `status: "collecting"` |
 | Tasks | `GET /tasks/{{taskId}}/next` | confirm a requirement comes back |
 | Tasks | `POST /tasks/{{taskId}}/values` for each requirement returned by `next` | repeat until `GET /tasks/{{taskId}}/next` returns `complete: true`. The value must match the requirement's `type` (§7.5) — `requester_email` needs a real address |
@@ -1712,14 +1656,14 @@ Collection Runner pass needs no manual variable entry.
 | Tasks | `GET /tasks/{{taskId}}/document` | 200, `Content-Type: application/pdf`, body starts with `%PDF-` — only once `status` is `completed` |
 | Tasks | `GET /tasks?session_id={{sessionId}}` | the task appears in the list |
 | Tasks | `PATCH /tasks/{{taskId}}/status` with `{"status":"cancelled"}` | only on a scratch task **before** `start` — this is terminal |
-| Error cases | one request per error class (400, 404, 409, 422) | asserts `{ error, code, details }` |
+| Error cases | one request per error class (400, 401, 404, 409, 422) | asserts `{ error, code, details }` |
 
 The seeded administrator holds every permission, so one `{{authToken}}` drives
 the whole sequence. To exercise the permission guards, create a user with only
 `task:create` (§13.1), log in as them (their password is
 `USER_DEFAULT_PASSWORD`), and use that token: Selection, Tasks and the
-`GET /workflows*` rows still pass, while every
-`POST/PUT/PATCH/DELETE /workflows*`, every `/drafts*` and every `/users*` row
+`GET /workflow-templates*` rows still pass, while every
+`POST/PATCH /workflow-templates*` and every `/users*` row
 answers `403 PERMISSION_DENIED`. Tasks are visible only to the user who created
 them (§7), so switch tokens before creating a task, not halfway through one.
 
@@ -1728,8 +1672,8 @@ session through §12.6) really revokes the session, so every later request would
 answer `401`. The collection's Logout request logs in a throwaway session first
 and logs that one out instead.
 
-Repeat the Drafts/Workflows folders with a second template
-(`src/data/samples/demo-drafts/workshop_event.txt`) so the selector has something to
+Generate and publish a second template (for example from
+`src/data/samples/demo-drafts/it_overseas_leave.txt`) so the selector has something to
 disambiguate between — with one candidate it will rarely return `ambiguous`.
 
 **Postman scripting** — the collection uses `pm.collectionVariables.set(...)` in each
@@ -1743,18 +1687,12 @@ pm.collectionVariables.set("authToken", pm.response.json().token);
 The collection-level auth is `Bearer {{authToken}}`, so every request after
 Login authenticates without a manual header.
 
-and `POST /drafts`:
-
-```javascript
-pm.collectionVariables.set("draftId", pm.response.json().id);
-```
-
-and `POST /drafts/{{draftId}}/extract`:
+and `POST /workflow-templates/generate`:
 
 ```javascript
 var json = pm.response.json();
-pm.collectionVariables.set("workflowId", json.workflow_id);
-pm.collectionVariables.set("templateVersion", json.version);
+pm.collectionVariables.set("workflowTemplateId", json.workflow_template.id);
+pm.collectionVariables.set("templateVersion", json.workflow_template.current_version);
 ```
 
 and `POST /selection/sessions`:
@@ -1796,20 +1734,20 @@ JSON) when you want a specific answer rather than a placeholder.
 
 ## 11. Things worth knowing before you test
 
-- **LLM routes are slow.** `POST /workflows/extract` and `POST /drafts/:id/extract`
-  make up to `EXTRACTION_MAX_ATTEMPTS` Azure calls. Set the Postman timeout well
+- **LLM routes are slow.** `POST /workflow-templates/generate` and
+  `POST /workflow-templates/:workflowTemplateId/generate` make up to
+  `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` model calls. Set the Postman timeout well
   above the default.
-- **Nothing is selectable until it is published.** Retrieval filters on
-  `review_status: "confirmed"` and `is_latest: true`.
-- **Saves are versioned, never in-place.** `POST /workflows`, `PUT /workflows/:id`,
-  and `POST /drafts/:id/extract` each create a new version and re-embed.
-- **Drafts are deduplicated by content hash.** Change the text if you want a
-  genuinely new draft row.
-- **No delete endpoint exists.** Clean up test data directly in MongoDB
-  (`unblock_ai` database, collections `drafts`, `templates`, `selection_sessions`).
-- **Every schema field is required, including nullable ones**, and
-  `additionalProperties` is `false`. Hand-writing a workflow body is error-prone
-  — start from `src/data/samples/expected/departmental_event_workshop.json`.
+- **Nothing is selectable until it is published.** Retrieval only considers templates
+  with `status: "published"` and no `archived_at`.
+- **Generating always makes a new version.** Versions are never edited in place. On a
+  published template the new version goes live immediately. A rename changes only the
+  template and re-embeds; it never makes a version.
+- **There is no delete.** Archive templates you no longer want (§4.8). To wipe test
+  data, drop it directly in MongoDB (`unblock_ai` database, collections
+  `workflow_templates`, `workflow_template_versions`, `selection_sessions`, `tasks`).
+- **Definitions cannot be hand-edited through the API.** Change the prompt and
+  regenerate. Complete example definitions live in `src/data/samples/expected/`.
 - **Retrieval backend is switchable.** `VECTOR_BACKEND=atlas` uses Atlas vector
   search; anything else uses the in-memory store. This changes `score` values
   but not the response shape.
@@ -1818,7 +1756,7 @@ JSON) when you want a specific answer rather than a placeholder.
 - **Every workflow now collects `requester_email`.** It is declared last among the
   inputs, so it is the last `source: "input"` requirement `GET /tasks/:id/next` hands
   back before the `actor:*` ones. It is `type: "email"` and required — a placeholder
-  string is a 400 (§7.5). Templates saved before this input existed do not have it.
+  string is a 400 (§7.5).
 - **Task values can only change while `status: "collecting"`.** `POST
   /tasks/:id/values` and `POST /tasks/:id/finalize` both 409 once the task is
   `ready` or `cancelled`.
@@ -1841,7 +1779,7 @@ JSON) when you want a specific answer rather than a placeholder.
   on the same step are capped at 3 (`reopen_count`); a 4th is a 409.
 - **The completion-document PDF is regenerated, never stored.** `GET
   /tasks/:id/document` (§7.10) re-renders it from the task and its version-pinned
-  workflow on every call — only a small metadata record (`filename`, `byte_size`,
+  workflow template on every call — only a small metadata record (`filename`, `byte_size`,
   `sha256`, `emailed_to`/`emailed_at`) is persisted on the task. It 409s until
   `status` is `completed`. The same PDF is attached to the completion email
   (`DOCUMENT_ATTACH_TO_EMAIL`, default `true`), so this endpoint is the fallback
@@ -2126,7 +2064,7 @@ Each user is returned as a `UserDto`:
 | Field | Notes |
 | --- | --- |
 | `status` | `active` or `disabled`. A disabled user cannot log in (§12.1), and their existing sessions stop authenticating |
-| `permissions` | One or more of `workflow:manage`, `task:create`, `task:approve`, `user:manage` (§1). Never empty |
+| `permissions` | One or more of `workflow:manage`, `task:create`, `task:approve`, `user:manage`, `organisation:manage` (§1). Never empty |
 | `last_login_at` | Time of the last successful login; `null` until the first one |
 | `created_by_user_id` | The user who created this one through §13.1; `null` for the seeded administrator |
 
@@ -2176,11 +2114,45 @@ Share it with them out of band. The response never contains it.
 
 ### 13.2 `GET /api/users`
 
-Lists every user, ordered by `full_name` (case-insensitive).
+Lists users one page at a time, ordered by `full_name` (case-insensitive).
 
-**200 OK** — `{ "users": [UserDto, ...] }`
+| Parameter | In | Required | Notes |
+| --------- | -- | -------- | ----- |
+| `search` | query | no | Matches `full_name` or `email`, case-insensitive, up to 100 characters. Blank means no search |
+| `organisational_unit_id` | query | no | Only members of this unit **or of its direct child units** — filtering by a faculty includes its departments' members |
+| `limit` | query | no | 1–100, default `25` |
+| `offset` | query | no | 0 or more, default `0` |
 
-**Errors** — `401 AUTHENTICATION_REQUIRED`; `403 PERMISSION_DENIED`.
+**200 OK**
+
+```json
+{
+  "users": [
+    {
+      "id": "5d6e7f80-1a2b-4c3d-8e9f-a0b1c2d3e4f5",
+      "email": "u4@u.c",
+      "full_name": "Chamari Gunawardena",
+      "status": "active",
+      "permissions": ["task:approve", "task:create", "workflow:manage"],
+      "last_login_at": null,
+      "created_by_user_id": null,
+      "created_at": "2026-11-11T06:57:12.000Z",
+      "updated_at": "2026-11-11T06:57:12.000Z",
+      "organisational_units": [
+        { "id": "…", "code": "CSE", "name": "Department of Computer Science & Engineering", "unit_type": "department", "is_archived": false }
+      ]
+    }
+  ],
+  "page": { "total": 18, "limit": 25, "offset": 0 }
+}
+```
+
+Each item is a `UserDto` plus `organisational_units`: the units the user is a
+member of, ordered by faculty, then unit type, then name.
+
+**Errors** — `400 VALIDATION_ERROR` for an out-of-range `limit` / `offset`, a
+non-UUID `organisational_unit_id` or an overlong `search`;
+`401 AUTHENTICATION_REQUIRED`; `403 PERMISSION_DENIED`.
 
 ---
 
@@ -2200,3 +2172,250 @@ Lists every user, ordered by `full_name` (case-insensitive).
 | `401`  | `AUTHENTICATION_REQUIRED` |
 | `403`  | `PERMISSION_DENIED` |
 | `404`  | `{ "error": "User '<id>' not found", "code": "USER_NOT_FOUND", "details": null }` |
+
+---
+
+## 14. Organisational unit endpoints
+
+`src/routes/organisational-unit.route.ts`. Faculties, departments and divisions
+live in one `organisational_units` table, distinguished by `unit_type`:
+
+| `unit_type` | Parent |
+| --- | --- |
+| `faculty` | none |
+| `department` | exactly one `faculty` |
+| `division` | none (university-level) or one `faculty` |
+
+Reads need any signed-in user; writes need `organisation:manage`. Every unit is
+returned as an `OrganisationalUnitSummaryDto`:
+
+```json
+{
+  "id": "9c4583aa-385f-49b1-aca5-9c7337ff3660",
+  "code": "CSE",
+  "name": "Department of Computer Science & Engineering",
+  "unit_type": "department",
+  "is_archived": false,
+  "parent": { "id": "…", "code": "FOE", "name": "Faculty of Engineering", "unit_type": "faculty", "is_archived": false },
+  "description": null,
+  "archived_at": null,
+  "created_at": "2026-11-11T06:57:00.000Z",
+  "updated_at": "2026-11-11T06:57:00.000Z",
+  "member_count": 4,
+  "child_count": 0,
+  "active_child_count": 0
+}
+```
+
+| Field | Notes |
+| --- | --- |
+| `code` | Permanent, unique, upper-case letters and digits in hyphen-separated segments, at most 24 characters (`FOE`, `FOE-UGSD`) |
+| `name` | 1–200 characters, unique among units of the same type under the same parent (case-insensitive) |
+| `member_count` | Users who are members of this unit itself |
+| `child_count` / `active_child_count` | All / non-archived units whose parent is this unit |
+
+### 14.1 `GET /api/organisational-units`
+
+| Parameter | In | Notes |
+| --- | --- | --- |
+| `unit_type` | query | `faculty`, `department` or `division` |
+| `parent_id` | query | Only children of this unit |
+| `root_only` | query | `true` returns units without a parent. Cannot be combined with `parent_id` |
+| `include_archived` | query | `true` includes archived units (default `false`) |
+
+**200 OK** — `{ "organisational_units": [OrganisationalUnitSummaryDto, ...] }`,
+ordered by effective faculty, then unit type, then name.
+
+### 14.2 `POST /api/organisational-units`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `code` | string | yes | Normalised to upper case |
+| `name` | string | yes | Trimmed; inner whitespace collapsed |
+| `unit_type` | string | yes | `faculty`, `department` or `division` |
+| `parent_id` | UUID \| null | per type | Must be an active faculty. Required for departments, optional for divisions, forbidden for faculties |
+| `description` | string \| null | no | At most 1000 characters; blank becomes `null` |
+
+**201 Created** — `{ "organisational_unit": OrganisationalUnitSummaryDto }`
+
+### 14.3 `GET /api/organisational-units/:unitId`
+
+**200 OK** — `{ "organisational_unit": OrganisationalUnitSummaryDto }`
+
+### 14.4 `PATCH /api/organisational-units/:unitId`
+
+Any of `name`, `parent_id` (`null` moves a division to university level) and
+`description`. `code` and `unit_type` cannot change. Moving a unit never touches
+its memberships. Because every member of a department must also be a member of
+its faculty, a department that has members cannot be moved to another faculty;
+remove its members first. **200 OK** — `{ "organisational_unit": OrganisationalUnitSummaryDto }`
+
+### 14.5 `POST …/:unitId/archive` and `POST …/:unitId/restore`
+
+Archiving hides a unit from pickers and blocks new memberships; existing
+memberships stay. Both calls are idempotent. A unit with active children cannot
+be archived; a unit whose parent is archived cannot be restored.
+
+### 14.6 `DELETE /api/organisational-units/:unitId`
+
+Allowed only when the unit has no members and no child units. **204 No Content**.
+
+**Errors (all of §14)**
+
+| Status | `code` | When |
+| --- | --- | --- |
+| `400` | `VALIDATION_ERROR` | Malformed field; `details.field` names it |
+| `400` | `ORGANISATIONAL_UNIT_PARENT_INVALID` | Missing, forbidden, unknown or wrong-type parent |
+| `404` | `ORGANISATIONAL_UNIT_NOT_FOUND` | Unknown `unitId` |
+| `409` | `ORGANISATIONAL_UNIT_CODE_TAKEN` / `ORGANISATIONAL_UNIT_NAME_TAKEN` | Duplicate code / sibling name |
+| `409` | `ORGANISATIONAL_UNIT_PARENT_ARCHIVED` | The chosen or current parent is archived |
+| `409` | `ORGANISATIONAL_UNIT_HAS_ACTIVE_CHILDREN` | Archive blocked; `details.active_child_count` |
+| `409` | `ORGANISATIONAL_UNIT_IN_USE` | Delete blocked; `details.member_count`, `details.child_count` |
+| `409` | `ORGANISATIONAL_UNIT_HAS_MEMBERS` | Moving a department that has members to another faculty; `details.field` is `parent_id`, `details.member_count` |
+
+---
+
+## 15. Designation endpoints
+
+`src/routes/designation.route.ts`. A designation (Dean, Head of Department,
+Lecturer, Student, …) is defined once and lists the unit types it can be held in.
+Reads need any signed-in user; writes need `organisation:manage`.
+
+```json
+{
+  "id": "…",
+  "code": "head_of_department",
+  "title": "Head of Department",
+  "category": "leadership",
+  "display_order": 70,
+  "is_archived": false,
+  "applicable_unit_types": ["department"],
+  "single_holder_per_unit": true,
+  "archived_at": null,
+  "created_at": "…",
+  "updated_at": "…",
+  "holder_count": 2
+}
+```
+
+| Field | Notes |
+| --- | --- |
+| `code` | Permanent, unique, lower-case snake case, at most 64 characters. Matches workflow actor role slugs where one exists |
+| `title` | 1–120 characters, unique (case-insensitive) |
+| `category` | `leadership`, `academic`, `academic_support`, `administrative`, `non_academic` or `student` |
+| `applicable_unit_types` | At least one of `faculty`, `department`, `division` |
+| `single_holder_per_unit` | At most one person may hold it in any one unit |
+| `display_order` | 0–9999; lists sort by it, then title |
+
+### 15.1 `GET /api/designations`
+
+`include_archived=true` includes archived designations.
+**200 OK** — `{ "designations": [DesignationSummaryDto, ...] }`
+
+### 15.2 `POST /api/designations`
+
+Body: `code`, `title`, `category`, `applicable_unit_types`,
+`single_holder_per_unit` (boolean) and `display_order` (integer), all required.
+**201 Created** — `{ "designation": DesignationSummaryDto }`
+
+### 15.3 `GET /api/designations/:designationId`
+
+**200 OK** — `{ "designation": DesignationSummaryDto }`
+
+### 15.4 `PATCH /api/designations/:designationId`
+
+Any create field except `code`. Removing a unit type that people hold the
+designation in, or switching on `single_holder_per_unit` while a unit has
+several holders, is refused.
+
+### 15.5 `POST …/archive` and `POST …/restore`
+
+Archived designations cannot be newly assigned; existing assignments stay.
+
+### 15.6 `DELETE /api/designations/:designationId`
+
+Allowed only when nobody holds the designation. **204 No Content**.
+
+**Errors (all of §15)**
+
+| Status | `code` | When |
+| --- | --- | --- |
+| `400` | `VALIDATION_ERROR` | Malformed field; `details.field` names it |
+| `404` | `DESIGNATION_NOT_FOUND` | Unknown `designationId` |
+| `409` | `DESIGNATION_CODE_TAKEN` / `DESIGNATION_TITLE_TAKEN` | Duplicate code / title |
+| `409` | `DESIGNATION_UNIT_TYPE_IN_USE` | `details.unit_type`, `details.holder_count` |
+| `409` | `DESIGNATION_SINGLE_HOLDER_VIOLATED` | `details.organisational_unit_ids` with more than one holder |
+| `409` | `DESIGNATION_IN_USE` | Delete blocked; `details.holder_count` |
+
+---
+
+## 16. User affiliation endpoints
+
+`src/routes/user-affiliation.route.ts`. A user may be a member of any number of
+units, and may hold designations only within units they are a member of.
+A member of a department must also be an explicit member of the department's
+faculty. Membership of a faculty-level division implies affiliation with its
+faculty without storing it. Both are reported as *effective faculties*.
+
+`UserAffiliationsDto`:
+
+```json
+{
+  "memberships": [
+    {
+      "organisational_unit": { "id": "…", "code": "CSE", "name": "…", "unit_type": "department", "is_archived": false, "parent": { "…": "…" }, "description": null, "archived_at": null, "created_at": "…", "updated_at": "…" },
+      "designations": [
+        { "id": "…", "code": "head_of_department", "title": "Head of Department", "category": "leadership", "display_order": 70, "is_archived": false }
+      ],
+      "assigned_at": "2026-11-11T06:57:13.000Z"
+    }
+  ],
+  "effective_faculties": [
+    { "id": "…", "code": "FOE", "name": "Faculty of Engineering", "unit_type": "faculty", "is_archived": false }
+  ]
+}
+```
+
+### 16.1 `GET /api/users/:userId/affiliations`
+
+`user:manage`. **200 OK** — `{ "affiliations": UserAffiliationsDto }`
+
+### 16.2 `PUT /api/users/:userId/affiliations`
+
+`user:manage`. The body is the **complete** desired state; an empty list removes
+every affiliation. Unchanged rows keep their original `assigned_at`.
+
+```json
+{
+  "memberships": [
+    { "organisational_unit_id": "…", "designation_ids": ["…", "…"] }
+  ]
+}
+```
+
+Rules: units unique; designation ids unique per unit; at most 50 memberships and
+10 designations per membership; every department membership needs a membership of
+that department's faculty in the same request; new memberships need an active unit; new
+assignments need an active designation applicable to the unit type; a
+single-holder designation already held by someone else in that unit is refused.
+
+**200 OK** — `{ "affiliations": UserAffiliationsDto }`
+
+| Status | `code` | `details` |
+| --- | --- | --- |
+| `400` | `VALIDATION_ERROR` | Malformed body, e.g. `memberships[0].organisational_unit_id must be a valid UUID` |
+| `400` | `USER_AFFILIATIONS_INVALID` | `{ "issues": [{ "code", "organisational_unit_id", "designation_id" }] }`, every breach at once. Issue codes: `DUPLICATE_ORGANISATIONAL_UNIT`, `DUPLICATE_DESIGNATION`, `ORGANISATIONAL_UNIT_NOT_FOUND`, `ORGANISATIONAL_UNIT_ARCHIVED`, `DESIGNATION_NOT_FOUND`, `DESIGNATION_ARCHIVED`, `DESIGNATION_NOT_APPLICABLE`, `FACULTY_MEMBERSHIP_REQUIRED` (on the department whose faculty is missing), `TOO_MANY_MEMBERSHIPS`, `TOO_MANY_DESIGNATIONS` |
+| `404` | `USER_NOT_FOUND` | — |
+| `409` | `DESIGNATION_HOLDER_CONFLICT` | `{ "conflicts": [{ "designation_id", "organisational_unit_id", "holder": { "id", "full_name", "email" } }] }` |
+
+### 16.3 `GET /api/auth/me/affiliations`
+
+Any signed-in user; always the caller's own affiliations.
+**200 OK** — `{ "affiliations": UserAffiliationsDto }`
+
+### 16.4 `GET /api/organisational-units/:unitId/members`
+
+`user:manage` or `organisation:manage`. Members ordered by name, each with the
+designations they hold in this unit.
+
+**200 OK** — `{ "members": [{ "user": { "id", "full_name", "email" }, "designations": [DesignationReferenceDto], "assigned_at" }] }`

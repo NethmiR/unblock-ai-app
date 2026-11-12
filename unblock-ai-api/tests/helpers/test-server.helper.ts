@@ -1,10 +1,15 @@
 import type { AddressInfo } from "node:net";
 import { createApp } from "../../src/app.js";
+import { HealthController } from "../../src/controllers/health.controller.js";
 import { createRequireTaskOwnership } from "../../src/middlewares/require-task-ownership.middleware.js";
 import { AuthenticationService } from "../../src/services/authentication.service.js";
 import { UserSessionService } from "../../src/services/user-session.service.js";
-import { InMemoryUserRepository } from "../../src/repositories/user-repository/in-memory.user-repository.js";
-import { InMemoryUserSessionRepository } from "../../src/repositories/user-session-repository/in-memory.user-session-repository.js";
+import {
+  createInMemoryRepositoryRegistry,
+  type InMemoryRepositoryRegistry,
+} from "../../src/repositories/repository-registry.factory.js";
+import type { InMemoryUserRepository } from "../../src/repositories/user-repository/in-memory.user-repository.js";
+import type { InMemoryUserSessionRepository } from "../../src/repositories/user-session-repository/in-memory.user-session-repository.js";
 import { hashUserSessionToken } from "../../src/utils/auth/user-session-token.util.js";
 import { AUTHORIZATION_SCHEME } from "../../src/data/constants/auth.constant.js";
 import { PERMISSIONS, Permission } from "../../src/data/constants/permission.constant.js";
@@ -23,6 +28,7 @@ export enum TestIdentity {
   WORKFLOW_MANAGER = "workflow-manager",
   TASK_CREATOR = "task-creator",
   USER_MANAGER = "user-manager",
+  ORGANISATION_MANAGER = "organisation-manager",
   ADMINISTRATOR = "administrator",
 }
 
@@ -71,6 +77,12 @@ export const TEST_USERS: Record<TestIdentity, UserCredentialRecord> = {
     "Test User Manager",
     [Permission.USER_MANAGE],
   ),
+  [TestIdentity.ORGANISATION_MANAGER]: testUser(
+    "00000000-0000-4000-8000-000000000005",
+    TestIdentity.ORGANISATION_MANAGER,
+    "Test Organisation Manager",
+    [Permission.ORGANISATION_MANAGE],
+  ),
   [TestIdentity.ADMINISTRATOR]: testUser(
     "00000000-0000-4000-8000-000000000004",
     TestIdentity.ADMINISTRATOR,
@@ -83,6 +95,7 @@ export const TEST_SESSION_TOKENS: Record<TestIdentity, string> = {
   [TestIdentity.WORKFLOW_MANAGER]: "test-session-token-workflow-manager",
   [TestIdentity.TASK_CREATOR]: "test-session-token-task-creator",
   [TestIdentity.USER_MANAGER]: "test-session-token-user-manager",
+  [TestIdentity.ORGANISATION_MANAGER]: "test-session-token-organisation-manager",
   [TestIdentity.ADMINISTRATOR]: "test-session-token-administrator",
 };
 
@@ -101,6 +114,7 @@ function testSession(identity: TestIdentity, index: number): UserSessionRecord {
 }
 
 export interface TestAuthentication {
+  repositories: InMemoryRepositoryRegistry;
   userRepository: InMemoryUserRepository;
   userSessionRepository: InMemoryUserSessionRepository;
   userSessionService: UserSessionService;
@@ -112,15 +126,14 @@ export function createTestAuthentication(
 ): TestAuthentication {
   const authConfig = options.authConfig ?? TEST_AUTH_CONFIG;
   const identities = Object.values(TestIdentity);
-  const userRepository = new InMemoryUserRepository({
+  const repositories = createInMemoryRepositoryRegistry({
     users: [...identities.map((identity) => TEST_USERS[identity]), ...(options.users ?? [])],
+    userSessions: identities.map((identity, index) => testSession(identity, index)),
   });
-  const userSessionRepository = new InMemoryUserSessionRepository({
-    sessions: identities.map((identity, index) => testSession(identity, index)),
-  });
+  const { userRepository, userSessionRepository } = repositories;
   const userSessionService = new UserSessionService({ userSessionRepository, authConfig });
   const authenticationService = new AuthenticationService({ userRepository, userSessionService, authConfig });
-  return { userRepository, userSessionRepository, userSessionService, authenticationService };
+  return { repositories, userRepository, userSessionRepository, userSessionService, authenticationService };
 }
 
 export function authHeaderFor(identity: TestIdentity): Record<string, string> {
@@ -143,5 +156,26 @@ export async function startTestServer(
   return {
     baseUrl: `http://127.0.0.1:${port}`,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+function unusedController<T>(): T {
+  return new Proxy({}, { get: () => () => Promise.reject(new Error("controller not under test")) }) as T;
+}
+
+export function createTestControllers(overrides: Partial<ApiControllers> = {}): ApiControllers {
+  return {
+    healthController: new HealthController(),
+    workflowTemplateController: unusedController(),
+    selectionController: unusedController(),
+    taskController: unusedController(),
+    approvalController: unusedController(),
+    authController: unusedController(),
+    userSessionController: unusedController(),
+    userController: unusedController(),
+    organisationalUnitController: unusedController(),
+    designationController: unusedController(),
+    userAffiliationController: unusedController(),
+    ...overrides,
   };
 }

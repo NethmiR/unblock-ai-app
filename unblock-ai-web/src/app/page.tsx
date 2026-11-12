@@ -4,5 +4,5 @@ import { RoutePath } from "@/lib/routing/route-path";
 
 export default async function Home() {
   const session = await getSession();
-  redirect(session ? RoutePath.ACCOUNT : RoutePath.LOGIN);
+  redirect(session ? RoutePath.DASHBOARD : RoutePath.LOGIN);
 }

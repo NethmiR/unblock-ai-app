@@ -82,7 +82,7 @@ export function JobList({ jobs }: { jobs: JobRowTask[] }) {
           // Keyed so switching rows resets the dialog back to its first stage.
           key={pendingDelete.id}
           reference={pendingDelete.reference}
-          title={pendingDelete.workflow_title}
+          title={pendingDelete.workflow_template_title}
           status={pendingDelete.status}
           busy={isDeleting}
           error={deleteError}

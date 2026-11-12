@@ -1,6 +1,7 @@
 import { apiRequest } from "./client";
 import type { ChooseResponse, SelectionResponse } from "@/types/selection";
 import type { InstitutionType, Workflow } from "@/types/workflow";
+import type { MatchedWorkflowTemplateResponse } from "@/types/workflow-template";
 
 export const selectionApi = {
   start: (query: string, requesterContext?: Record<string, unknown>, institutionType?: InstitutionType) =>
@@ -15,12 +16,14 @@ export const selectionApi = {
       body: { answer },
     }),
 
-  choose: (sessionId: string, workflowId: string) =>
+  choose: (sessionId: string, workflowTemplateId: string) =>
     apiRequest<ChooseResponse>(`/selection/sessions/${sessionId}/choose`, {
       method: "POST",
-      body: { workflow_id: workflowId },
+      body: { workflow_template_id: workflowTemplateId },
     }),
 
-  getWorkflow: (sessionId: string) =>
-    apiRequest<Workflow>(`/selection/sessions/${sessionId}/workflow`),
+  getWorkflowTemplate: (sessionId: string): Promise<Workflow> =>
+    apiRequest<MatchedWorkflowTemplateResponse>(`/selection/sessions/${sessionId}/workflow-template`).then(
+      (response) => response.definition,
+    ),
 };

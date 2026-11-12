@@ -10,8 +10,8 @@ export function createSelectionRouter(controller: SelectionController): Router {
 
   router.post("/selection/sessions", createTasks, asyncHandler(controller.startSession));
   router.post("/selection/sessions/:id/answer", createTasks, asyncHandler(controller.answerQuestion));
-  router.post("/selection/sessions/:id/choose", createTasks, asyncHandler(controller.chooseWorkflow));
-  router.get("/selection/sessions/:id/workflow", createTasks, asyncHandler(controller.getMatchedWorkflow));
+  router.post("/selection/sessions/:id/choose", createTasks, asyncHandler(controller.chooseWorkflowTemplate));
+  router.get("/selection/sessions/:id/workflow-template", createTasks, asyncHandler(controller.getMatchedWorkflowTemplate));
 
   return router;
 }

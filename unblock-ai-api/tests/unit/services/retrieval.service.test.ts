@@ -16,8 +16,8 @@ const RETRIEVAL_CONFIG: RetrievalConfig = {
 
 function candidate(overrides: Partial<RetrievalCandidate>): RetrievalCandidate {
   return {
-    workflow_id: "x",
-    version: 1,
+    workflow_template_id: "x",
+    workflow_template_version: 1,
     title: "X",
     description: "",
     score: 0.5,
@@ -58,8 +58,8 @@ test("over-fetches k+2 candidates from the vector store", async () => {
 
 test("applies the configured alias boost before slicing", async () => {
   const rows = [
-    candidate({ workflow_id: "a", score: 0.7, aliases_lower: ["overseas leave"] }),
-    candidate({ workflow_id: "b", score: 0.75, aliases_lower: [] }),
+    candidate({ workflow_template_id: "a", score: 0.7, aliases_lower: ["overseas leave"] }),
+    candidate({ workflow_template_id: "b", score: 0.75, aliases_lower: [] }),
   ];
   const vectorStore = fakeVectorStore(rows);
   const service = new RetrievalService({
@@ -70,12 +70,12 @@ test("applies the configured alias boost before slicing", async () => {
 
   const results = await service.retrieve("I need overseas leave");
 
-  assert.equal(results[0]?.workflow_id, "a");
+  assert.equal(results[0]?.workflow_template_id, "a");
   assert.ok(Math.abs((results[0]?.score ?? 0) - 0.85) < 1e-9);
 });
 
 test("slices the boosted results down to topK", async () => {
-  const rows = Array.from({ length: 6 }, (_, i) => candidate({ workflow_id: `wf_${i}`, score: 1 - i * 0.1 }));
+  const rows = Array.from({ length: 6 }, (_, i) => candidate({ workflow_template_id: `wf_${i}`, score: 1 - i * 0.1 }));
   const vectorStore = fakeVectorStore(rows);
   const service = new RetrievalService({
     vectorStore,

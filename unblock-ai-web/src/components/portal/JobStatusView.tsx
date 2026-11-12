@@ -167,7 +167,7 @@ export function JobStatusView({
       await tasksApi.remove(taskId);
       // The task is gone, so this route now 404s - replace rather than push so
       // Back does not land on a dead page, and refresh so the list drops the row.
-      router.replace("/portal");
+      router.replace("/old/portal");
       router.refresh();
     } catch (err) {
       setDeleteError(
@@ -191,7 +191,7 @@ export function JobStatusView({
     if (isDeleting) return;
     setPrompt(null);
     setDeleteError(null);
-    router.push("/portal");
+    router.push("/old/portal");
   }
 
   /**
@@ -204,7 +204,7 @@ export function JobStatusView({
       setPrompt("on-close");
       return;
     }
-    router.push("/portal");
+    router.push("/old/portal");
   }
 
   return (
@@ -223,7 +223,7 @@ export function JobStatusView({
         <div className="text-xs font-medium uppercase tracking-[.14em] text-muted">{status.reference}</div>
         <Badge tone={STATUS_TONE[taskStatus] ?? "neutral"}>{STATUS_LABEL[taskStatus] ?? status.status}</Badge>
       </div>
-      <h1 className="mb-8 text-2xl font-semibold tracking-tight">{status.workflow_title}</h1>
+      <h1 className="mb-8 text-2xl font-semibold tracking-tight">{status.workflow_template_title}</h1>
 
       {taskStatus === "collecting" && (
         <Card className="mb-6 px-7 py-6">
@@ -260,7 +260,7 @@ export function JobStatusView({
           <p className="mb-4 text-[14px] leading-relaxed text-muted">
             Every step has been approved, so the assistant is no longer available for this request.
             The full plan below stays available to view. Need something else?{" "}
-            <Link href="/portal/jobs/new" className="font-medium text-accent">
+            <Link href="/old/portal/jobs/new" className="font-medium text-accent">
               Start a new request
             </Link>
             .
@@ -381,7 +381,7 @@ export function JobStatusView({
           // Keyed so re-opening the prompt starts from its first stage again.
           key={prompt}
           reference={status.reference}
-          title={status.workflow_title}
+          title={status.workflow_template_title}
           status={taskStatus}
           busy={isDeleting}
           error={deleteError}

@@ -16,21 +16,22 @@ configs into a single frozen `config` object that every other module imports.
 | `POSTGRES_URL` | \*\* | — | `src/config/postgres.config.ts` | `config.postgres.url` — `src/db/postgres.client.ts`; **required when `POSTGRES_REPOSITORY_BACKEND=postgres`** |
 | `POSTGRES_POOL_MAX` | no | `10` | `src/config/postgres.config.ts` | `config.postgres.poolMax` — max pooled connections |
 | `POSTGRES_CONNECTION_TIMEOUT_MS` | no | `5000` | `src/config/postgres.config.ts` | `config.postgres.connectionTimeoutMs` |
-| `POSTGRES_REPOSITORY_BACKEND` | no | `postgres` | `src/config/postgres.config.ts` | `config.postgres.repositoryBackend` — `postgres` \| `memory`, selects the user, user-session and template-deletion repositories at composition root |
+| `POSTGRES_REPOSITORY_BACKEND` | no | `postgres` | `src/config/postgres.config.ts` | `config.postgres.repositoryBackend` — `postgres` \| `memory`, selects every Postgres-backed repository through `createRepositoryRegistry` at composition root |
 | `SEED_ADMINISTRATOR_EMAIL` | seed only | — | `src/config/seed.config.ts` | `loadSeedConfig().administratorEmail` — read only by `npm run seed:pg:run`; never loaded by the server |
 | `SEED_ADMINISTRATOR_FULL_NAME` | seed only | — | `src/config/seed.config.ts` | `loadSeedConfig().administratorFullName` — read only by `npm run seed:pg:run` |
+| `SEED_SAMPLE_USERS` | seed only | `false` | `src/config/seed.config.ts` | `loadSeedConfig().sampleUsersEnabled` — `true` seeds the sample users `u1@u.c` … with test affiliations. Never enable in production |
 | `SESSION_TTL_HOURS` | no | `12` | `src/config/auth.config.ts` | `config.auth.sessionTtlHours` — absolute lifetime of a user session |
 | `AUTH_MAX_FAILED_ATTEMPTS` | no | `0` | `src/config/auth.config.ts` | `config.auth.maxFailedAttempts` — failed logins before the account locks; `0` disables lockout (failures are still counted) |
 | `AUTH_LOCKOUT_DURATION_MINUTES` | no | `15` | `src/config/auth.config.ts` | `config.auth.lockoutDurationMinutes` — how long a lockout lasts after the last failed attempt |
 | `USER_DEFAULT_PASSWORD` | **yes** | — | `src/config/user.config.ts` | `config.user.defaultPassword` — initial password of every created user (`UserService.createUser`); never logged or returned |
-| `LLM_PROVIDER` | no | `azure-openai` | `src/config/llm.config.ts` | `config.llm.provider` — `azure-openai` \| `gemini`, selects the `ILlmAdapter` used for every generation task (extraction, retrieval summaries, selection) |
+| `LLM_PROVIDER` | no | `azure-openai` | `src/config/llm.config.ts` | `config.llm.provider` — `azure-openai` \| `gemini`, selects the `ILlmAdapter` used for every generation task (workflow template generation, selection) |
 | `AZURE_OPENAI_ENDPOINT` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.endpoint` — **required when `LLM_PROVIDER=azure-openai`** |
 | `AZURE_OPENAI_API_KEY` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.apiKey` — **required when `LLM_PROVIDER=azure-openai`** |
 | `AZURE_OPENAI_API_VERSION` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.apiVersion` — **required when `LLM_PROVIDER=azure-openai`** |
 | `AZURE_OPENAI_CHAT_DEPLOYMENT` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.deployment` — **required when `LLM_PROVIDER=azure-openai`** |
 | `GEMINI_API_KEY` | \*\* | — | `src/config/llm.config.ts`, `src/config/embedding.config.ts` | `config.llm.gemini.apiKey` / `config.embedding.gemini.apiKey` — Google AI Studio key; **required when `LLM_PROVIDER` or `EMBEDDING_PROVIDER` is `gemini`** |
 | `GEMINI_CHAT_MODEL` | \*\* | — | `src/config/llm.config.ts` | `config.llm.gemini.model` — **required when `LLM_PROVIDER=gemini`** |
-| `EXTRACTION_MAX_ATTEMPTS` | no | `3` | `src/config/extraction.config.ts` | `config.extraction.maxAttempts` — extraction repair-loop cap |
+| `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` | no | `3` | `src/config/workflow-template-generation.config.ts` | `config.workflowTemplateGeneration.maxAttempts` — model calls (first attempt + repairs) allowed when generating a workflow template from a prompt |
 | `EMBEDDING_PROVIDER` | no | `azure-openai` | `src/config/embedding.config.ts` | `config.embedding.provider` — `azure-openai` \| `gemini`, selects the `IEmbeddingAdapter`. Changing it (or the embedding model) requires re-embedding every stored template |
 | `AZURE_OPENAI_EMBEDDING_ENDPOINT` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.endpoint` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
 | `AZURE_OPENAI_EMBEDDING_API_KEY` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.apiKey` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
@@ -71,6 +72,13 @@ To switch providers, change `LLM_PROVIDER` and/or `EMBEDDING_PROVIDER` and fill 
 provider's keys — no code changes are needed. Switching the embedding provider (or
 embedding model) makes previously stored template vectors incomparable with new query
 vectors, so every stored template must be re-embedded before retrieval is reliable.
+There is no bulk re-embed command (the old `backfill:summaries` script was removed); a
+template's embedding is rebuilt only when it is regenerated or renamed.
+
+`EXTRACTION_MAX_ATTEMPTS` was **renamed** to `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS`.
+The old name is no longer read and nothing warns about it: a local `.env` that still sets
+`EXTRACTION_MAX_ATTEMPTS` is silently ignored and the default of `3` applies. Rename the
+variable in every `.env` and deployment environment.
 
 `KNOWLEDGE_BANK_PATH` was **removed** during the restructure. It was read into
 the pre-restructure config but consumed by nothing after the migration to MongoDB —

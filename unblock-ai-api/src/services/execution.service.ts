@@ -102,7 +102,7 @@ export class ExecutionService {
   ): AdvanceResult {
     const workflowStep = workflow.steps.find((step) => step.id === stepId);
     if (!workflowStep) {
-      throw new Error(`Workflow '${workflow.workflow_id}' has no step '${stepId}'`);
+      throw new Error(`Workflow template '${workflow.title}' has no step '${stepId}'`);
     }
 
     const stepOutcome = resolveOutcomeAction(workflowStep, outcome);

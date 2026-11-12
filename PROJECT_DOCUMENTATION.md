@@ -10,7 +10,7 @@
 | | |
 |---|---|
 | **Document version** | 1.0 |
-| **Last updated** | 2026-08-29 |
+| **Last updated** | 2026-11-11 (workflow templates); otherwise 2026-08-29 |
 | **Repository** | `unblock-ai-app` (branch `dev`, mainline `main`) |
 | **Intended readers** | Engineers, architects, product stakeholders, reviewers, presenters |
 | **Status of the system** | Working end-to-end for the happy path; see [§16 Limitations](#16-known-limitations--explicitly-out-of-scope) |
@@ -60,7 +60,7 @@ UNBLOCK-AI closes that gap in four moves:
 
 | # | Move | Who | Result |
 |---|---|---|---|
-| 1 | **Compile** | A workflow manager pastes the policy prose | An LLM extracts it into a strict JSON **workflow graph**, machine-validated and rendered as a flowchart the workflow manager verifies and publishes |
+| 1 | **Compile** | A workflow manager writes a title and pastes the policy prose as the prompt | An LLM generates a strict JSON **workflow graph** from it, machine-validated, stored as an immutable template version and rendered as a flowchart the workflow manager verifies and publishes |
 | 2 | **Find** | Requester describes their need in plain language | Vector retrieval + an LLM selector agent maps that request onto exactly one published template — or honestly says it can't |
 | 3 | **Fill & Run** | Requester answers one question at a time | A task is compiled from the template, values are validated, and the approval chain runs over real email with signed per-step links |
 | 4 | **Record** | System, on completion | A deterministic PDF record of the whole request — inputs, computed values, follow-ups, and every approval — emailed and downloadable |
@@ -71,8 +71,8 @@ Two applications in one repository:
 
 | Project | Role | Stack | Port |
 |---|---|---|---|
-| [`unblock-ai-api/`](unblock-ai-api/) | Backend — extraction, validation, storage, retrieval, planning, execution, documents | Node 18+ · TypeScript 5.9 (strict) · Express 5 · MongoDB 7 · PostgreSQL 17 · Azure OpenAI | 3000 |
-| [`unblock-ai-web/`](unblock-ai-web/) | Frontend — admin authoring surface, requester portal, approver decision page | Next.js 16.3 (App Router, RSC) · React 19.2 · Tailwind CSS v4 · React Flow | 3001 |
+| [`unblock-ai-api/`](unblock-ai-api/) | Backend — workflow template generation, validation, versioned storage, retrieval, planning, execution, documents | Node 18+ · TypeScript 5.9 (strict) · Express 5 · MongoDB 7 · PostgreSQL 17 · Azure OpenAI | 3000 |
+| [`unblock-ai-web/`](unblock-ai-web/) | Frontend — dashboard (workflow template management, users, organisation), requester portal, approver decision page | Next.js 16.3 (App Router, RSC) · React 19.2 · Tailwind CSS v4 · React Flow | 3001 |
 
 Roughly **8,100 lines** of backend source across 169 TypeScript files, and
 **6,700 lines** of frontend source across 89 files, backed by **63 backend test
@@ -99,12 +99,12 @@ values use a fixed operation set. No free-text formulas the model could invent a
 nothing could evaluate. See [§4.4](#44-conditions-and-computed-values-are-structured).
 
 **4. The LLM is fenced in by a schema and a validator, then given a chance to fix itself.**
-Extraction uses OpenAI structured outputs with `strict: true`, then runs eight
+Workflow template generation uses OpenAI structured outputs with `strict: true`, then runs eight
 semantic graph checks that JSON Schema cannot express, then feeds any failures back
-to the model for repair — up to three attempts. See [§11.2](#112-the-extraction-pipeline).
+to the model for repair — up to three attempts. See [§11.2](#112-the-workflow-template-generation-pipeline).
 
 **5. Uncertainty is a first-class outcome, never a guess.**
-The selector agent may return `no_match` and stop. The extractor may declare the
+The selector agent may return `no_match` and stop. The generator may declare the
 input "not a workflow" and refuse. A round budget expires into a manual list. The
 system is designed to say "I don't know" rather than stretch to the nearest
 plausible answer. See [§5.6](#56-retrieval--the-selector-agent).
@@ -114,14 +114,14 @@ plausible answer. See [§5.6](#56-retrieval--the-selector-agent).
 | Area | State |
 |---|---|
 | Prose → validated workflow JSON | **Working**, with a self-repair loop and live accuracy tests |
-| Admin authoring UI with flowchart | **Working** |
-| Publish gate (`pending_admin_review` → `confirmed`) | **Working** |
+| Workflow template management UI (`/dashboard/workflows`) with flowchart and version history | **Working** |
+| Template lifecycle (`draft` → `unpublished` → `published`), immutable versions, archive/restore | **Working** |
 | Retrieval + clarifying-question selection | **Working**, with a scored evaluation harness |
 | Requirement collection and validation | **Working** |
 | Email approval chain (approve / reject / request-more-info) | **Working**, default transport logs to console |
 | Completion PDF record | **Working**, deterministic and hash-verified |
 | Email login, permission-based access, revocable server-side sessions, user management API | **Working** — no password change or reset yet |
-| Deletion audit log | **Working** |
+| Task deletion audit log | **Working** |
 | Directory / HR integration for real approver identity | **Not built** — approver emails are requester-supplied |
 | SLA reminders, escalation, `condition` evaluation at runtime | **Not built** — the schema carries the fields; nothing reads them |
 
@@ -155,18 +155,18 @@ loop-back, one terminal rejection. It is a program written in English.
 
 > **Treat institutional policy prose as source code, and compile it.**
 
-The admin does not fill in a form-builder or drag boxes on a canvas. They **paste
-the paragraph**. The system compiles it into a graph, shows them the flowchart, and
+The workflow manager does not fill in a form-builder or drag boxes on a canvas. They **paste
+the paragraph** as the template's prompt. The system compiles it into a graph, shows them the flowchart, and
 asks them to verify. Verification is the human's job; authoring is not.
 
 Downstream of that compiled artifact, everything else becomes mechanical:
 
 ```
    POLICY PROSE                        (the source)
-        |  compile  (LLM + schema + graph validation)
+        |  generate  (LLM + schema + graph validation)
         v
-   WORKFLOW GRAPH                      (the program)
-        |  publish  (admin verifies the flowchart)
+   WORKFLOW TEMPLATE VERSION           (the program)
+        |  publish  (workflow manager verifies the flowchart)
         v
    PUBLISHED TEMPLATE                  (the library)
         |  retrieve + select  (embeddings + selector agent)
@@ -184,17 +184,16 @@ Downstream of that compiled artifact, everything else becomes mechanical:
 
 | Persona | Surface | What they do |
 |---|---|---|
-| **Workflow manager** | `/admin` (signed in, holds `workflow:manage`) | Paste prose, generate, inspect the flowchart, edit, publish, rename, delete. Review the deletion audit log. |
+| **Workflow manager** | `/dashboard/workflows` (signed in, holds `workflow:manage`) | Write a title and prompt, save it as a draft, generate or regenerate, inspect the flowchart, publish, rename, browse version history, archive and restore. |
 | **Requester** | `/portal` (signed in, holds `task:create`) | Describe a need in plain language, answer clarifying questions, fill requirements, submit, track status, download the record. |
 | **User manager** | `/api/users` (signed in, holds `user:manage`; no web screen yet) | Create users and grant them permissions. |
 | **Approver** | `/approvals/:token` (**no account**, token-authenticated) | Open a link from an email, see the request in context, approve / reject with a reason / ask for more information. |
 
 These personas are **permissions, not account types**. Everyone signs in at the same
-`/login` page with email and password and lands on `/account`, which shows their
-profile, permissions and active sessions. One account may hold any combination of
-the four permissions (`workflow:manage`, `task:create`, `task:approve`,
-`user:manage`) — see [§5.1](#51-authentication--authorization). The `/admin` and
-`/portal` dashboards are reachable by URL but not yet linked from `/account`.
+`/login` page with email and password and lands on `/dashboard`. One account may hold
+any combination of the permissions (`workflow:manage`, `task:create`, `task:approve`,
+`user:manage`, `organisation:manage`) — see [§5.1](#51-authentication--authorization).
+The older `/old/account` and `/old/portal` screens are still reachable by URL.
 
 The approver having **no account at all** is a deliberate constraint that shapes the
 whole auth design — see [§12.2](#122-two-independent-authentication-mechanisms).
@@ -203,7 +202,7 @@ whole auth design — see [§12.2](#122-two-independent-authentication-mechanism
 
 `it_faculty_overseas_leave` is one of two fully worked fixtures in the repo. It
 serves three roles simultaneously: few-shot prompt example, validation test
-fixture, and live extraction-accuracy gold data.
+fixture, and live generation-accuracy gold data.
 
 ```
                     +----------------------+
@@ -249,7 +248,7 @@ binding, and both `dynamic` and `static` actor resolution.
 +----------------------------------------------------------------------------+
 |  BROWSER                                                                    |
 |                                                                             |
-|   /login  /account  /admin/*  /portal/*      /approvals/:token              |
+|   /login  /dashboard/*  /old/*               /approvals/:token              |
 |   one session cookie (ua_session)            NO session - token only        |
 +-------+-----------------+-------------------+-------------------------------+
         |                 |                   |
@@ -276,18 +275,17 @@ binding, and both `dynamic` and `static` actor resolution.
 |  routes -> controllers -> services -> models | repositories -> db           |
 |                                                                             |
 |  SERVICES                                                                   |
-|   Draft · Extraction · Validation · Workflow · Embedding                    |
+|   WorkflowTemplate · WorkflowTemplateGeneration · Validation · Embedding    |
 |   Retrieval · Selector · Selection                                          |
 |   Planner · Task · Execution · Approval · Notification                      |
-|   CompletionDocument · Audit · TemplateDeletionLog                          |
+|   CompletionDocument · Audit                                                |
 |   Authentication · UserSession · User                                       |
 |                                                                             |
 |  PLUGGABLE ADAPTERS (factory behind an interface)                           |
 |   IVectorStore      memory | atlas                                          |
 |   IMailer           console | smtp                                          |
 |   IDocumentRenderer text   | pdf                                            |
-|   I*Repository      memory | postgres  (user, user-session,                 |
-|                                         template-deletion)                  |
+|   I*Repository      memory | postgres  (user, user-session, ...)            |
 +----+--------------+---------------+-----------------+----------------------+
      |              |               |                 |
      v              v               v                 v
@@ -295,16 +293,17 @@ binding, and both `dynamic` and `static` actor resolution.
 | MongoDB  |  | Postgres |  | Azure OpenAI |  | SMTP / stdout|
 |   7      |  |    17    |  |  chat +      |  |              |
 |          |  |          |  |  embeddings  |  |              |
-| drafts   |  | users    |  |              |  | approval     |
+| workflow_|  | users    |  |              |  | approval     |
 | templates|  | permis-  |  | gpt-4o       |  | links + PDF  |
-| tasks    |  |  sions   |  | text-embed-  |  |              |
-| selection|  | user_    |  |  ding-3-small|  |              |
-| _sessions|  |  permis- |  |              |  |              |
-| counters |  |  sions   |  |              |  |              |
-| audit_   |  | user_    |  |              |  |              |
-|  logs    |  |  sessions|  |              |  |              |
-|          |  | template_|  |              |  |              |
-|          |  | deletions|  |              |  |              |
+| workflow_|  |  sions   |  | text-embed-  |  |              |
+| template_|  | user_    |  |  ding-3-small|  |              |
+| versions |  |  permis- |  |              |  |              |
+| tasks    |  |  sions   |  |              |  |              |
+| selection|  | user_    |  |              |  |              |
+| _sessions|  |  sessions|  |              |  |              |
+| counters |  |          |  |              |  |              |
+| audit_   |  |          |  |              |  |              |
+|  logs    |  |          |  |              |  |              |
 +----------+  +----------+  +--------------+  +--------------+
 ```
 
@@ -313,15 +312,15 @@ binding, and both `dynamic` and `static` actor resolution.
 | # | Area | Primary services | Doc |
 |---|---|---|---|
 | A | Authentication & authorization | `authentication.service`, `user-session.service`, `user.service`, `repositories/` | [§5.1](#51-authentication--authorization) |
-| B | Draft management | `draft.service` | [§5.2](#52-draft-management) |
-| C | LLM extraction | `extraction.service` | [§5.3](#53-llm-extraction--prose--workflow-json) |
+| B | Workflow template lifecycle | `workflow-template.service` | [§5.2](#52-workflow-template-lifecycle) |
+| C | Workflow template generation | `workflow-template-generation.service` | [§5.3](#53-workflow-template-generation--prompt--workflow-json) |
 | D | Validation | `validation.service`, `graph-validator.util` | [§5.4](#54-validation--schema--graph) |
-| E | Versioned storage & embeddings | `workflow.service`, `embedding.service` | [§5.5](#55-versioned-template-storage--embeddings) |
+| E | Versioned storage & embeddings | `workflow-template.service`, `embedding.service` | [§5.5](#55-versioned-template-storage--embeddings) |
 | F | Retrieval & selector agent | `retrieval.service`, `selector.service`, `selection.service` | [§5.6](#56-retrieval--the-selector-agent) |
 | G | Task planning | `planner.service`, `task.service` | [§5.7](#57-task-planning--requirement-collection) |
 | H | Approval execution | `execution.service`, `approval.service`, `notification.service` | [§5.8](#58-approval-execution) |
 | I | Completion documents | `completion-document.service`, `document/` | [§5.9](#59-completion-documents) |
-| — | Deletion & audit | `template-deletion-log.service`, `audit.service` | [§5.10](#510-deletion-tracking-and-audit) |
+| — | Task deletion audit | `audit.service` | [§5.10](#510-deletion-tracking-and-audit) |
 
 ## 3.3 Technology choices and why
 
@@ -350,7 +349,7 @@ binding, and both `dynamic` and `static` actor resolution.
 | UI | React 19.2 | |
 | Styling | Tailwind CSS v4 via the PostCSS plugin | No `tailwind.config` file; design tokens live in `globals.css` |
 | Flowchart | `@xyflow/react` v12 (React Flow) + `dagre` | Auto-layout from `depends_on`, so the graph is derived, never hand-positioned |
-| Data fetching | SWR client-side; `force-dynamic` Server Components for admin/portal pages | Approval state is never safe to serve stale |
+| Data fetching | SWR client-side; `force-dynamic` Server Components for dashboard/portal pages | Approval state is never safe to serve stale |
 | Testing | Vitest | |
 | Lint | ESLint 9 + `eslint-config-next` | |
 
@@ -375,7 +374,7 @@ unblock-ai-app/
 │   └─ admin-template-open-performance-phase-plan.md
 ├─ unblock-ai-api/
 │   ├─ src/          169 .ts files, ~8,100 LOC
-│   ├─ scripts/      10 CLI scripts (migrate-postgres, migrate-mongo, seed-postgres, backfill, evaluate, smoke tests)
+│   ├─ scripts/      4 CLI scripts (migrate-postgres, migrate-mongo, seed-postgres, copy-assets)
 │   ├─ tests/        63 test files across unit / integration / live
 │   └─ docs/         api/ · architecture/ · guides/ · plans/ · postman/
 └─ unblock-ai-web/
@@ -389,11 +388,11 @@ The complete `src/` trees are in [Appendix A](#appendix-a--complete-source-tree)
 
 # 4. The Workflow Schema — The Core Design Artifact
 
-**File:** [`unblock-ai-api/src/data/schemas/workflow.schema.json`](unblock-ai-api/src/data/schemas/workflow.schema.json) — 511 lines, JSON Schema draft 2020-12.
+**File:** [`unblock-ai-api/src/data/schemas/workflow.schema.json`](unblock-ai-api/src/data/schemas/workflow.schema.json) — 498 lines, JSON Schema draft 2020-12.
 
 This is the single most important file in the repository. Everything upstream
 produces it and everything downstream consumes it. Changing it ripples into the
-extraction prompt, the graph validator, the planner, the execution engine, the
+workflow template generation prompt, the graph validator, the planner, the execution engine, the
 flowchart renderer, the completion document builder, and three test tiers at once.
 
 ## 4.1 Top-level shape
@@ -401,8 +400,7 @@ flowchart renderer, the completion document builder, and three test tiers at onc
 ```jsonc
 {
   "schema_version":     "1.0",
-  "workflow_id":        "it_faculty_overseas_leave",   // ^[a-z][a-z0-9_]*$
-  "title":              "Faculty Overseas Leave Request",
+  "title":              "Faculty Overseas Leave Request",   // see note below
   "description":        "...",
   "retrieval_summary":  { /* how the selector finds this workflow */ },
   "scope":              { "institution_type": "university",
@@ -412,12 +410,19 @@ flowchart renderer, the completion document builder, and three test tiers at onc
   "computed":           [ /* derived values, fixed operation set */ ],
   "steps":              [ /* the dependency graph - minItems: 1 */ ],
   "completion":         { "rule", "required_steps", "actions" },
-  "metadata":           { /* provenance + the model's own self-assessment */ }
+  "metadata":           { /* the model's own self-assessment */ }
 }
 ```
 
 `additionalProperties: false` is set on **every** object in the schema. Nothing
 undeclared can appear anywhere.
+
+The document carries no identifier of its own. Identity belongs to the workflow
+template that stores it (a UUID), and each generated definition is stored as one
+immutable version of that template ([§5.5](#55-versioned-template-storage--embeddings)).
+The model emits a `title`, but it is stripped before the definition is stored: the
+title lives on the template, so renaming never creates a version. Runtime readers
+get the definition with the template's current title merged back in.
 
 Enumerated vocabularies fixed by the schema:
 
@@ -432,7 +437,6 @@ Enumerated vocabularies fixed by the schema:
 | `completion_action.type` | `issue_reference_number` `notify` `instruction_to_requester` |
 | `notification_setting.channel` | `email` `sms` `in_app` |
 | `metadata.confidence` | `high` `medium` `low` |
-| `metadata.review_status` | `pending_admin_review` `confirmed` `rejected` |
 
 ## 4.2 `steps` is a graph
 
@@ -507,7 +511,7 @@ institution, because it never names a person — it names a relationship.
 groups suggested roles (academic, administrative, financial, facilities, security,
 IT, generic). The model may coin a new role; when it does, that role is flagged in
 `metadata.unmapped_roles` for admin review rather than being rejected as an error.
-An unfamiliar institution should not fail extraction.
+An unfamiliar institution should not fail generation.
 
 ## 4.4 Conditions and computed values are structured
 
@@ -543,7 +547,7 @@ An unfamiliar institution should not fail extraction.
 
 **Why closed sets:** a free-text formula (`"end_date - start_date"`) would be a
 string that the model invents and no downstream component can evaluate safely. A
-fixed operation set is a contract the extractor, the evaluator
+fixed operation set is a contract the generator, the evaluator
 ([`computed-evaluator.util.ts`](unblock-ai-api/src/utils/workflow/computed-evaluator.util.ts)),
 and the validator all agree on.
 
@@ -605,7 +609,7 @@ be terminal without the document declaring it twice.
 
 ## 4.7 Strict-mode discipline
 
-The extraction call uses OpenAI's `strict: true` structured-output mode, which
+The generation call uses OpenAI's `strict: true` structured-output mode, which
 requires a fully closed schema. That forces three rules on every emitted document:
 
 1. **Every property declared in the schema must be present in the output.** No
@@ -617,38 +621,39 @@ This is why `outcome_effect` always carries `return_to_step` and `prompt_source`
 even when they don't apply, and why `computedArguments` declares all seven argument
 slots regardless of operation.
 
-## 4.8 `metadata` — provenance and self-assessment
+## 4.8 `metadata` — the model's self-assessment
 
 ```jsonc
 "metadata": {
-  "created_from":        "plain_text",
-  "source_text_hash":    "<sha256 of the normalised source prose>",
-  "extraction_model":    "gpt-4o",
-  "extraction_timestamp":"2026-08-29T...",
-  "confidence":          "high",
-  "ambiguities":         [ "Assumed 'department head' means head_of_department" ],
-  "unmapped_roles":      [ "faculty_registrar" ],
-  "review_status":       "pending_admin_review"
+  "confidence":     "high",
+  "ambiguities":    [ "Assumed 'department head' means head_of_department" ],
+  "unmapped_roles": [ "faculty_registrar" ],
+  "is_workflow":    true
 }
 ```
 
-Two fields do real work beyond record-keeping:
+Provenance (who generated it, when, from which prompt) is not in the definition. It
+lives on the template version that stores it: `prompt`, `created_by`, `created_at`
+and `generation_attempts` ([§5.5](#55-versioned-template-storage--embeddings)).
+
+Two fields do real work:
 
 - **`ambiguities`** is where the model reports assumptions it had to make. It is
-  shown to the admin during review, turning a silent guess into a visible decision.
-- **`review_status`** is the **publish gate**. Retrieval only ever sees `confirmed`
-  templates ([§5.5](#55-versioned-template-storage--embeddings)). It is also the
-  channel by which the extractor **refuses** non-workflow input — see below.
+  shown to the workflow manager in the editor, turning a silent guess into a visible decision.
+- **`is_workflow`** is the channel by which the generator **refuses** non-workflow
+  input — see below. Publishing is a template status, not a metadata field
+  ([§5.2](#52-workflow-template-lifecycle)).
 
 ## 4.9 Non-workflow input is a first-class outcome
 
 If the source text describes no institutional process at all ("here is my grocery
 list"), the prompt instructs the model **not** to hallucinate a workflow. Instead it
 emits the smallest valid document — one `review` step, `system`-resolved, with
-`metadata.review_status: "rejected"`.
+`metadata.is_workflow: false` and an `ambiguities` entry saying why.
 
-The extraction service then rejects that result with `ExtractionError` (HTTP 422),
-even though it is schema-valid. Refusal is modeled inside the schema so the model
+The generation service then rejects that result with `WorkflowTemplateGenerationError`
+(HTTP 422, code `WORKFLOW_TEMPLATE_PROMPT_REJECTED`, the model's ambiguities in
+`details`), even though it is schema-valid. Nothing is stored. Refusal is modeled inside the schema so the model
 always has a legal way to say "this isn't a workflow" rather than being forced to
 invent one.
 
@@ -698,15 +703,15 @@ in a `user_permissions` join table against a `permissions` catalogue (the
 
 | Permission | Grants |
 |---|---|
-| `workflow:manage` | Create, edit, review and delete workflow templates and drafts; read the deletion log |
-| `task:create` | Find a workflow, and create, complete and manage **one's own** task requests |
+| `workflow:manage` | Create, generate, publish and archive workflow templates |
+| `task:create` | Find a workflow, and create, complete and manage **one's own** task requests. Also grants read access to published templates via `GET /workflow-templates*` |
 | `task:approve` | Defined in the catalogue and grantable — but **gates nothing yet**. Approval links stay token-based ([§12.2](#122-two-independent-authentication-mechanisms)) |
 | `user:manage` | Create and view users and their permissions |
 
 A user can hold any combination. **Every user must hold at least one permission**,
 enforced twice: `UserService` validates the input, and a `DEFERRABLE INITIALLY
 DEFERRED` constraint trigger rejects, at `COMMIT`, any transaction that leaves a
-user with none ([§7.2](#72-postgresql--five-tables)).
+user with none ([§7.2](#72-postgresql--user-tables)).
 
 ### Opaque, server-side sessions
 
@@ -783,7 +788,7 @@ mechanism** — a per-step approval token in the URL. An approver has no account
 no session. If authentication rejected unauthenticated requests globally, the entire
 approval path would be unreachable. Instead, `authenticate` is permissive and
 observational; the guards do the gating, applied only where they belong. The full
-route → guard map is in [§9.2](#92-all-42-route-bindings).
+route → guard map is in [§9.2](#92-route-bindings).
 
 ### Tasks are owner-only
 
@@ -809,7 +814,7 @@ does not reveal that the task exists.
   fallback, never returned or logged; `12345` in `.example.env`).
 
 There is no update, disable or delete endpoint, and no password change or reset flow
-yet. The first account is created by the seed pack ([§7.2](#72-postgresql--five-tables)).
+yet. The first account is created by the seed pack ([§7.2](#72-postgresql--user-tables)).
 
 ### Password hashing: `node:crypto` scrypt
 
@@ -820,11 +825,11 @@ already in the Node standard library —
 
 ### The repositories are pluggable
 
-Postgres data access is split by responsibility into three repositories under
-[`src/repositories/`](unblock-ai-api/src/repositories/) — **user**, **user session**
-and **template deletion**. Each is an interface with a `postgres` and an in-memory
-implementation plus an `index` factory, and `POSTGRES_REPOSITORY_BACKEND`
-(`postgres` | `memory`) selects the implementation for all three.
+Postgres data access is split by responsibility into repositories under
+[`src/repositories/`](unblock-ai-api/src/repositories/) — **user**, **user session**,
+**organisational unit**, **designation** and **user affiliation**. Each is an interface
+with a `postgres` and an in-memory implementation plus an `index` factory, and
+`POSTGRES_REPOSITORY_BACKEND` (`postgres` | `memory`) selects the implementation for all of them.
 
 The in-memory implementations reproduce the Postgres behaviour — the email conflict,
 the at-least-one-permission rule, session revocation semantics — by throwing the
@@ -841,8 +846,8 @@ to Postgres, so `memory` is for tests, not for signing in to a running server.
    User-Agent  -> { token, expires_at, user }
 3. It sets an httpOnly cookie  ua_session  ON THE WEB APP'S OWN ORIGIN,
    expiring at expires_at
-4. The browser lands on /account (or the ?next= path it was sent from)
-5. proxy.ts lets /account*, /admin* and /portal* render only if ua_session is present
+4. The browser lands on /dashboard (or the ?next= path it was sent from)
+5. proxy.ts lets /dashboard* and /old* render only if ua_session is present
 6. Server Components read the cookie and call the API directly with a Bearer header;
    getSession() resolves the user through GET /auth/me
 7. Browser fetches go through /api/proxy/*, which reads the cookie server-side
@@ -861,55 +866,83 @@ its own `Authorization` header. The same-origin proxy Route Handler can.
 **`proxy.ts` is UX, not security.** It only checks that the cookie exists and
 otherwise redirects to `/login?next=…`; it cannot validate an opaque token. Real
 validation is the API: an expired, revoked or junk token makes `getSession()` return
-`null` and every guarded API call fail with `401`. `/account` and `/portal/jobs/new`
-redirect to `/login` when `getSession()` returns `null`.
+`null` and every guarded API call fail with `401`. Dashboard pages, `/old/account`
+and `/old/portal/jobs/new` redirect to `/login` when `getSession()` returns `null`.
 
-### The `/account` page
+### The `/old/account` page
 
-The landing page after sign-in: profile (name, email, initials), the user's
+The former landing page after sign-in: profile (name, email, initials), the user's
 permissions as badges, and their **active sessions** — device (user agent), sign-in
 time and last activity, with the current session marked "This device". Actions: sign
 out any other single session, **sign out of other sessions**, and sign out.
 
-The `/admin` and `/portal` dashboards are still reachable by URL but are not linked
-from `/account` while they await a redesign.
+Sign-in now lands on `/dashboard`. `/old/account` and `/old/portal` are still
+reachable by URL. The old `/admin` template screens have been removed; workflow
+template management lives at `/dashboard/workflows` ([§8.6](#86-the-workflow-template-editor)).
 
 ---
 
-## 5.2 Draft Management
+## 5.2 Workflow Template Lifecycle
 
-**Code:** [`src/services/draft.service.ts`](unblock-ai-api/src/services/draft.service.ts) ·
-[`src/models/draft.model.ts`](unblock-ai-api/src/models/draft.model.ts)
+**Code:** [`src/services/workflow-template.service.ts`](unblock-ai-api/src/services/workflow-template.service.ts) ·
+[`src/controllers/workflow-template.controller.ts`](unblock-ai-api/src/controllers/workflow-template.controller.ts) ·
+[`src/routes/workflow-template.route.ts`](unblock-ai-api/src/routes/workflow-template.route.ts)
 
-The `drafts` collection stores raw admin prose before it becomes anything.
-
-| Property | Behaviour |
-|---|---|
-| **Idempotent by content** | Keyed on SHA-256 of the *normalised* text (`hash.util.ts`), with a unique index `draft_text_sha256_unique`. Resubmitting identical prose returns the original draft — no duplicate. |
-| **Lifecycle** | `pending` → `extracted` \| `failed` \| `rejected` |
-| **Failures preserve the prose** | On a failed extraction the draft is updated with `failure_reason` as a side effect *before* the error propagates. The admin's typing is never lost to a model failure. |
-
-The draft is also the source of the left-hand prose panel in the admin editor, and
-`draft_id` on a template is the link back to the text a workflow was compiled from.
-
----
-
-## 5.3 LLM Extraction — Prose → Workflow JSON
-
-**Code:** [`src/services/extraction.service.ts`](unblock-ai-api/src/services/extraction.service.ts) ·
-[`src/data/prompts/`](unblock-ai-api/src/data/prompts/)
-
-The centrepiece. Four stages — detailed further in [§11.2](#112-the-extraction-pipeline).
+A **workflow template** is the unit a workflow manager works with. It has a UUID,
+a title, a status, an optional prompt that has been saved but not yet generated
+(`draft_prompt`), and a pointer to its current generated version. Every template moves through three statuses:
 
 ```
-   prose
+  POST /workflow-templates            POST /workflow-templates/generate
+  (title + prompt, nothing generated)   (prompt, optional title)
+           |                                     |
+           v                                     |
+        draft  --- POST /:id/generate ---+       |
+                                         v       v
+                                      unpublished          <- invisible to retrieval
+                                         |
+                              POST /:id/publish
+                                         v
+                                      published            <- offered to requesters
+```
+
+| Status | Meaning |
+|---|---|
+| `draft` | Title and prompt saved, nothing generated. `current_version` is `null`. Cannot be published (`409 WORKFLOW_TEMPLATE_NOT_GENERATED`). |
+| `unpublished` | At least one version generated. The workflow manager is reviewing the flowchart. |
+| `published` | Retrieval can find it and requesters can start tasks from its current version. Publishing again is `409 WORKFLOW_TEMPLATE_ALREADY_PUBLISHED`. |
+
+| Rule | Behaviour |
+|---|---|
+| **Regenerating creates a version** | `POST /:id/generate` with a prompt generates a new immutable version at `current_version + 1`. A `draft` becomes `unpublished`; an `unpublished` template stays `unpublished`; a **`published` template stays published, so the new version goes live immediately**. Older versions remain for the tasks that reference them. |
+| **Titles never create a version** | The title lives on the template. `PATCH /:id` with a new `title` updates it and re-embeds the retrieval text, but leaves the versions alone. |
+| **Editing the prompt is saved separately** | `PATCH /:id` with `draft_prompt` saves edited prompt text without generating. A `draft_prompt` identical to the current version's prompt is stored as `null`; `has_ungenerated_changes` is true when a generated template has a non-null `draft_prompt`. A `draft` must keep its prompt (`null` is `400`). |
+| **Archive replaces delete** | Nothing is deleted. `POST /:id/archive` sets `archived_at`; an archived template is hidden from retrieval and from the default list, and every change except restore is `409 WORKFLOW_TEMPLATE_ARCHIVED`. `POST /:id/restore` clears it. |
+| **Authorship is recorded** | Templates store `created_by` / `updated_by`, versions store `created_by`, all as user ids. Responses resolve them to `{ id, full_name, email }`. |
+| **Generation failures store nothing** | If the model cannot produce a valid definition, or refuses the prompt, the request fails with `422` and no version is written. A prompt saved as a `draft` (or in `draft_prompt`) survives the failure. |
+
+Limits: title at most 200 characters after collapsing whitespace; prompt at most
+20,000 characters after trimming. When `POST /generate` is sent without a title, the
+model's title is used, cut to 200 characters.
+
+---
+
+## 5.3 Workflow Template Generation — Prompt → Workflow JSON
+
+**Code:** [`src/services/workflow-template-generation.service.ts`](unblock-ai-api/src/services/workflow-template-generation.service.ts) ·
+[`src/data/prompts/`](unblock-ai-api/src/data/prompts/)
+
+The centrepiece. Four stages — detailed further in [§11.2](#112-the-workflow-template-generation-pipeline).
+
+```
+   prompt
      |
      v
   +----------------------------------------------------------+
   | 1. PROMPT ASSEMBLY                                        |
   |    system prompt (all schema semantics)                   |
   |    + 2 few-shot examples (real sample files)              |
-  |    + the admin's text                                     |
+  |    + the workflow manager's prompt                        |
   +------------------------+---------------------------------+
                            v
   +----------------------------------------------------------+
@@ -929,17 +962,22 @@ The centrepiece. Four stages — detailed further in [§11.2](#112-the-extractio
           |        |    append invalid JSON + error list    |
           |        |    as conversation turns; ask the model|
           |        |    to fix ONLY those problems          |
-          |        |    up to EXTRACTION_MAX_ATTEMPTS (3)   |
+          |        |    up to WORKFLOW_TEMPLATE_GENERATION_ |
+          |        |    MAX_ATTEMPTS (3)                    |
           |        +----------+---------------+-------------+
           |            retry  |        spent  |
           |                   +-->(back to 2) v
-          |                              ExtractionError 422
+          |               422 WORKFLOW_TEMPLATE_GENERATION_FAILED
           v
   +----------------------------------------------------------+
   | 5. NON-WORKFLOW GUARD                                     |
-  |    metadata.review_status === "rejected"  ->  422          |
+  |    metadata.is_workflow === false  ->  422                |
+  |    WORKFLOW_TEMPLATE_PROMPT_REJECTED                      |
   +----------------------------------------------------------+
 ```
+
+The service returns the definition without its `title`, plus the attempt count;
+`WorkflowTemplateService` stores it as a version ([§5.5](#55-versioned-template-storage--embeddings)).
 
 **The self-repair loop is the quality mechanism.** A structured-output call
 guarantees the *shape* is right; it cannot guarantee the *graph* is coherent. The
@@ -954,9 +992,11 @@ targeted fix, which is far more reliable than regenerating from scratch.
 [`src/utils/workflow/schema-validator.util.ts`](unblock-ai-api/src/utils/workflow/schema-validator.util.ts) ·
 [`src/utils/workflow/graph-validator.util.ts`](unblock-ai-api/src/utils/workflow/graph-validator.util.ts)
 
-Validation is **deliberately a standalone capability**, not a private step inside
-extraction. That is what lets an admin hand-edit a workflow in the UI and re-validate
-it before saving, and it is what backs `POST /api/workflows/:id/validate`.
+Validation is a standalone service, not a private step inside generation, so the
+same checks can be reused and tested on their own. Today its only caller is the
+generation loop: every stored version has passed both layers. There is no
+hand-edit path and no separate validate endpoint — a workflow manager changes a
+template by editing the prompt and regenerating.
 
 ### Layer 1 — Schema validation (AJV)
 
@@ -990,49 +1030,48 @@ fires. Passing fixtures alone would not prove the checks work.
 
 ## 5.5 Versioned Template Storage & Embeddings
 
-**Code:** [`src/services/workflow.service.ts`](unblock-ai-api/src/services/workflow.service.ts) ·
+**Code:** [`src/services/workflow-template.service.ts`](unblock-ai-api/src/services/workflow-template.service.ts) ·
 [`src/services/embedding.service.ts`](unblock-ai-api/src/services/embedding.service.ts) ·
-[`src/models/template.model.ts`](unblock-ai-api/src/models/template.model.ts)
+[`src/models/workflow-template.model.ts`](unblock-ai-api/src/models/workflow-template.model.ts) ·
+[`src/models/workflow-template-version.model.ts`](unblock-ai-api/src/models/workflow-template-version.model.ts)
 
-### Templates are never updated in place
+### Two collections: the template and its versions
 
-Every save creates a **new version**:
+| Collection | One document per | Holds |
+|---|---|---|
+| `workflow_templates` | template (string UUID `_id`) | `title`, `description`, `status`, `draft_prompt`, `current_version`, `retrieval` (embedding of the current version), `archived_at`, `created_by`, `updated_by`, timestamps |
+| `workflow_template_versions` | generated version | `workflow_template_id`, `version`, `prompt`, `definition` (without `title`), `generation_attempts`, `created_by`, `created_at` |
 
-1. Look up the current max `version` for this `workflow_id`
-2. Insert a new document at `version + 1` with `is_latest: true`
-3. Demote the previous latest to `is_latest: false`
+### Versions are never updated in place
 
-Guarded by a unique index on `{ workflow_id, version }`.
+Every generation inserts a **new version** at `current_version + 1` and then moves
+the template's `current_version` pointer. Version documents are never modified;
+a unique index on `{ workflow_template_id, version }` guards the sequence.
 
-**Why:** a task pins the exact `{ workflow_id, version }` it was created from. An
-in-progress approval chain must not change shape because an admin edited the
-template underneath it. Version-pinning makes that structurally impossible rather
-than merely unlikely.
+**Why:** a task pins the exact `{ workflow_template_id, workflow_template_version }`
+it was created from. An in-progress approval chain must not change shape because a
+workflow manager regenerated the template underneath it. Version-pinning makes that
+structurally impossible rather than merely unlikely. Runtime reads take the
+pinned version's definition and merge in the template's current title.
 
-### Every save generates a retrieval embedding
+### The template carries the retrieval embedding
 
-`text-embedding-3-small`, 1536 dimensions, computed over the
-`retrieval_summary` block. The returned vector's length is validated against
-`AZURE_EMBEDDING_DIM` — a dimension mismatch raises `EmbeddingError` (502) rather
-than silently poisoning the index.
+When a version is generated — and when the title changes — the service renders
+the title plus the version's `retrieval_summary` into one text, embeds it, and
+stores it on the template as `retrieval` (`text`, `embedding`, `aliases_lower`,
+`retrieval_summary`, `institution_type`, `model`, `dim`, `embedded_at`). Only the
+current version is ever embedded, so retrieval needs no "latest" flag. The returned
+vector's length is validated against `EMBEDDING_DIMENSIONS` — a dimension mismatch
+raises `EmbeddingError` (502) rather than silently poisoning the index.
 
-### `review_status` is the publish gate
+### `status` is the publish gate
 
-```
-extraction  ->  pending_admin_review   <- invisible to retrieval
-                       |
-      PATCH /workflows/:id/review
-                       v
-                  confirmed            <- findable
-                       |
-                       v
-                  rejected             <- invisible
-```
-
-Retrieval queries filter on `is_latest: true AND review_status: "confirmed"`,
-supported by the compound index `template_retrieval_filter`. **Nothing is findable
-until a human publishes it.** An LLM extraction is a *proposal*; a published
-template is an *institutional commitment*.
+Retrieval queries filter on `status: "published"` and `archived_at: null` (plus
+`retrieval.institution_type` when given), supported by the compound index
+`workflow_template_retrieval_filter`. **Nothing is findable until a human publishes
+it.** A generated version is a *proposal*; a published template is an
+*institutional commitment*. See [§5.2](#52-workflow-template-lifecycle) for the
+lifecycle.
 
 ---
 
@@ -1052,7 +1091,7 @@ user query
    |  embed  (text-embedding-3-small)
    v
 vector search, k = RETRIEVAL_TOP_K + 2      <- over-fetch by 2
-   |           filtered to is_latest + confirmed [+ institution_type]
+   |           filtered to published + not archived [+ institution_type]
    v
 alias boost: +RETRIEVAL_ALIAS_BOOST per exact alias match in the query
    |
@@ -1106,7 +1145,7 @@ and letting them choose. The system stops guessing at a fixed point.
 
 `selection_sessions` stores the query, the frozen candidates (with scores, base
 scores, and alias hits), every round, the final `outcome`
-(`matched` / `abandoned` / `no_match`), the selected `workflow_id`, and the
+(`matched` / `abandoned` / `no_match`), the `selected_workflow_template_id`, and the
 `requester_context` handed in by the caller.
 
 ### `requester_context`
@@ -1196,7 +1235,10 @@ Each requirement carries `key`, `source`, `ref`, `label`, `description`, `type`,
 ### The four operations
 
 **1. Create** — `POST /tasks`
-Pulls the matched, version-pinned workflow off a selection session and compiles it
+Reads the matched `workflow_template_id` off a selection session, loads that
+template's current version (it must still be published and not archived, otherwise
+`409 WORKFLOW_TEMPLATE_NOT_PUBLISHED`), pins it on the task as
+`workflow_template_id` + `workflow_template_version`, and compiles it
 with `PlannerService.compile` (**pure, no I/O**) into a requirement list plus one
 step-state entry per workflow step. Allocates the `reference`. Inserts with
 `status: "collecting"`.
@@ -1372,7 +1414,7 @@ matters enormously for demos and for local development.
 
 ### `requester_email`
 
-Every workflow now declares a `requester_email` input (an extraction-prompt rule —
+Every workflow now declares a `requester_email` input (a generation-prompt rule —
 see [`docs/requester-contact-gap.md`](docs/requester-contact-gap.md)). It is what
 lets all four notification paths reach the requester.
 
@@ -1472,38 +1514,15 @@ normally triggers it.
 
 ## 5.10 Deletion Tracking and Audit
 
-Two separate audit mechanisms, deliberately not unified:
-
-| What | Where | Why |
+| What | Where | How |
 |---|---|---|
-| **Template deletions** | PostgreSQL `template_deletions` | Needs a real foreign key to `users` with `ON DELETE RESTRICT` |
-| **Task deletions** | Mongo `audit_logs` | Pre-existing; no dual write introduced |
+| **Workflow templates** | Never deleted | Archived and restored instead ([§5.2](#52-workflow-template-lifecycle)). Versions are immutable and stay for the tasks that reference them |
+| **Task deletions** | Mongo `audit_logs` | `TaskService` writes an audit row with a snapshot (reference, `workflow_template_id`, `workflow_template_version`, status, step outcomes) before the hard delete |
 
-### Template deletion — write ordering as atomicity
-
-There is **no cross-database transaction** between Postgres and Mongo.
-`WorkflowService.delete()` therefore uses write ordering as the only atomicity
-available:
-
-```
-1. Write the Postgres deletion-log row, versions_removed = 0
-2. Delete the template versions from Mongo
-3. Update versions_removed with the confirmed count
-```
-
-> A row still reading `versions_removed: 0` means **the log landed but the delete
-> didn't** — a recoverable, *visible* failure state rather than a silent gap. The
-> admin deletion-log UI renders exactly that row as `Incomplete`.
-
-`ON DELETE RESTRICT` on `deleted_by_user_id` means an audit row can never be
-orphaned or erased by removing the user who deleted the template. `deleted_by_email`
-is **denormalised on purpose** so the log stays readable on its own. The rows are
-written through `TemplateDeletionLogService` over the template-deletion repository
-([§5.1](#51-authentication--authorization)).
-
-`DELETE /api/workflows/:id` requires a **typed confirmation** (the word `delete` plus
-the exact template title) and the `workflow:manage` permission; so does reading the
-log at `GET /api/workflows/deletions`.
+Templates used to be hard-deleted, with a Postgres `template_deletions` log and a
+typed-confirmation endpoint. Both were removed: archive-only means there is no
+destructive template operation left to log, and no cross-database write to order.
+Who last changed a template is recorded on the template itself as `updated_by`.
 
 ---
 
@@ -1530,7 +1549,7 @@ Each layer has a written contract:
 | **controllers** | Parses/validates params, query, body; calls services; maps results to status + body | Touch MongoDB, call the OpenAI SDK, hold domain rules, format error responses |
 | **services** | All business logic; DB access via its model; pure computation via utils; external calls | Read `process.env`, import concrete singletons instead of injected collaborators |
 | **models** | Collection name, document interface, index specs, thin typed CRUD | Version-number computation, embedding calls, status-transition policy |
-| **repositories** | PostgreSQL access behind an interface (user, user session, template deletion), with a `postgres` and an in-memory implementation | Business rules such as permission validation, lockout policy or password hashing |
+| **repositories** | PostgreSQL access behind an interface (user, user session, organisation), with a `postgres` and an in-memory implementation | Business rules such as permission validation, lockout policy or password hashing |
 | **utils** | Pure functions | Any I/O, any config read beyond arguments, any class state |
 | **config** | Read and validate `process.env` **once**, export frozen objects | Anything else |
 
@@ -1540,32 +1559,30 @@ Each layer has a written contract:
 collaborators through constructor injection; nothing imports a concrete singleton.
 
 ```ts
-const draftModel    = new DraftModel();
-const templateModel = new TemplateModel();
+const workflowTemplateModel        = new WorkflowTemplateModel();
+const workflowTemplateVersionModel = new WorkflowTemplateVersionModel();
 // ...
-const embeddingService  = new EmbeddingService();
+const embeddingService  = new EmbeddingService({ embeddingAdapter });
 const validationService = new ValidationService();
-const extractionService = new ExtractionService({ validationService });
+const workflowTemplateGenerationService = new WorkflowTemplateGenerationService({ llmAdapter, validationService });
 
-const repositoryBackend          = config.postgres.repositoryBackend;
-const userRepository             = createUserRepository(repositoryBackend);
-const userSessionRepository      = createUserSessionRepository(repositoryBackend);
-const templateDeletionRepository = createTemplateDeletionRepository(repositoryBackend);
+const { userRepository, userSessionRepository, /* organisation repositories */ } =
+  createRepositoryRegistry(config.postgres.repositoryBackend);
 
 const userSessionService    = new UserSessionService({ userSessionRepository, authConfig: config.auth });
 const authenticationService = new AuthenticationService({
   userRepository, userSessionService, authConfig: config.auth,
 });
-const templateDeletionLogService = new TemplateDeletionLogService({ templateDeletionRepository });
-const userService = new UserService({ userRepository, userConfig: config.user });
+// ... userService, organisation services
 
-const workflowService = new WorkflowService({
-  templateModel, embeddingService, validationService,
-  taskModel, templateDeletionLog: templateDeletionLogService,
+const workflowTemplateService = new WorkflowTemplateService({
+  workflowTemplateModel, workflowTemplateVersionModel,
+  generationService: workflowTemplateGenerationService,
+  embeddingService, userRepository,
 });
 
 const vectorStore = createVectorStore(config.retrieval.vectorBackend, {
-  templateReader: templateModel, templateModel,
+  workflowTemplateModel,
   indexName: config.retrieval.atlasIndexName,
 });
 // ... retrieval, selector, selection, planner, mailer, notification,
@@ -1626,9 +1643,9 @@ stripped, unless overridden through the constructor options.
 | `ValidationError` | 400 | `VALIDATION_ERROR` | Malformed/missing bodies or fields. Has `.forField()` and `.forObject()` factories |
 | `UnauthorizedError` | 401 | `UNAUTHORIZED` (default) | Auth raises it with `INVALID_CREDENTIALS` (wrong email or password) or `AUTHENTICATION_REQUIRED` (no active session on a guarded route) |
 | `ForbiddenError` | 403 | `FORBIDDEN` (default) | Auth raises it with `PERMISSION_DENIED` (signed in, lacks the route's permission), `ACCOUNT_LOCKED` or `ACCOUNT_DISABLED` |
-| `NotFoundError` | 404 | `NOT_FOUND` | Missing draft/workflow/session/task — including a task owned by someone else. Has `.of(resource, id)` factory. Also raised with `USER_NOT_FOUND` and `USER_SESSION_NOT_FOUND` |
-| `ConflictError` | 409 | `CONFLICT` | Well-formed but conflicts with current state. Raised with `EMAIL_ALREADY_REGISTERED` for a duplicate user email |
-| `ExtractionError` | 422 | `EXTRACTION_ERROR` | Extraction failed after all repairs, or input flagged not-a-workflow |
+| `NotFoundError` | 404 | `NOT_FOUND` | Missing session/task — including a task owned by someone else. Has `.of(resource, id)` factory. Also raised with `WORKFLOW_TEMPLATE_NOT_FOUND`, `WORKFLOW_TEMPLATE_VERSION_NOT_FOUND`, `USER_NOT_FOUND` and `USER_SESSION_NOT_FOUND` |
+| `ConflictError` | 409 | `CONFLICT` | Well-formed but conflicts with current state. Raised with `EMAIL_ALREADY_REGISTERED` for a duplicate user email, and with `WORKFLOW_TEMPLATE_ARCHIVED`, `WORKFLOW_TEMPLATE_NOT_ARCHIVED`, `WORKFLOW_TEMPLATE_NOT_GENERATED`, `WORKFLOW_TEMPLATE_ALREADY_PUBLISHED` and `WORKFLOW_TEMPLATE_NOT_PUBLISHED` for template lifecycle conflicts |
+| `WorkflowTemplateGenerationError` | 422 | `WORKFLOW_TEMPLATE_GENERATION_FAILED` | Generation failed after all repairs (validator errors in `details`). Raised with `WORKFLOW_TEMPLATE_PROMPT_REJECTED` when the model flags the prompt as not a workflow (the model's ambiguities in `details`) |
 | `SelectionError` | 502 | `SELECTION_ERROR` | The selector-agent Azure call failed |
 | `EmbeddingError` | 502 | `EMBEDDING_ERROR` | Embeddings call failed or returned an unexpected dimension |
 | `DatabaseError` | 500 | `DATABASE_ERROR` | An unexpected MongoDB failure |
@@ -1636,7 +1653,7 @@ stripped, unless overridden through the constructor options.
 | `MigrationError` | 500 | `MIGRATION_ERROR` | A migration run failed (CLI only). `isOperational: false` |
 | `SeedError` | 500 | `SEED_ERROR` | A seeder run failed (CLI only). `isOperational: false` |
 
-The auth codes are the `AuthErrorCode` and `UserErrorCode` enums in
+The auth, user and workflow template codes are the `AuthErrorCode`, `UserErrorCode` and `WorkflowTemplateErrorCode` enums in
 [`src/data/constants/`](unblock-ai-api/src/data/constants/), passed through the
 constructor's `code` option.
 
@@ -1674,7 +1691,7 @@ shape: an interface, two or more implementations, and a factory selected by conf
 |---|---|---|---|
 | `IVectorStore` | `in-memory` · `atlas` | `VECTOR_BACKEND` | `memory` |
 | `IMailer` | `console` · `smtp` | `MAIL_TRANSPORT` | `console` |
-| `IUserRepository` · `IUserSessionRepository` · `ITemplateDeletionRepository` | `in-memory` · `postgres` | `POSTGRES_REPOSITORY_BACKEND` (one switch for all three) | `postgres` |
+| `IUserRepository` · `IUserSessionRepository` · the organisation repositories | `in-memory` · `postgres` | `POSTGRES_REPOSITORY_BACKEND` (one switch for all of them) | `postgres` |
 | `IDocumentRenderer` | `text` · `pdf` | `DOCUMENT_FORMAT` | `pdf` |
 
 **The pattern pays for itself twice.** First, the system runs locally without cloud
@@ -1716,36 +1733,41 @@ function invoked on shutdown.
 
 | Collection | Holds | Key fields |
 |---|---|---|
-| `drafts` | Raw admin prose | `text_sha256` (unique), `raw_text`, `status`, `failure_reason`, `created_at` |
-| `templates` | Versioned workflow documents + embeddings | `workflow_id`, `version`, `is_latest`, `review_status`, `institution_type`, `document`, `embedding`, `draft_id` |
-| `selection_sessions` | Multi-round selection conversations | `user_query`, `candidates[]` (frozen), `rounds[]`, `outcome`, `selected_workflow_id`, `requester_context` |
-| `tasks` | Process instances | `reference`, `session_id`, `workflow_id`, `version`, `status`, `requirements[]`, `values{}`, `steps[]`, `audit[]`, `completion_document` |
+| `workflow_templates` | One document per template (string UUID `_id`) | `title`, `description`, `status`, `draft_prompt`, `current_version`, `retrieval` (embedding of the current version), `archived_at`, `created_by`, `updated_by`, `created_at`, `updated_at` |
+| `workflow_template_versions` | Immutable generated versions | `workflow_template_id`, `version`, `prompt`, `definition`, `generation_attempts`, `created_by`, `created_at` |
+| `selection_sessions` | Multi-round selection conversations | `user_query`, `candidates[]` (frozen), `rounds[]`, `outcome`, `selected_workflow_template_id`, `requester_context` |
+| `tasks` | Process instances | `reference`, `session_id`, `workflow_template_id`, `workflow_template_version`, `status`, `requirements[]`, `values{}`, `steps[]`, `audit[]`, `completion_document` |
 | `counters` | Sequence allocation for `reference` | one document per counter |
 | `audit_logs` | Task-deletion audit | `resource`, `resource_id`, `created_at` |
 
-### Indexes — all 13, created by the initial Mongo migration
+### Indexes — created by the Mongo migrations
 
-**File:** [`src/db/migration/mongo/migrations/20261111000000_initial-schema.migration.ts`](unblock-ai-api/src/db/migration/mongo/migrations/20261111000000_initial-schema.migration.ts)
+**Files:** [`20261111000000_initial-schema.migration.ts`](unblock-ai-api/src/db/migration/mongo/migrations/20261111000000_initial-schema.migration.ts) ·
+[`20261111101053_workflow-templates.migration.ts`](unblock-ai-api/src/db/migration/mongo/migrations/20261111101053_workflow-templates.migration.ts)
 
 | Collection | Index | Options | Purpose |
 |---|---|---|---|
-| `drafts` | `{ text_sha256: 1 }` | **unique** | Content-hash idempotency |
-| `drafts` | `{ created_at: -1 }` | | List newest first |
-| `templates` | `{ workflow_id: 1, version: 1 }` | **unique** | Version integrity |
-| `templates` | `{ workflow_id: 1, is_latest: 1 }` | | Latest-version lookup |
-| `templates` | `{ is_latest: 1, review_status: 1, institution_type: 1 }` | | **The retrieval filter** |
+| `workflow_templates` | `{ archived_at: 1, updated_at: -1 }` | | The template list, most recently changed first |
+| `workflow_templates` | `{ status: 1, archived_at: 1, "retrieval.institution_type": 1 }` | | **The retrieval filter** |
+| `workflow_template_versions` | `{ workflow_template_id: 1, version: -1 }` | **unique** | Version integrity, newest first |
 | `selection_sessions` | `{ created_at: -1 }` | | List newest first |
 | `tasks` | `{ session_id: 1 }` | | Task-for-session lookup |
 | `tasks` | `{ status: 1, created_at: -1 }` | | Filtered task list |
 | `tasks` | `{ created_by: 1, created_at: -1 }` | | A user's own requests, newest first — `GET /tasks` always filters by the caller |
 | `tasks` | `{ reference: 1 }` | **unique** | Human reference integrity |
 | `tasks` | `{ "steps.approval_token": 1 }` | **sparse** | **Token → task, one indexed hop** |
-| `tasks` | `{ workflow_id: 1, status: 1 }` | | Per-workflow task queries |
+| `tasks` | `{ workflow_template_id: 1, status: 1 }` | | Per-template task queries (`task_workflow_template_status`) |
 | `audit_logs` | `{ resource: 1, resource_id: 1, created_at: -1 }` | | Audit trail reads |
 
 `npm run migrate:mongo:up` creates them; the server never touches indexes at boot.
 
-## 7.2 PostgreSQL — five tables
+> **The workflow-templates migration does not migrate data.** It drops the old
+> `templates` and `drafts` collections and creates the two new ones empty. Existing
+> tasks and selection sessions keep their old `workflow_id` / `version` fields and no
+> longer resolve to a template. Its `down()` recreates `templates` and `drafts` empty.
+> Treat it as a reset of authored templates on any database that has them.
+
+## 7.2 PostgreSQL — user tables
 
 **Migrations**, applied in order:
 
@@ -1753,8 +1775,13 @@ function invoked on shutdown.
 2. [`20261111015501_unified-users-permissions-and-sessions.migration.ts`](unblock-ai-api/src/db/migration/postgres/migrations/20261111015501_unified-users-permissions-and-sessions.migration.ts) —
    replaces those user tables with `permissions`, `users`, `user_permissions` and
    `user_sessions`, and points `template_deletions` at `users`.
+3. [`20261111060534_organisational-structure-and-user-affiliations.migration.ts`](unblock-ai-api/src/db/migration/postgres/migrations/20261111060534_organisational-structure-and-user-affiliations.migration.ts) —
+   adds the organisational structure and user affiliation tables (not described here).
+4. [`20261111101054_workflow-template-archive-only.migration.ts`](unblock-ai-api/src/db/migration/postgres/migrations/20261111101054_workflow-template-archive-only.migration.ts) —
+   drops `template_deletions` (templates are archived, never deleted) and rewords
+   the `workflow:manage` permission description.
 
-The schema below is the state after both.
+The user tables below are the state after all four.
 
 ### `permissions`
 
@@ -1824,27 +1851,6 @@ a partial index on `user_id WHERE revoked_at IS NULL` (a user's active sessions)
 one on `expires_at`. A session is **active** while `revoked_at IS NULL AND
 expires_at > now()`.
 
-### `template_deletions`
-
-```sql
-id                 BIGSERIAL PRIMARY KEY
-workflow_id        TEXT NOT NULL
-template_title     TEXT NOT NULL
-latest_version     INTEGER NOT NULL
-versions_removed   INTEGER NOT NULL DEFAULT 0    -- still 0 => delete never confirmed
-institution_type   TEXT
-review_status      TEXT
-deleted_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT
-deleted_by_email   TEXT NOT NULL                 -- denormalised on purpose
-reason             TEXT
-request_id         TEXT                          -- correlates to the API request log
-snapshot           JSONB NOT NULL DEFAULT '{}'
-deleted_at         TIMESTAMPTZ NOT NULL DEFAULT now()
-```
-
-Three indexes: `deleted_at DESC`, `(deleted_by_user_id, deleted_at DESC)`,
-`workflow_id`.
-
 ### Migrations
 
 [`src/db/migration/`](unblock-ai-api/src/db/migration/) holds one shared engine and
@@ -1887,16 +1893,17 @@ This is deliberate polyglot persistence, not accident.
 | Reason | Detail |
 |---|---|
 | **Relational shape** | User data has hard constraints: a unique `lower(email)`, a permission catalogue, a unique session-token hash, and an "at least one permission per user" invariant checked at `COMMIT` |
-| **Real foreign keys** | `user_permissions` → `users` and `permissions`; `user_sessions` → `users`; `template_deletions.deleted_by_user_id` → `users(id)` with `ON DELETE RESTRICT`. An audit row can never be silently orphaned |
-| **Document shape** | Workflow documents are deeply nested, schema-versioned JSON already governed by a JSON Schema. A relational decomposition would duplicate that schema in DDL |
+| **Real foreign keys** | `user_permissions` → `users` and `permissions`; `user_sessions` → `users` |
+| **Document shape** | Workflow definitions are deeply nested, schema-versioned JSON already governed by a JSON Schema. A relational decomposition would duplicate that schema in DDL |
 
 ### The cost, stated honestly
 
-**There is no cross-database transaction.** A template deletion touches both stores
-with no coordinator. The mitigation is write ordering ([§5.10](#510-deletion-tracking-and-audit)):
-the log row lands first with `versions_removed: 0`, updated only once the Mongo
-delete confirms. A stuck `0` is a *visible* inconsistency, which is the best
-available outcome without a distributed transaction.
+**There is no cross-database transaction or foreign key.** Workflow templates store
+`created_by` / `updated_by` (and versions `created_by`) as Postgres user ids in Mongo.
+Nothing enforces them; `WorkflowTemplateService` resolves them to names with one
+batched user lookup per response, and an id that no longer resolves is returned as
+`null`. No operation writes to both stores, so there is no partial-write state to
+reconcile.
 
 Two connection lifecycles are managed in parallel:
 [`mongo.client.ts`](unblock-ai-api/src/db/mongo.client.ts) and
@@ -1906,14 +1913,17 @@ created, both closed on shutdown.
 ## 7.4 Version pinning — the data-integrity backbone
 
 ```
-templates:   { workflow_id: "x", version: 1, is_latest: false }
-             { workflow_id: "x", version: 2, is_latest: true  }
+workflow_templates:          { _id: "x", status: "published", current_version: 2 }
+workflow_template_versions:  { workflow_template_id: "x", version: 1, definition: ... }
+                             { workflow_template_id: "x", version: 2, definition: ... }
 
-tasks:       { workflow_id: "x", version: 1, ... }   <- pinned; unaffected by v2
+tasks:  { workflow_template_id: "x", workflow_template_version: 1, ... }   <- pinned; unaffected by v2
 ```
 
-A running task reads `version: 1` forever. An admin publishing `version: 2` cannot
-change the shape of an in-flight approval chain. This is what makes the completion
+A running task reads version 1 forever. Regenerating a published template makes
+version 2 live for new requests immediately, but cannot change the shape of an
+in-flight approval chain. Archiving a template stops new requests but leaves its
+versions readable for existing tasks. This is what makes the completion
 document a faithful record: it is regenerated from the *same* workflow version the
 approvals actually ran against.
 
@@ -1925,27 +1935,28 @@ approvals actually ran against.
 
 | Route | Type | Guard | Purpose |
 |---|---|---|---|
-| `/` | Server Component | — | Redirects by session: signed in → `/account`, otherwise → `/login` |
-| `/login` | Server Component | — | The single sign-in page (email + password); a signed-in visitor is sent to `/account` |
-| `/account` | Server, `force-dynamic` | `proxy.ts` + session | Profile, permission badges, active sessions (revoke one, sign out of other sessions), sign out |
-| `/admin` | Server, `force-dynamic` | `proxy.ts` + API `workflow:manage` | Template list with institution-type filter |
-| `/admin/templates/new` | Client | `proxy.ts` + API `workflow:manage` | Split-pane authoring: prose ⇄ flowchart |
-| `/admin/templates/[id]` | Server → Client | `proxy.ts` + API `workflow:manage` | Open, edit, publish, rename, delete an existing template |
-| `/admin/deletions` | Server, `force-dynamic` | `proxy.ts` + API `workflow:manage` | The deletion audit log |
-| `/portal` | Server, `force-dynamic` | `proxy.ts` + API `task:create` | "My Requests" — the caller's own task list |
-| `/portal/jobs/new` | Server → Client | `proxy.ts` + session + API `task:create` | Selection chat + live plan preview |
-| `/portal/jobs/[id]` | Server, `force-dynamic` | `proxy.ts` + API `task:create` + ownership | Task status timeline + plan + document download |
+| `/` | Server Component | — | Redirects by session: signed in → `/dashboard`, otherwise → `/login` |
+| `/login` | Server Component | — | The single sign-in page (email + password); a signed-in visitor is sent to `/dashboard` |
+| `/dashboard` | Server | `proxy.ts` + session | Dashboard shell (sidebar + topbar); other dashboard pages cover tasks, approvals, users, organisation and profile |
+| `/dashboard/workflows` | Server → Client | `proxy.ts` + `requireRouteAccess` + API | Workflow template list: search, Active / Archived / All filter (applied client-side over `GET /workflow-templates?include_archived=true`), archive / restore |
+| `/dashboard/workflows/new` | Server → Client | `proxy.ts` + `requireRouteAccess` (`workflow:manage`) | New template editor: title + prompt, save as draft or generate |
+| `/dashboard/workflows/[workflowTemplateId]` | Server → Client | `proxy.ts` + `requireRouteAccess` + API | Template editor: title, prompt, Save, Generate / Regenerate, Publish, version history drawer; `?version=N` shows a read-only historic version. A non-UUID id is a 404 |
+| `/old/account` | Server, `force-dynamic` | `proxy.ts` + session | Profile, permission badges, active sessions (revoke one, sign out of other sessions), sign out |
+| `/old/portal` | Server, `force-dynamic` | `proxy.ts` + API `task:create` | "My Requests" — the caller's own task list |
+| `/old/portal/jobs/new` | Server → Client | `proxy.ts` + session + API `task:create` | Selection chat + live plan preview |
+| `/old/portal/jobs/[id]` | Server, `force-dynamic` | `proxy.ts` + API `task:create` + ownership | Task status timeline + plan + document download |
 | `/approvals/[token]` | Server → Client | **none** | The approver decision page |
 | `/api/auth/login` | Route Handler | — | Calls the API login (forwarding `User-Agent`), sets the httpOnly `ua_session` cookie |
 | `/api/auth/logout` | Route Handler | — | Revokes the session at the API, then clears the cookie |
 | `/api/proxy/[...path]` | Route Handler | — | Forwards browser fetches upstream with the Bearer header |
 
-`proxy.ts` matches `/account`, `/admin` and `/portal` and only checks that the
-`ua_session` cookie is present; the permission named in the Guard column is enforced
-by the API on the data each page loads. `/admin` and `/portal` are reachable by URL
-but not linked from `/account`, pending a redesign.
+`proxy.ts` matches `/dashboard/:path*` and `/old/:path*` and only checks that the
+`ua_session` cookie is present. Dashboard pages call `requireRouteAccess`, which
+redirects to `/dashboard` when the user lacks the route's permission; the API still
+enforces the permission on every call. The old `/admin` template screens were
+removed; `/old/account` and `/old/portal` are reachable by URL only.
 
-> **`/approvals/*` lives deliberately outside `/admin` and `/portal`.** The approver
+> **`/approvals/*` lives deliberately outside `/dashboard` and `/old/portal`.** The approver
 > holds a token from an email, not a session. The route must not inherit a
 > navigation shell that implies an account they don't have.
 
@@ -1953,8 +1964,8 @@ but not linked from `/account`, pending a redesign.
 
 [`src/lib/api/client.ts`](unblock-ai-web/src/lib/api/client.ts) is **the single
 `fetch` chokepoint for every feature module** that talks to the backend:
-`workflows`, `drafts`, `selection`, `tasks`, `approvals`, `user-sessions` and `health`
-all build on it. The one exception is `lib/api/auth.ts`, used only server-side by `getSession()`
+`workflow-templates`, `selection`, `tasks`, `approvals`, `users`, `user-sessions`,
+the organisation modules and `health` all build on it. The one exception is `lib/api/auth.ts`, used only server-side by `getSession()`
 and the login/logout Route Handlers: it calls the API directly with an explicit token
 (or, for login, the browser's `User-Agent`) and shares `client.ts`'s `ApiError`.
 
@@ -2015,8 +2026,8 @@ Two details that matter:
 
 ## 8.4 Hand-mirrored types
 
-`src/types/` mirrors the backend's DTOs — `workflow.ts`, `task.ts`, `selection.ts`,
-`approval.ts`, `draft.ts`, `auth.ts`, `permission.ts` — with unions narrowed to match the backend
+`src/types/` mirrors the backend's DTOs — `workflow.ts`, `workflow-template.ts`, `task.ts`,
+`selection.ts`, `approval.ts`, `auth.ts`, `permission.ts` and others — with unions narrowed to match the backend
 **exactly**.
 
 **Why hand-mirrored rather than generated or loose:** a loose `string` or
@@ -2035,7 +2046,7 @@ data into view data:
 | [`toFlowGraph.ts`](unblock-ai-web/src/lib/workflow/toFlowGraph.ts) | `WorkflowDefinition` → React Flow nodes + edges, auto-laid-out with dagre from `depends_on` |
 | [`toPlanNodes.ts`](unblock-ai-web/src/lib/workflow/toPlanNodes.ts) | `WorkflowDefinition` → the portal's plan list |
 | [`applyTaskProgress.ts`](unblock-ai-web/src/lib/workflow/applyTaskProgress.ts) | plan nodes + task step states → progress-annotated nodes |
-| [`editorState.ts`](unblock-ai-web/src/lib/workflow/editorState.ts) | three facts → one editor state |
+| [`workflow-template-editor-state.ts`](unblock-ai-web/src/lib/workflow-template/workflow-template-editor-state.ts) | template + typed title/prompt → editor flags |
 
 > **`toFlowGraph` is deterministic.** Same workflow JSON in → byte-identical
 > coordinates out. It reads `depends_on` and runs dagre — no randomness, no I/O.
@@ -2043,38 +2054,39 @@ data into view data:
 > storing it would create a second source of truth that could disagree with the
 > graph.
 
-## 8.6 The admin editor state machine
+## 8.6 The workflow template editor
 
-[`editorState.ts`](unblock-ai-web/src/lib/workflow/editorState.ts) derives one state
-from three facts, rather than juggling four booleans that can contradict each other:
+[`workflow-template-editor-state.ts`](unblock-ai-web/src/lib/workflow-template/workflow-template-editor-state.ts)
+derives every button state from the loaded template and what is typed, rather than
+juggling booleans that can contradict each other. The baseline prompt is the
+template's `draft_prompt` if set, otherwise the current version's prompt. The
+generation state compares the typed prompt with the current version's prompt:
 
-```ts
-export type EditorState = "empty" | "typed" | "generated" | "edited";
+| `GenerationState` | Meaning |
+|---|---|
+| `none` | Nothing generated yet (a new template or a `draft`) |
+| `current` | The typed prompt is exactly what the current version was generated from |
+| `stale` | The prompt has drifted from the current version — the flowchart on screen no longer describes the text on screen |
 
-deriveEditorState({ text, hasCompiled, compiledFromText }) {
-  if (text.trim() === "") return "empty";
-  if (!hasCompiled)       return "typed";
-  return text === compiledFromText ? "generated" : "edited";
-}
-```
+The actions fall out of it:
 
-The call-to-action falls out of the state — no separate logic:
+| Action | Enabled when |
+|---|---|
+| **Save** | Title or prompt changed. Creates a draft (`POST /workflow-templates`) or saves `title` / `draft_prompt` (`PATCH`) — never generates |
+| **Generate / Regenerate** | There is a prompt and the state is not `current`. `POST /workflow-templates/generate` for a new template, `POST /:id/generate` otherwise |
+| **Publish** | The template is `unpublished`, nothing is unsaved, and the state is `current` |
 
-| State | CTA label | Enabled |
-|---|---|---|
-| `empty` | Generate template | no |
-| `typed` | Generate template | yes |
-| `generated` | Regenerate template | no |
-| `edited` | Regenerate template | yes |
+Everything is disabled on an archived template. The **version history drawer** lists
+`GET /:id/versions`; choosing one opens `?version=N`, a read-only view of that
+version's prompt and flowchart.
 
-`edited` is what drives the **stale banner** — the prose has drifted from what the
-flowchart was compiled from, so the flowchart on screen no longer describes the text
-on screen.
+Code: [`src/components/workflow-templates/`](unblock-ai-web/src/components/workflow-templates/),
+[`src/lib/hooks/useWorkflowTemplateEditor.ts`](unblock-ai-web/src/lib/hooks/useWorkflowTemplateEditor.ts),
+[`src/lib/api/workflow-templates.ts`](unblock-ai-web/src/lib/api/workflow-templates.ts).
 
-> **Opening a template never re-runs the AI.** `generate()` is bound to an
-> `onClick`; there is no `useEffect` that triggers it, and `draftsApi.extract` has
-> exactly one caller in the whole web app. Opening a template is two indexed Mongo
-> reads and nothing else.
+> **Opening a template never re-runs the AI.** Generation is bound to a button
+> click; no effect triggers it. Opening a template is one `GET /workflow-templates/:id`,
+> which returns the current version inline.
 
 ## 8.7 The selection conversation hook
 
@@ -2101,15 +2113,16 @@ drives the one-requirement-at-a-time collection modal.
 
 ## 8.8 Component inventory
 
-### Admin — `src/components/admin/`
+### Workflow templates — `src/components/workflow-templates/`
 
 | Component | Role |
 |---|---|
-| `TemplateEditor` | The split-pane authoring surface; owns the state machine, generate/save/publish/rename |
-| `DraftEditor` · `EditorToolbar` | The prose panel |
-| `TemplateFilters` · `TemplateRow` | List page |
-| `DeleteTemplateDialog` | Typed-confirmation deletion |
-| `TopBar` | Admin nav shell |
+| `list/WorkflowTemplatesScreen` · `list/WorkflowTemplateTable` | List page: search, Active / Archived / All filter, archive / restore actions |
+| `editor/WorkflowTemplateEditor` · `editor/WorkflowTemplateEditorActions` · `editor/WorkflowTemplateEditorNotices` | The editor: title, Save / Generate / Publish, stale and archived notices |
+| `detail/WorkflowTemplateDetailScreen` | Loads a template and shows the editor or, with `?version=N`, the historic version |
+| `workspace/WorkflowTemplatePromptPanel` · `workspace/WorkflowTemplateFlowchartPanel` · `workspace/WorkflowTemplateGenerationNotes` | Split-pane prompt ⇄ flowchart, plus the model's ambiguities |
+| `versions/WorkflowTemplateVersionsDrawer` · `versions/WorkflowTemplateVersionView` | Version history and the read-only historic version view |
+| `shared/WorkflowTemplateStatusBadges` | Status / archived badges |
 | `flowchart/WorkflowFlowchart` | React Flow canvas; `NODE_TYPES` is module-scope on purpose — moving it inside the component remounts every node on each render |
 | `flowchart/nodes/{Step,Condition,Input,Terminal}Node` | The four node renderers |
 
@@ -2135,7 +2148,7 @@ drives the one-requirement-at-a-time collection modal.
 
 | Component | Role |
 |---|---|
-| `LoginForm` | Email + password form; posts to `/api/auth/login`, maps API error codes to messages, then goes to `?next=` or `/account` |
+| `LoginForm` | Email + password form; posts to `/api/auth/login`, maps API error codes to messages, then goes to `?next=` or `/dashboard` |
 | `SignOutButton` | Posts to `/api/auth/logout`, then returns to `/login` |
 | `AccountProfileCard` | Name, email, initials |
 | `PermissionBadgeList` | The user's permissions as labelled badges |
@@ -2187,7 +2200,11 @@ Request bodies capped at **1 MB**.
 In the tables below, **auth** means `requireAuthentication()`, and a permission name
 means `requireAnyPermission(...)` with that permission.
 
-## 9.2 All 42 route bindings
+## 9.2 Route bindings
+
+The 38 bindings below cover every area except the organisational unit, designation
+and user affiliation routes, which are documented in
+[`api-documentation.md`](unblock-ai-api/docs/api/api-documentation.md).
 
 ### Health
 
@@ -2214,39 +2231,39 @@ means `requireAnyPermission(...)` with that permission.
 | 9 | `GET` | `/users` | List users with their permissions | `user:manage` |
 | 10 | `GET` | `/users/:userId` | Get one user. `404 USER_NOT_FOUND` | `user:manage` |
 
-### Workflows / templates
+### Workflow templates
+
+`:workflowTemplateId` must be a UUID (`400` otherwise). Single-template responses are
+`{ workflow_template }`; full shapes and error codes are in
+[`api-documentation.md`](unblock-ai-api/docs/api/api-documentation.md).
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 11 | `POST` | `/workflows/extract` | Extract workflow JSON from prose — **does not save** | `workflow:manage` |
-| 12 | `POST` | `/workflows` | Save a workflow document as a new version | `workflow:manage` |
-| 13 | `GET` | `/workflows` | List latest workflow summaries (filter `institution_type`) | `workflow:manage` or `task:create` |
-| 14 | `GET` | `/workflows/deletions` | The deletion log, newest first | `workflow:manage` |
-| 15 | `GET` | `/workflows/:id` | Get one workflow document (optional `version`) | `workflow:manage` or `task:create` |
-| 16 | `PUT` | `/workflows/:id` | Update — saves a **new version** | `workflow:manage` |
-| 17 | `POST` | `/workflows/:id/validate` | Validate without saving | `workflow:manage` |
-| 18 | `GET` | `/workflows/:id/record` | Full stored row for the admin editor, **including inlined `draft_text`** | `workflow:manage` or `task:create` |
-| 19 | `PATCH` | `/workflows/:id/review` | Publish / reject — the `review_status` gate | `workflow:manage` |
-| 20 | `PATCH` | `/workflows/:id/title` | Rename a template | `workflow:manage` |
-| 21 | `DELETE` | `/workflows/:id` | Permanently delete with typed confirmation; logs the deleting user | `workflow:manage` |
+| 11 | `GET` | `/workflow-templates` | List templates, most recently changed first → `{ workflow_templates }` (summaries, no prompt or definition). `include_archived=true|false` (default `false`) | `workflow:manage` or `task:create` |
+| 12 | `POST` | `/workflow-templates` | `{ title, prompt }` → `201`, a `draft`. Nothing is generated | `workflow:manage` |
+| 13 | `POST` | `/workflow-templates/generate` | `{ prompt, title? }` → `201`, an `unpublished` template at version 1. Without a title the model's title is used | `workflow:manage` |
+| 14 | `GET` | `/workflow-templates/:workflowTemplateId` | One template with `draft_prompt` and the current version (`current`) inline | `workflow:manage` or `task:create` |
+| 15 | `PATCH` | `/workflow-templates/:workflowTemplateId` | `{ title?, draft_prompt? }` — rename (no new version) and/or save prompt text without generating | `workflow:manage` |
+| 16 | `POST` | `/workflow-templates/:workflowTemplateId/generate` | `{ prompt, title? }` → `201`, a new version (an optional `title` is applied only if generation succeeds). A published template stays published, so the new version is live immediately | `workflow:manage` |
+| 17 | `POST` | `/workflow-templates/:workflowTemplateId/publish` | `unpublished` → `published`. `409 WORKFLOW_TEMPLATE_NOT_GENERATED` / `WORKFLOW_TEMPLATE_ALREADY_PUBLISHED` | `workflow:manage` |
+| 18 | `POST` | `/workflow-templates/:workflowTemplateId/archive` | Hide from retrieval and the default list. `409 WORKFLOW_TEMPLATE_ARCHIVED` if already archived | `workflow:manage` |
+| 19 | `POST` | `/workflow-templates/:workflowTemplateId/restore` | Undo archive. `409 WORKFLOW_TEMPLATE_NOT_ARCHIVED` if not archived | `workflow:manage` |
+| 20 | `GET` | `/workflow-templates/:workflowTemplateId/versions` | `{ versions }`, newest first, without prompt or definition | `workflow:manage` or `task:create` |
+| 21 | `GET` | `/workflow-templates/:workflowTemplateId/versions/:version` | `{ version }` with its prompt and definition. `404 WORKFLOW_TEMPLATE_VERSION_NOT_FOUND` | `workflow:manage` or `task:create` |
 
-### Drafts
-
-| # | Method | Path | Purpose | Auth |
-|---|---|---|---|---|
-| 22 | `POST` | `/drafts` | Save raw prose (idempotent by content hash); records the caller as `submitted_by` | `workflow:manage` |
-| 23 | `GET` | `/drafts` | List drafts | `workflow:manage` |
-| 24 | `GET` | `/drafts/:id` | Get one draft | `workflow:manage` |
-| 25 | `POST` | `/drafts/:id/extract` | Generate **and save** a template from a draft | `workflow:manage` |
+Update, generate and publish on an archived template are `409 WORKFLOW_TEMPLATE_ARCHIVED`.
+Generation failures are `422 WORKFLOW_TEMPLATE_GENERATION_FAILED` or
+`422 WORKFLOW_TEMPLATE_PROMPT_REJECTED`. Callers without `workflow:manage` only see
+published templates; drafts and unpublished templates return `404` to them.
 
 ### Selection
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 26 | `POST` | `/selection/sessions` | Start a conversation (round 1 — **the only retrieval**) | `task:create` |
-| 27 | `POST` | `/selection/sessions/:id/answer` | Answer a clarifying question (round 2+) | `task:create` |
-| 28 | `POST` | `/selection/sessions/:id/choose` | Pick a workflow manually | `task:create` |
-| 29 | `GET` | `/selection/sessions/:id/workflow` | Get the matched workflow document | `task:create` |
+| 22 | `POST` | `/selection/sessions` | Start a conversation (round 1 — **the only retrieval**). Responses carry `workflow_template_id` and `candidates[].workflow_template_id` | `task:create` |
+| 23 | `POST` | `/selection/sessions/:id/answer` | Answer a clarifying question (round 2+) | `task:create` |
+| 24 | `POST` | `/selection/sessions/:id/choose` | Pick a template manually: `{ workflow_template_id }` (a UUID that must be among the session's candidates, `400` otherwise) | `task:create` |
+| 25 | `GET` | `/selection/sessions/:id/workflow-template` | The matched template's current version → `{ workflow_template_version, definition }`. `409` if nothing is matched yet, `409 WORKFLOW_TEMPLATE_NOT_PUBLISHED` if it was unpublished or archived since | `task:create` |
 
 ### Tasks
 
@@ -2255,31 +2272,31 @@ someone else is `404`.
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 30 | `POST` | `/tasks` | Create a task from a matched session; `created_by` is the caller | `task:create` |
-| 31 | `GET` | `/tasks` | List **the caller's own** tasks (filter `session_id`, `status`) | `task:create` |
-| 32 | `GET` | `/tasks/:id/status` | Requester-facing timeline (incl. who rejected and why) | `task:create` + owner |
-| 33 | `GET` | `/tasks/:id/document` | Download the completion PDF (regenerated on demand) | `task:create` + owner |
-| 34 | `GET` | `/tasks/:id` | Get one task | `task:create` + owner |
-| 35 | `GET` | `/tasks/:id/next` | The next unfilled requirement | `task:create` + owner |
-| 36 | `POST` | `/tasks/:id/values` | Submit a value (coerced + validated) | `task:create` + owner |
-| 37 | `POST` | `/tasks/:id/finalize` | Seed step states; `collecting` → `ready` | `task:create` + owner |
-| 38 | `POST` | `/tasks/:id/start` | **Dispatch entry steps, mint tokens, send email** | `task:create` + owner |
-| 39 | `PATCH` | `/tasks/:id/status` | Cancel | `task:create` + owner |
-| 40 | `DELETE` | `/tasks/:id` | Delete a finished task, or one still collecting with no step dispatched (`409` otherwise); writes a Mongo `audit_logs` row first | `task:create` + owner |
+| 26 | `POST` | `/tasks` | Create a task from a matched session, pinned to `workflow_template_id` + `workflow_template_version`; `created_by` is the caller. `409 WORKFLOW_TEMPLATE_NOT_PUBLISHED` if the template is no longer published | `task:create` |
+| 27 | `GET` | `/tasks` | List **the caller's own** tasks (filter `session_id`, `status`) | `task:create` |
+| 28 | `GET` | `/tasks/:id/status` | Requester-facing timeline (incl. `workflow_template_title`, who rejected and why) | `task:create` + owner |
+| 29 | `GET` | `/tasks/:id/document` | Download the completion PDF (regenerated on demand) | `task:create` + owner |
+| 30 | `GET` | `/tasks/:id` | Get one task | `task:create` + owner |
+| 31 | `GET` | `/tasks/:id/next` | The next unfilled requirement | `task:create` + owner |
+| 32 | `POST` | `/tasks/:id/values` | Submit a value (coerced + validated) | `task:create` + owner |
+| 33 | `POST` | `/tasks/:id/finalize` | Seed step states; `collecting` → `ready` | `task:create` + owner |
+| 34 | `POST` | `/tasks/:id/start` | **Dispatch entry steps, mint tokens, send email** | `task:create` + owner |
+| 35 | `PATCH` | `/tasks/:id/status` | Cancel | `task:create` + owner |
+| 36 | `DELETE` | `/tasks/:id` | Delete a finished task, or one still collecting with no step dispatched (`409` otherwise); writes a Mongo `audit_logs` row first | `task:create` + owner |
 
 ### Approvals
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 41 | `GET` | `/approvals/:token` | The approver page's data | **none — the token IS the auth** |
-| 42 | `POST` | `/approvals/:token/decision` | Approve / reject / request more info | **none — the token IS the auth** |
+| 37 | `GET` | `/approvals/:token` | The approver page's data | **none — the token IS the auth** |
+| 38 | `POST` | `/approvals/:token/decision` | Approve / reject / request more info | **none — the token IS the auth** |
 
 `task:approve` exists in the permission catalogue and can be granted, but no route
 checks it yet: approvers act through the token links above.
 
 > **Route ordering notes:** `GET /tasks/:id/status` and `GET /tasks/:id/document` are
-> registered **before** the bare `GET /tasks/:id` pattern, `GET /workflows/deletions`
-> before `GET /workflows/:id`, and `DELETE /auth/sessions/others` before
+> registered **before** the bare `GET /tasks/:id` pattern, `POST /workflow-templates/generate`
+> before the `/:workflowTemplateId` routes, and `DELETE /auth/sessions/others` before
 > `DELETE /auth/sessions/:sessionId`, so no literal suffix is ever swallowed as a
 > path parameter.
 
@@ -2292,17 +2309,18 @@ Every error returns the same body:
 ```
 
 `details` carries structured context where useful — for example, the list of
-schema and graph validation messages on a `VALIDATION_ERROR`.
+schema and graph validation messages on a `WORKFLOW_TEMPLATE_GENERATION_FAILED`,
+or the model's reasons on a `WORKFLOW_TEMPLATE_PROMPT_REJECTED`.
 
 ## 9.4 Known API rough edge
 
 > **Malformed ObjectIds return `500 DATABASE_ERROR`, not `400`/`404`.**
-> On `/drafts/:id*` and `/selection/sessions/:id*`, a syntactically invalid ObjectId
+> On `/selection/sessions/:id*`, a syntactically invalid ObjectId
 > fails inside the Mongo driver rather than being rejected at the controller boundary.
 > (`/tasks/:id*` is not affected: the task-ownership guard parses the id first and
-> answers `400 VALIDATION_ERROR`.) The frontend works around this at
-> `admin/templates/[id]/page.tsx`. The clean fix is an ObjectId-shape guard in
-> `request-validator.util.ts` applied at each of those route params.
+> answers `400 VALIDATION_ERROR`, and `/workflow-templates/:workflowTemplateId*` ids are
+> UUIDs checked by the controller.) The clean fix is an ObjectId-shape guard in
+> `request-validator.util.ts` applied at those route params.
 
 ---
 
@@ -2331,7 +2349,7 @@ validate what they own, and `index.config.ts` composes them into a single frozen
 | `POSTGRES_URL` | conditional | — | Required when `POSTGRES_REPOSITORY_BACKEND=postgres` |
 | `POSTGRES_POOL_MAX` | no | `10` | Max pooled connections |
 | `POSTGRES_CONNECTION_TIMEOUT_MS` | no | `5000` | Acquisition timeout |
-| `POSTGRES_REPOSITORY_BACKEND` | no | `postgres` | `postgres` \| `memory` — the implementation behind the user, user-session and template-deletion repositories. `memory` starts with no users |
+| `POSTGRES_REPOSITORY_BACKEND` | no | `postgres` | `postgres` \| `memory` — the implementation behind every Postgres repository (users, sessions, organisation). `memory` starts with no users |
 
 ## 10.3 Auth and users
 
@@ -2353,10 +2371,10 @@ signing secret to set.
 |---|---|---|---|
 | `AZURE_OPENAI_ENDPOINT` | **yes** | — | Resource endpoint |
 | `AZURE_OPENAI_API_KEY` | **yes** | — | API key |
-| `AZURE_OPENAI_DEPLOYMENT` | **yes** | — | Chat deployment used for extraction (`gpt-4o`) |
+| `AZURE_OPENAI_DEPLOYMENT` | **yes** | — | Chat deployment used for workflow template generation (`gpt-4o`) |
 | `AZURE_OPENAI_API_VERSION` | **yes** | — | e.g. `2024-10-21` |
-| `AZURE_SELECTOR_DEPLOYMENT` | no | falls back to `AZURE_OPENAI_DEPLOYMENT` | Selector-agent model — **can be a cheaper model than extraction** |
-| `EXTRACTION_MAX_ATTEMPTS` | no | `3` | Self-repair loop cap |
+| `AZURE_SELECTOR_DEPLOYMENT` | no | falls back to `AZURE_OPENAI_DEPLOYMENT` | Selector-agent model — **can be a cheaper model than generation** |
+| `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` | no | `3` | Self-repair loop cap (initial attempt + repairs). Renamed from `EXTRACTION_MAX_ATTEMPTS`, which is now **silently ignored** — rename it in any local `.env` |
 
 ## 10.5 Azure embeddings
 
@@ -2447,27 +2465,27 @@ Never put a real secret in `.example.env`.
 
 | Used | Not used |
 |---|---|
-| Extracting workflow JSON from prose | Validating the extracted graph *(deterministic checks)* |
+| Generating workflow JSON from a prompt | Validating the generated graph *(deterministic checks)* |
 | Deciding which template matches a request | Ranking candidates *(vector similarity + alias boost)* |
 | Generating a clarifying question | Phrasing requirement prompts *(plain `label` + `collection_hint`)* |
-| Generating a template's `retrieval_summary` | Deciding whether a step is ready *(a pure graph rule)* |
+| Writing a template's `retrieval_summary` *(inside the same generation call)* | Deciding whether a step is ready *(a pure graph rule)* |
 | — | Building or rendering the completion document *(pure functions)* |
 | — | Suggesting reject-vs-more-info to an approver *(left as plain data)* |
 
 > **The pattern:** the LLM is used for *language*, never for *state*. Anything that
 > must be reproducible, auditable, or provably correct is a deterministic function.
 
-## 11.2 The extraction pipeline
+## 11.2 The workflow template generation pipeline
 
 ### Prompt assembly
 
-[`extraction.prompt.ts`](unblock-ai-api/src/data/prompts/extraction.prompt.ts) is a
+[`workflow-template-generation.prompt.ts`](unblock-ai-api/src/data/prompts/workflow-template-generation.prompt.ts) is a
 long system prompt encoding every schema semantic in [§4](#4-the-workflow-schema--the-core-design-artifact):
 graph-not-list, actor resolution modes, namespace paths, condition structure,
 ambiguity reporting, the three-outcome rule, strict-mode discipline, and the
 non-workflow refusal rule.
 
-[`extraction-few-shot.prompt.ts`](unblock-ai-api/src/data/prompts/extraction-few-shot.prompt.ts)
+[`workflow-template-generation-few-shot.prompt.ts`](unblock-ai-api/src/data/prompts/workflow-template-generation-few-shot.prompt.ts)
 appends **two worked examples loaded from real sample files** —
 `src/data/samples/input/*.txt` paired with `src/data/samples/expected/*.json`.
 
@@ -2509,25 +2527,28 @@ restructure parts that were already correct, which can introduce new failures an
 turn the loop into a random walk. Constraining the repair keeps each attempt
 monotonically closer to valid.
 
-Default cap: `EXTRACTION_MAX_ATTEMPTS` = 3. Exhausted → `ExtractionError` (422).
+Default cap: `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` = 3 (`config.workflowTemplateGeneration.maxAttempts`).
+Exhausted → `WorkflowTemplateGenerationError` (422, `WORKFLOW_TEMPLATE_GENERATION_FAILED`,
+the last validation errors in `details`). A response that is not valid JSON fails the same way.
 
 ### The non-workflow guard
 
 Even a fully schema-valid result is rejected when
-`metadata.review_status === "rejected"` — the model's own signal that the input
-described no institutional process. See [§4.9](#49-non-workflow-input-is-a-first-class-outcome).
+`metadata.is_workflow === false` — the model's own signal that the input
+described no institutional process. It fails with
+`422 WORKFLOW_TEMPLATE_PROMPT_REJECTED`. See [§4.9](#49-non-workflow-input-is-a-first-class-outcome).
 
 ## 11.3 Embeddings and vector search
 
 | Property | Value |
 |---|---|
 | Model | `text-embedding-3-small` |
-| Dimensions | 1536, validated against `AZURE_EMBEDDING_DIM` on every call |
-| Embedded content | The `retrieval_summary` block |
-| Storage | Inline on the template document in Mongo |
+| Dimensions | 1536, validated against `EMBEDDING_DIMENSIONS` on every call |
+| Embedded content | The template title plus the current version's `retrieval_summary` block |
+| Storage | `retrieval.embedding` on the `workflow_templates` document in Mongo |
 | Backends | `in-memory` (cosine similarity via `vector-math.util.ts`) · `atlas` (MongoDB Atlas Vector Search) |
 
-The in-memory backend loads confirmed latest templates and computes cosine
+The in-memory backend loads published, unarchived templates and computes cosine
 similarity in process. It is genuinely usable at the scale of an institution's
 template library — a few hundred documents — and it removes Atlas from the local
 development critical path entirely.
@@ -2559,35 +2580,36 @@ the round budget expires.
 
 ## 11.5 Retrieval summaries as a generated artifact
 
-[`retrieval-summary.prompt.ts`](unblock-ai-api/src/data/prompts/retrieval-summary.prompt.ts)
-+ [`retrieval-summary.schema.ts`](unblock-ai-api/src/data/schemas/retrieval-summary.schema.ts)
-generate the `retrieval_summary` block. `npm run backfill:summaries` regenerates
-them for templates stored before the block existed.
+The `retrieval_summary` block is a required part of the workflow schema, so the
+generation call writes it along with the rest of the definition — the generation
+prompt carries the rules for each field. There is no separate summary call and no
+backfill script; every stored version has one.
 
 ## 11.6 Evaluation harness
 
 | Command | What it measures |
 |---|---|
 | `npm run evaluate:selection` | Runs [`src/data/samples/selection/queries.json`](unblock-ai-api/src/data/samples/selection/queries.json) — labelled plain-language queries with expected workflow ids — and scores selection accuracy |
-| `npm run test:live` → `extraction-accuracy.live.test.ts` | Asserts the model extracts *specific structural details* from the gold fixtures: right step ids, right `depends_on` chains, right condition operator and operands, right loop-back and termination outcomes, right `context_from_steps` bindings |
+| `npm run test:live` → `workflow-template-generation-accuracy.live.test.ts` | Asserts the model generates *specific structural details* from the gold fixtures: right step ids, right `depends_on` chains, right condition operator and operands, right loop-back and termination outcomes, right `context_from_steps` bindings |
 | → `consistency.live.test.ts` | Repeatability across repeated calls with the same input |
-| → `generalisation.live.test.ts` | Extraction on `lab_equipment_purchase_request` — an **unseen** fixture with no gold JSON |
+| → `generalisation.live.test.ts` | Generation on `lab_equipment_purchase_request` — an **unseen** fixture with no gold JSON |
 | → `robustness.live.test.ts` | Messy, edge-case, and non-workflow input |
 | → `selection-quality.live.test.ts` | Selector agent decision quality |
 
-> **`extraction-accuracy` asserts structure, not string equality.** Comparing whole
+> **`workflow-template-generation-accuracy` asserts structure, not string equality.** Comparing whole
 > documents would fail on any harmless wording difference. Asserting that
 > `dean_review.condition.operator === "greater_than"` and its `left` is
 > `computed.trip_duration_days` tests what actually matters.
 
 ## 11.7 Cost and latency posture
 
-- **Extraction** is the expensive call (long system prompt + two few-shot examples +
-  structured output). It runs **only on an explicit admin "Generate" click** — never
-  on page open, never on a `useEffect`.
+- **Workflow template generation** is the expensive call (long system prompt + two
+  few-shot examples + structured output). It runs **only on an explicit "Generate" /
+  "Regenerate" click** — never on page open, never on a `useEffect`, and never on a
+  title change.
 - **Selection** uses `AZURE_SELECTOR_DEPLOYMENT`, which can point at a cheaper model
-  than extraction. One call per conversation round, max two rounds.
-- **Embeddings** run once per template save and once per selection query.
+  than generation. One call per conversation round, max two rounds.
+- **Embeddings** run once per generated version, once per title change, and once per selection query.
 - **Everything else** — planning, execution, document generation — has zero LLM cost.
 
 ---
@@ -2619,7 +2641,7 @@ is scaled to that, and the gaps are documented rather than implied.
 |  Scope: guarded routes, then     |  Scope: exactly one step of    |
 |         per-route permissions    |         exactly one task       |
 |  Revoke: immediate - logout or   |  Revoke: a DB write            |
-|          revoke from /account    |                                |
+|          revoke from /old/account|                                |
 +------------------------------------------------------------------+
 ```
 
@@ -2684,8 +2706,8 @@ untouched by design ([§5.7](#57-task-planning--requirement-collection)).
 | Single allowed CORS origin | `cors.middleware.ts` |
 | Case-insensitive unique emails | Postgres functional index on `lower(email)` |
 | Every user holds at least one permission | Deferred constraint trigger + `UserService` |
-| Audit rows cannot be orphaned | `ON DELETE RESTRICT` |
-| Deletion requires typed confirmation and `workflow:manage`, and writes a log first | `DELETE /workflows/:id` |
+| Workflow templates cannot be deleted, only archived and restored, by `workflow:manage` holders | `/workflow-templates/:id/archive`, `/restore` |
+| Task deletion writes an audit row first | `TaskService` + `audit_logs` |
 | Required config validated at startup | `user.config.ts` (`USER_DEFAULT_PASSWORD`), `mail.config.ts` |
 
 ## 12.6 What is not protected — the honest list
@@ -2698,7 +2720,7 @@ untouched by design ([§5.7](#57-task-planning--requirement-collection)).
 | **No IP rate limiting on login** | Brute force is limited only by per-account lockout, which is **off by default** | Set `AUTH_MAX_FAILED_ATTEMPTS`; add IP throttling |
 | **`proxy.ts` checks cookie presence only** | A junk cookie renders a page shell, but every API call it makes returns `401` | By design — the API is the boundary |
 | **Unverified approver identity** | See §12.4 | Directory integration |
-| **No cross-database transaction** | A partial template deletion is possible (visible, not silent) | Accepted; write ordering mitigates |
+| **`task:create` can read every workflow template** | Requesters can list and open templates in any status, drafts included, via `GET /workflow-templates*` | Filter reads by status for callers without `workflow:manage` |
 | **`SMTP_*` not validated at startup** | A misconfigured transport fails at send time | Caught and logged, not fatal — by design |
 | **Malformed ObjectId → 500** | Noise, and a slightly leaky error class | Add an ObjectId guard to `request-validator.util.ts` |
 
@@ -2727,19 +2749,19 @@ reference allocation, migration and seed file names.
 
 ### `tests/unit/services/` — 18 files
 
-Draft, workflow, retrieval, selection, selector, vector-store, task, execution,
+Workflow template, retrieval, selection, selector, vector-store, task, execution,
 approval, notification, mailer, document, embedding, the LLM and embedding adapters,
 authentication, user session, and user — each against fakes supplied through
 constructor injection.
 
 ### `tests/unit/repositories/`, `middlewares/`, `db/`, `errors/` — 7 files
 
-The three in-memory repositories (user, user session, template deletion), the
+The in-memory repositories (user, user session, organisation), the
 `requireAnyPermission` guard, the migration and seed runners, and `BaseError`.
 
 ### `tests/integration/` — 10 files
 
-Full HTTP-level coverage of the auth, user-session, user, draft, workflow,
+Full HTTP-level coverage of the auth, user-session, user, workflow-template,
 selection, task, task-ownership and approval routes plus the error handler, using an
 **in-process Express server** (`test-server.helper.ts`) and `mongodb-memory-server`.
 
@@ -2786,9 +2808,9 @@ therefore:
 
 > `it_faculty_overseas_leave` and `departmental_event_workshop` each serve **three
 > roles simultaneously**: few-shot prompt example, schema/graph validation fixture,
-> and live extraction-accuracy gold data.
+> and live generation-accuracy gold data.
 >
-> **Any change to the schema or the extraction prompt must keep all three
+> **Any change to the schema or the generation prompt must keep all three
 > consistent.** This is the sharpest coupling in the repository and the first thing
 > to check when a schema change breaks something unexpected.
 
@@ -2844,8 +2866,8 @@ npm run dev                   # Next dev on :3001
 ```
 
 Open http://localhost:3001 and sign in with `SEED_ADMINISTRATOR_EMAIL` and the
-`USER_DEFAULT_PASSWORD` value. You land on `/account`; the template dashboard is at
-`/admin` and the requester portal at `/portal`. Create further users with
+`USER_DEFAULT_PASSWORD` value. You land on `/dashboard`; workflow templates are at
+`/dashboard/workflows` and the older requester portal at `/old/portal`. Create further users with
 `POST /api/users` while signed in as the administrator.
 
 > **Port 3001 is fixed in `package.json`** because the API binds 3000 and its
@@ -2869,7 +2891,6 @@ Open http://localhost:3001 and sign in with `SEED_ADMINISTRATOR_EMAIL` and the
 | `npm run seed:pg:run [-- --only <name>]` | Run the Postgres seeders (idempotent; skips what exists) |
 | `npm run seed:pg:list` | List the Postgres seeders |
 | `npm run seed:pg:create -- <name>` | Scaffold a new seeder file |
-| `npm run backfill:summaries` | Regenerate `retrieval_summary` for older templates |
 | `npm run evaluate:selection` | Score selection accuracy against labelled queries |
 | `npm run smoke-test:azure` | Chat connectivity |
 | `npm run smoke-test:embeddings` | Embeddings connectivity + dimension check |
@@ -2933,7 +2954,7 @@ Open http://localhost:3001 and sign in with `SEED_ADMINISTRATOR_EMAIL` and the
 Roles in use: `.route` `.controller` `.service` `.model` `.middleware` `.util`
 `.config` `.type` `.error` `.prompt` `.schema` `.constant` `.vocabulary` `.data`
 `.client` `.interface` `.script` `.test` `.document` `.mailer` `.vector-store`
-`.user-repository` `.user-session-repository` `.template-deletion-repository`
+`.user-repository` `.user-session-repository` `.organisational-unit-repository` …
 `.migration` `.seeder` `.definition` `.template`
 
 Examples: `selection-session.model.ts`, `in-memory.vector-store.ts`,
@@ -2965,8 +2986,6 @@ Representative examples from the source:
 // The candidate set from round one is deliberately frozen; re-running
 // retrieval here would let the candidate list drift out from under an
 // in-progress clarifying conversation.
-
-// Must precede "/workflows/:id" - otherwise "deletions" is captured as :id.
 
 cache: "no-store",   // this data is never safe to serve stale
 
@@ -3011,13 +3030,13 @@ thing.
 
 | Pattern | Where it appears |
 |---|---|
-| **Interface + factory + config-selected implementation** | `IVectorStore`, `IMailer`, `IDocumentRenderer`, `IUserRepository` / `IUserSessionRepository` / `ITemplateDeletionRepository` |
+| **Interface + factory + config-selected implementation** | `IVectorStore`, `IMailer`, `IDocumentRenderer`, `IUserRepository` / `IUserSessionRepository` / the organisation repositories |
 | **Pure core, I/O shell** | `ExecutionService` / `ApprovalService`; `buildCompletionDocument` / `CompletionDocumentService`; `PlannerService` / `TaskService` |
 | **Never-throw at failure-isolation boundaries** | `NotificationService.dispatch()`, `CompletionDocumentService.generate()`, `computed-evaluator`, approval-token verification |
 | **Derive, don't store** | Flowchart layout, completion-document bytes, requirement lists |
 | **Freeze what a conversation depends on** | Selection candidate set; task workflow version |
 | **One chokepoint per external boundary** | `client.ts` for fetch; `env.config.ts` for `process.env`; `errorHandler` for error responses |
-| **Write the audit row before the destructive act** | Template deletion |
+| **Write the audit row before the destructive act** | Task deletion |
 
 ---
 
@@ -3028,12 +3047,11 @@ thing.
 | Gap | Consequence | Notes |
 |---|---|---|
 | **No directory / identity service** | Approver and requester emails are self-asserted and unverified | **The most important gap.** See [§12.4](#124-the-central-trust-gap-self-asserted-identity) |
-| **No runtime `condition` evaluation** | `WorkflowStep.condition` is extracted, validated, and rendered — but the execution engine does not evaluate it. A conditional step is dispatched like any other | The evaluator for `computed` already exists and is the natural foundation |
+| **No runtime `condition` evaluation** | `WorkflowStep.condition` is generated, validated, and rendered — but the execution engine does not evaluate it. A conditional step is dispatched like any other | The evaluator for `computed` already exists and is the natural foundation |
 | **No SLA, reminders, or escalation** | `WorkflowStep.sla` is carried in the schema and never read | Needs a scheduler |
 | **No self-registration, password reset, or password change** | Every user keeps the `USER_DEFAULT_PASSWORD` they were created with | The most important auth gap — see [§12.6](#126-what-is-not-protected--the-honest-list) |
 | **No user update, disable, or delete** | The user API is create, list and get-by-id; permissions are fixed at creation | `status = 'disabled'` is already honoured at login and per request |
 | **`task:approve` gates nothing** | Approvers act through token links, not accounts | The permission is defined and grantable, ready for an approver sign-in flow |
-| **No user-management or redesigned dashboards in the web app** | `/account` is the only post-login page; `/admin` and `/portal` are reachable by URL only | Users are created through `POST /api/users` |
 | **No IP rate limiting** | Only per-account lockout, off by default | |
 | **No LLM assistance in the approval flow** | Question phrasing, context summarising, and reject-vs-more-info suggestions are plain data for the caller to render | Deliberate — see [§11.1](#111-where-the-llm-is-used--and-where-it-deliberately-is-not) |
 | **No metrics, tracing, or readiness probe** | `/health` is liveness only and stays green while Mongo is down | |
@@ -3042,8 +3060,8 @@ thing.
 
 | Issue | Detail | Fix |
 |---|---|---|
-| **Malformed ObjectId → 500** | On `/drafts/:id*` and `/selection/sessions/:id*`, an invalid ObjectId fails inside the driver as `DATABASE_ERROR` instead of `400`/`404`. The frontend works around it in `admin/templates/[id]/page.tsx` | An ObjectId-shape guard in `request-validator.util.ts` |
-| **Pre-`requester_email` workflows** | Templates saved before that input existed produce tasks that send no requester notifications — pull-only via `GET /tasks/:id/status` | Re-extract, or backfill the input |
+| **Malformed ObjectId → 500** | On `/selection/sessions/:id*`, an invalid ObjectId fails inside the driver as `DATABASE_ERROR` instead of `400`/`404` | An ObjectId-shape guard in `request-validator.util.ts` |
+| **Pre-`requester_email` workflows** | Templates saved before that input existed produce tasks that send no requester notifications — pull-only via `GET /tasks/:id/status` | Regenerate the template from its prompt |
 | **SMTP config unvalidated at startup** | A bad host surfaces only at send time | Intentional: caught and logged rather than crashing the process |
 | **`revalidate` is inert on API-backed pages** | The shared client sends `cache: "no-store"`, opting routes out of the Data Cache | Documented; `router.refresh()` is used instead |
 
@@ -3076,7 +3094,7 @@ Evaluate `WorkflowStep.condition` in `ExecutionService.advance()`; a step whose
 condition is false becomes `skipped` rather than `ready`.
 *Foundation already present:* `computed-evaluator.util.ts` resolves namespace paths
 against collected values, and `checkNamespacePaths` guarantees every path is valid.
-*Why it matters:* today, the fourteen-day Dean rule is *extracted, validated, and
+*Why it matters:* today, the fourteen-day Dean rule is *generated, validated, and
 drawn on the flowchart* — but not enforced at runtime.
 
 **3. Complete user management**
@@ -3089,7 +3107,7 @@ schema, `UserService`, the `user:manage` permission, and per-user session revoca
 ### Tier 2 — Operational maturity
 
 **4. Readiness probe + metrics + tracing**
-`/health/ready` that pings both databases; counters for extraction attempts, repair
+`/health/ready` that pings both databases; counters for generation attempts, repair
 loops, selection decisions by type, and approval latency.
 
 **5. SLA reminders and escalation**
@@ -3103,8 +3121,8 @@ Close the 500-instead-of-400 rough edge.
 
 **7. Approver accounts and permission-aware dashboards**
 Put `task:approve` to work — approvers sign in to act on their steps instead of
-holding a bare token link — and redesign `/admin` and `/portal` so `/account` links to
-whichever surfaces the user's permissions allow.
+holding a bare token link — and fold the remaining `/old/portal` screens into the
+permission-aware `/dashboard`.
 
 **8. Analytics on the corpus**
 Which workflows are used most, which steps bottleneck, which get rejected, average
@@ -3126,13 +3144,13 @@ scores.
 | A new vector backend (pgvector, Pinecone) | Implement `IVectorStore`, add a case to the factory | Callers depend on the interface only |
 | A new mail transport (SES, SendGrid) | Implement `IMailer`, add a case to the factory | `NotificationService` is transport-agnostic |
 | A new document format (DOCX, HTML) | Implement `IDocumentRenderer`, add a case to the factory | The builder is already format-independent |
-| A new user / session / deletion-log store | Implement `IUserRepository`, `IUserSessionRepository` or `ITemplateDeletionRepository`, add a case to its `index` factory | Services depend on the interfaces only; each already has two implementations |
+| A new user / session store | Implement `IUserRepository` or `IUserSessionRepository`, add a case to its `index` factory | Services depend on the interfaces only; each already has two implementations |
 | A new permission | Add it to the `Permission` enum, insert the catalogue row in a new migration, guard routes with `requireAnyPermission(...)` | Permissions are data plus one guard, not a role hierarchy |
 | New seed data | `npm run seed:pg:create -- <name>`, write an idempotent seeder that goes through services | The seed runner discovers seeder files by name |
 | A new error type | Add a file to `src/errors/`, extend `BaseError`, export from the barrel | The handler reads `statusCode`/`toJSON()` off the instance |
 | A new graph invariant | Add a check function to `graph-validator.util.ts` + a mutation test | Checks are independent functions over the same document |
 | A new step type | Extend the schema enum, the prompt, and the flowchart node map | Schema-first change; expect the three-role fixture constraint to bite |
-| A different LLM deployment | Change `AZURE_OPENAI_DEPLOYMENT` | Reasoning models auto-detected for temperature handling |
+| A different LLM deployment | Change `AZURE_OPENAI_CHAT_DEPLOYMENT` (or `LLM_PROVIDER`) | Reasoning models auto-detected for temperature handling |
 
 ---
 
@@ -3147,15 +3165,13 @@ scores.
 | **Completion document** | The deterministic PDF record generated when a task completes. Metadata persisted, bytes regenerated on demand |
 | **Computed value** | A derived value from a fixed operation set (`date_diff_days`, `sum`, …). Never a free-text formula |
 | **Dispatch** | Moving a `ready` step to `pending_approval`, minting its token, and emailing the assignee |
-| **Draft** | Raw admin prose, stored idempotently by SHA-256 of its normalised text |
+| **Draft** | A workflow template status: title and prompt saved, nothing generated yet. Also `draft_prompt` — prompt text saved on a generated template but not yet generated |
 | **Entry step** | A step with `depends_on: []`. Every valid workflow has at least one |
-| **Extraction** | The LLM pipeline turning prose into validated workflow JSON |
-| **Few-shot examples** | Two worked input/output pairs loaded from real fixture files into the extraction prompt |
+| **Few-shot examples** | Two worked input/output pairs loaded from real fixture files into the generation prompt |
 | **Graph validation** | Eight semantic checks JSON Schema cannot express (cycles, reachability, dangling references, namespace paths, …) |
-| **`is_latest`** | A boolean marking the current version per `workflow_id`. Exactly one per id |
 | **Namespace path** | A dotted reference into the shared run data: `inputs.x`, `computed.y`, `steps.z.outcome`, `requester.a`, `system.today` |
-| **Permission** | A `resource:action` code a user holds — `workflow:manage`, `task:create`, `task:approve`, `user:manage`. Routes require one of a listed set; every user holds at least one |
-| **Publish gate** | `metadata.review_status` moving `pending_admin_review` → `confirmed`. Retrieval only ever sees `confirmed` |
+| **Permission** | A `resource:action` code a user holds — `workflow:manage`, `task:create`, `task:approve`, `user:manage`, `organisation:manage`. Routes require one of a listed set; every user holds at least one |
+| **Publish gate** | A workflow template's `status` moving `unpublished` → `published`. Retrieval only ever sees published, unarchived templates |
 | **Reopen** | The "request more info" loop — an outcome that resets a step to `ready`, clears its token, and appends a `followup:*` requirement. Capped at 3 |
 | **Requirement** | One unit of the flat collection list: a template input, an unresolved actor, or a follow-up question |
 | **`retrieval_summary`** | The block that gets embedded and read by the selector: one-liner, aliases, keywords, requester types, triggers, and **`not_for`** |
@@ -3164,10 +3180,12 @@ scores.
 | **Self-repair loop** | Feeding validation errors back to the model with "fix only these", up to 3 attempts |
 | **Step state** | `blocked` \| `ready` \| `pending_approval` \| `approved` \| `rejected` \| `skipped` |
 | **Task** | One instance of a workflow: the process a requester actually started |
-| **Template** | A stored, versioned workflow definition with its embedding |
 | **Terminal rejection** | `outcomes.rejected.action === "terminate_workflow"` — checked before dispatch, so no email goes out for a dead branch |
 | **User session** | A server-side `user_sessions` row created at login, identified by the SHA-256 hash of an opaque bearer token. Absolute expiry; revocable immediately |
-| **Version pinning** | A task recording the exact `{ workflow_id, version }` it was created from, so template edits cannot reshape a running chain |
+| **Version pinning** | A task recording the exact `{ workflow_template_id, workflow_template_version }` it was created from, so regenerating a template cannot reshape a running chain |
+| **Workflow template** | A stored workflow (UUID, title, status, current version, retrieval embedding) with its immutable generated versions. Archived, never deleted |
+| **Workflow template generation** | The LLM pipeline turning a prompt into validated workflow JSON, stored as a new version |
+| **Workflow template version** | One immutable generated definition of a template, with the prompt it came from. Tasks pin one |
 
 ---
 
@@ -3181,24 +3199,24 @@ scores.
 app.ts                     builds the Express app; no listen()
 server.ts                  entry point: DI wiring, listen, graceful shutdown
 
-routes/                    index · health · auth · user-session · user · workflow
-                           · draft · selection · task · approval
-controllers/               health · auth · user-session · user · workflow · draft
-                           · selection · task · approval
+routes/                    index · health · auth · user-session · user · workflow-template
+                           · selection · task · approval · organisation routes
+controllers/               health · auth · user-session · user · workflow-template
+                           · selection · task · approval · organisation controllers
 services/
-  draft · extraction · validation · workflow · embedding
+  workflow-template · workflow-template-generation · validation · embedding
   retrieval · selector · selection
   planner · task · execution · approval · notification
-  completion-document · audit · template-deletion-log
-  authentication · user-session · user
+  completion-document · audit
+  authentication · user-session · user · organisation services
   azure-openai.client · azure-embedding.client
   vector-store/    interface · in-memory · atlas · index
   mailer/          interface · console · smtp · index
   document/        interface · text · pdf · index
-models/                    draft · template · selection-session · task
-                           · audit-log · index
+models/                    workflow-template · workflow-template-version
+                           · selection-session · task · audit-log · index
 repositories/              each: interface · in-memory · postgres · index
-  user-repository/  ·  user-session-repository/  ·  template-deletion-repository/
+  user-repository/  ·  user-session-repository/  ·  organisation repositories
 config/                    env · server · db · postgres · auth · user · seed · azure-openai
                            · azure-embedding · retrieval · mail · document · index
 middlewares/               request-id · request-logger · cors · json-body
@@ -3210,9 +3228,11 @@ utils/
   shared/                  logger · hash · object-id · assert · env-parse · password
   workflow/                schema-validator · graph-validator · namespace-path
                            · computed-evaluator
-  retrieval/               vector-math · alias-boost · render-summary
+  retrieval/               vector-math · alias-boost · render-summary · retrieval-candidate
+  workflow-template/       workflow-template-input
   http/                    request-validator · serializer · actor · auth-context
                            · auth-serializer · bearer-token · user-serializer
+                           · workflow-template-serializer
   task/                    requirement-builder · value-validator · reference
   approval/                token · outcome-resolver · answer-format
   auth/                    user-session-token · permission · authenticated-user
@@ -3220,21 +3240,23 @@ utils/
   database/                postgres-error
   document/                completion-document · document-format · pdf-layout
 data/
-  prompts/                 extraction · extraction-few-shot · selector
-                           · retrieval-summary
+  prompts/                 workflow-template-generation
+                           · workflow-template-generation-few-shot · selector
   schemas/                 workflow.schema.json · workflow-schema.data
-                           · decision.schema · retrieval-summary.schema
+                           · decision.schema
   vocabulary/              role.vocabulary
   constants/               collection · status · permission · user · user-session
+                           · workflow-template · workflow-template-error
                            · auth · user-error · repository · postgres · seed · time
   templates/               approval-email.template
   samples/                 input/ · expected/ · selection/ · demo-drafts/
-lib/types/                 workflow/ · draft/ · template/ · selection/ · retrieval/
+lib/types/                 workflow/ · workflow-template/ · selection/ · retrieval/
                            · task/ · approval/ · audit/ · auth/ · user/
-                           · user-session/ · template-deletion/ · document/
+                           · user-session/ · document/
                            · config/ · http/ · index
 errors/                    base · validation · unauthorized · forbidden · not-found
-                           · conflict · extraction · selection · embedding
+                           · conflict · workflow-template · workflow-template-generation
+                           · selection · embedding
                            · database · configuration · migration · seed · index
 db/                        mongo.client · postgres.client
                            · migration/{core, postgres, mongo}
@@ -3248,15 +3270,15 @@ proxy.ts                   route guard: session cookie present (Next 16's rename
 app/
   layout.tsx · globals.css · page.tsx (session-based redirect)
   login/page.tsx
-  account/ layout · page
-  admin/  layout · page · deletions/page · templates/new/page · templates/[id]/page
-  portal/ layout · page · jobs/new/page · jobs/[id]/page
+  dashboard/ layout · page · workflows/{page, new/page, [workflowTemplateId]/page}
+             · tasks · approvals · users · organisation · profile
+  old/    account/{layout,page} · portal/{layout, page, jobs/new/page, jobs/[id]/page}
   approvals/ layout · [token]/{page,loading,not-found}
   api/    auth/login · auth/logout · proxy/[...path]
 components/
-  admin/     TemplateEditor · DraftEditor · EditorToolbar · TemplateFilters
-             · TemplateRow · DeleteTemplateDialog · TopBar
+  workflow-templates/  list/ · editor/ · detail/ · workspace/ · versions/ · shared/
              · flowchart/WorkflowFlowchart + nodes/{Step,Condition,Input,Terminal}
+  dashboard/ DashboardShell · sidebar/ · topbar/
   portal/    NewRequestFlow · SelectionChat · ChatComposer · ChatMessage
              · TaskPlanPanel · PlanNode · RequirementDialog · RequirementField
              · JobList · JobRow · JobStatusView · EmptyJobs · DeleteRequestDialog
@@ -3268,14 +3290,17 @@ components/
   ui/        Badge · Button · Card · ConfirmDialog · DateTime · EmptyState
              · SearchInput · Spinner
 lib/
-  api/       client (THE chokepoint) · auth · workflows · drafts · selection
+  api/       client (THE chokepoint) · auth · workflow-templates · selection
              · tasks · approvals · user-sessions · health
   auth/      session · session-cookie · auth-error-message · permission-label
   routing/   route-path
-  hooks/     useSelectionSession · useTaskCollection
-  workflow/  toFlowGraph · toPlanNodes · applyTaskProgress · editorState
+  hooks/     useSelectionSession · useTaskCollection · useWorkflowTemplateData
+             · useWorkflowTemplateEditor · useWorkflowTemplateLifecycle · …
+  workflow/  toFlowGraph · toPlanNodes · applyTaskProgress
+  workflow-template/  editor-state · status · version-param · error-message
+             · field-limit · copy
   utils/     cn · format · submit-error
-types/       workflow · task · selection · approval · draft · auth · permission
+types/       workflow · workflow-template · task · selection · approval · auth · permission · …
 ```
 
 ## Appendix B — Documentation index
@@ -3326,17 +3351,16 @@ types/       workflow · task · selection · approval · draft · auth · permi
 A 10-minute end-to-end walkthrough that exercises every functional area.
 
 **Setup:** `MAIL_TRANSPORT=console`, both servers running, terminal visible, and the
-bootstrap administrator seeded (`npm run seed:pg:run`). That account holds all four
-permissions, so it can drive both the authoring and the requester parts.
+bootstrap administrator seeded (`npm run seed:pg:run`). That account holds every
+permission, so it can drive both the authoring and the requester parts.
 
-### 1 · Admin authoring (3 min)
+### 1 · Workflow template authoring (3 min)
 
 1. Sign in at `/login` with the seeded administrator's email and password. You land
-   on `/account` — point out the permission badges and the active-sessions list —
-   then open `/admin`.
-2. **Create new template.** Paste the overseas-leave policy paragraph — plain
-   English, no structure.
-3. Click **Generate template**. *Talking point: this is one Azure OpenAI call with a
+   on `/dashboard`; open **Workflows** (`/dashboard/workflows`).
+2. **New template.** Give it a title and paste the overseas-leave policy paragraph
+   as the prompt — plain English, no structure.
+3. Click **Generate**. *Talking point: this is one Azure OpenAI call with a
    strict JSON schema, followed by AJV validation and eight graph checks. If any
    check fails, the model gets its own errors back and repairs — up to three
    attempts.*
@@ -3346,14 +3370,18 @@ permissions, so it can drive both the authoring and the requester parts.
 5. Point out the **conditional Dean step** and the **loop-back** on the advisor step.
    *Talking point: the fourteen-day rule was a clause in a sentence; it's now a
    structured condition over a computed value.*
-6. Edit one word in the prose. **The stale banner appears** — the picture no longer
-   describes the text.
+6. Edit one word in the prompt. **The stale notice appears** — the picture no longer
+   describes the text. Click **Regenerate**: version 2 is created, and the version
+   history drawer shows both. *Talking point: versions are immutable; renaming the
+   template never creates one.*
 7. Click **Publish**. *Talking point: until this moment the template is invisible to
-   every requester. Extraction proposes; a human commits.*
+   every requester. Generation proposes; a human commits. Once published,
+   regenerating makes the new version live immediately, and tasks already running
+   stay on the version they started from.*
 
 ### 2 · Requester selection (2 min)
 
-1. Open `/portal` with the same session. *Talking point: there is one login; what a
+1. Open `/old/portal` with the same session. *Talking point: there is one login; what a
    user can reach is decided by their permissions, checked by the API on every call.*
 2. **New Request** → type something deliberately vague: *"I need to go to a
    conference in Singapore next month."*
@@ -3395,7 +3423,7 @@ permissions, so it can drive both the authoring and the requester parts.
 ### 5 · Completion (1 min)
 
 1. The final approval triggers completion. **The PDF is in the console output**, and
-   downloadable from `/portal/jobs/[id]`.
+   downloadable from `/old/portal/jobs/[id]`.
 2. Open it: every input in declaration order, every computed value, every follow-up
    Q&A, and every approver with their decision and timestamp.
 3. *Talking point: those bytes are not stored anywhere. The record is regenerated on
@@ -3404,9 +3432,9 @@ permissions, so it can drive both the authoring and the requester parts.
 
 ### 6 · Optional closers
 
-- `/admin/deletions` — the audit log, with the `Incomplete` badge explained: it means
-  the log row landed but the Mongo delete didn't. Visible, not silent.
-- `/account` — sign in from a second browser, then **Sign out of other sessions**: the
+- `/dashboard/workflows` — archive the template, show it disappear from the Active
+  filter and from selection, then restore it. Nothing is ever deleted.
+- `/old/account` — sign in from a second browser, then **Sign out of other sessions**: the
   other browser's next request is rejected. Sessions are server-side and revocable.
 - `npm run evaluate:selection` — scored selection accuracy against labelled queries.
 - `npm run test:live` — the model asserted against specific structural details of the
@@ -3428,6 +3456,7 @@ permissions, so it can drive both the authoring and the requester parts.
 | Auth + deletion tracking | `800e651` → `143d2bf` (7 phases) | PostgreSQL, real login, the deletion audit log |
 | Completion documents | `b47746d` → `b98f6bd` (9 phases) | The PDF record, end to end |
 | User access & sessions | 8 phases (see `docs/user-access-and-session-management-phase-plan.md`) | One `users` table with permissions, server-side revocable sessions, the user management API, the Postgres seed pack, owner-only tasks, the single `/login` and `/account` page |
+| Workflow templates | — | Extraction renamed to workflow template generation; drafts, template delete and the deletion log replaced by the draft → unpublished → published lifecycle, immutable versions and archive/restore; management moved to `/dashboard/workflows` |
 
 Every feature followed the same pattern: a design or phase-plan commit, then one
 commit per shippable phase. The `docs/` folder preserves all of it.
@@ -3437,7 +3466,10 @@ commit per shippable phase. The `docs/` folder preserves all of it.
 ## Document maintenance
 
 This document is generated from a full read-through of the codebase as of
-**2026-08-29** (`dev` @ `b98f6bd`).
+**2026-08-29** (`dev` @ `b98f6bd`). The workflow template refactor (generation, versions, archive/restore,
+`/dashboard/workflows`) was folded in on **2026-11-11**; other areas — notably the
+organisational structure, the dashboard beyond workflows, and the LLM/embedding provider
+configuration in [§10](#10-configuration-reference) — have not been re-read since 2026-08-29.
 
 **Update it when:**
 - The workflow schema changes → [§4](#4-the-workflow-schema--the-core-design-artifact)

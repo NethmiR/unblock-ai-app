@@ -35,7 +35,7 @@ export function NewRequestFlow({ requesterContext }: Props) {
    * The dialog is the last decision this page asks for: saying yes saves the
    * job and hands the person to its own page, where the plan is rendered from
    * the stored task. Nothing is sent to any approver by this - the task is
-   * created in `collecting`, and `/portal/jobs/:id` is where they pick up
+   * created in `collecting`, and `/old/portal/jobs/:id` is where they pick up
    * filling in their details.
    *
    * A failed save returns null and has already explained itself in the chat,
@@ -43,13 +43,13 @@ export function NewRequestFlow({ requesterContext }: Props) {
    */
   async function handleConfirm() {
     const taskId = await confirmMatch();
-    if (taskId) router.push(`/portal/jobs/${taskId}`);
+    if (taskId) router.push(`/old/portal/jobs/${taskId}`);
   }
 
   return (
     <div className="mx-auto flex h-[calc(100vh-60px)] max-w-[1440px] flex-col px-16 pb-7 pt-9">
       <Link
-        href="/portal"
+        href="/old/portal"
         className="mb-6 flex flex-none items-center gap-2.5 self-start text-[14.5px] font-medium text-muted transition-colors hover:text-ink"
       >
         <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden>

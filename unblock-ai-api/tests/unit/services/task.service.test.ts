@@ -13,34 +13,19 @@ import { NotFoundError } from "../../../src/errors/not-found.error.js";
 import { FakeAuditLogModel, FakeTaskModel } from "../../helpers/fake-model.helper.js";
 import { AuditService } from "../../../src/services/audit.service.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
+import { LEAVE_WORKFLOW_TEMPLATE_ID, stubWorkflowTemplateService } from "../../helpers/workflow-template.helper.js";
 import type { SelectionService } from "../../../src/services/selection.service.js";
-import type { WorkflowService } from "../../../src/services/workflow.service.js";
 import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
 import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
 import type { WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
-import type { TemplateDocument } from "../../../src/lib/types/template/template.type.js";
 
-function fakeSelectionService(workflow: WorkflowDefinition | null): SelectionService {
+function fakeSelectionService(matched: boolean): SelectionService {
   return {
-    getMatchedWorkflow() {
-      if (!workflow) throw new ConflictError("This session has not matched a workflow yet");
-      return Promise.resolve(workflow);
+    getMatchedWorkflowTemplateId() {
+      if (!matched) throw new ConflictError("This session has not matched a workflow template yet");
+      return Promise.resolve(LEAVE_WORKFLOW_TEMPLATE_ID);
     },
   } as unknown as SelectionService;
-}
-
-function fakeWorkflowService(workflow: WorkflowDefinition): WorkflowService {
-  return {
-    getRecord() {
-      return Promise.resolve({
-        workflow_id: workflow.workflow_id,
-        version: 1,
-      } as unknown as TemplateDocument);
-    },
-    getDocument() {
-      return Promise.resolve(workflow);
-    },
-  } as unknown as WorkflowService;
 }
 
 const fakeConfig = {
@@ -77,8 +62,8 @@ function build({
 }): TaskService {
   return new TaskService({
     taskModel: taskModel as unknown as ConstructorParameters<typeof TaskService>[0]["taskModel"],
-    selectionService: fakeSelectionService(matched ? workflow : null),
-    workflowService: fakeWorkflowService(workflow),
+    selectionService: fakeSelectionService(matched),
+    workflowTemplateService: stubWorkflowTemplateService(workflow),
     plannerService: new PlannerService(),
     executionService: new ExecutionService(),
     notificationService: new NotificationService({ mailer: fakeMailer, config: fakeConfig }),
@@ -101,6 +86,16 @@ test("create() from an unmatched session throws ConflictError", async () => {
   const service = build({ taskModel, workflow: LEAVE_WORKFLOW, matched: false });
 
   await assert.rejects(() => service.create("session-1", "user-1"), ConflictError);
+});
+
+test("create() pins the task to the matched workflow template and its published version", async () => {
+  const taskModel = new FakeTaskModel();
+  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+
+  const task = await service.create("session-1", "user-1");
+
+  assert.equal(task.workflow_template_id, LEAVE_WORKFLOW_TEMPLATE_ID);
+  assert.equal(task.workflow_template_version, 1);
 });
 
 test("setValue() on a finalized task throws ConflictError", async () => {

@@ -16,6 +16,13 @@ export interface AuthenticatedUser {
   permissions: Permission[];
 }
 
+/** The signed-in user as the web app holds it: the `/auth/me` user plus derived display fields. */
+export interface CurrentSession {
+  user: AuthenticatedUser;
+  sessionId: string;
+  initials: string;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;

@@ -36,8 +36,8 @@ export function buildCompletionDocument(
 
   return {
     reference: task.reference,
-    workflow_title: workflow.title,
-    workflow_description: workflow.description,
+    workflow_template_title: workflow.title,
+    workflow_template_description: workflow.description,
     institution_name: options.institutionName,
     submitted_at: task.created_at,
     completed_at: options.completedAt,

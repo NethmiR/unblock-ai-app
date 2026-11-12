@@ -9,8 +9,8 @@ import type { CompletionDocument } from "../../../src/lib/types/document/documen
 function buildDocument(overrides: Partial<CompletionDocument> = {}): CompletionDocument {
   return {
     reference: "LEAVE-2026-00001",
-    workflow_title: "Overseas Leave Request",
-    workflow_description: "Leave request for overseas travel.",
+    workflow_template_title: "Overseas Leave Request",
+    workflow_template_description: "Leave request for overseas travel.",
     institution_name: "Test University",
     submitted_at: new Date("2026-01-01T00:00:00Z"),
     completed_at: new Date("2026-01-05T00:00:00Z"),
