@@ -26,7 +26,7 @@ There are **eight** functional areas. Two admin areas (workflow template authori
   **one or more permissions** from a fixed catalogue (`permissions` + `user_permissions`
   tables): `workflow:manage`, `task:create`, `task:approve`, `user:manage`. The "at least
   one permission" rule is enforced in `UserService` and by a deferred constraint trigger.
-  `task:approve` is grantable but gates nothing yet.
+  `task:approve` gates the signed-in approvals inbox (`/api/approver/*`, area G).
 - No self-registration. The bootstrap administrator (all four permissions) is created by
   `npm run seed:pg:run`; further users are created by a `user:manage` holder through
   `POST /api/users`. Every new user starts with the password in `USER_DEFAULT_PASSWORD`.
@@ -38,7 +38,8 @@ There are **eight** functional areas. Two admin areas (workflow template authori
   but never rejects by itself; `requireAuthentication()` and `requireAnyPermission(...)` do the
   gating per-route, and `requireTaskOwnership` limits `/tasks/:id*` to the task's creator.
   That split is what lets `/api/approvals/*` (a *different*, token-based auth mechanism)
-  keep working for an approver with no session.
+  keep working for an approver with no session, while `/api/approver/*` requires a session
+  and `task:approve`.
 - Passwords are hashed with **`node:crypto` scrypt** — no `bcrypt`/`argon2` native-build
   dependency. Failed logins are counted per account; when `AUTH_MAX_FAILED_ATTEMPTS > 0` the
   account locks for `AUTH_LOCKOUT_DURATION_MINUTES` (rejected even with the right password).
@@ -158,21 +159,35 @@ Task status: `in_progress`, `completed`, `rejected`, `cancelled`. Pre-revamp tas
 `legacy_tasks` by the `task-request-revamp` migration and are never read.
 
 ### G. Approval execution (approver path)
-`src/services/approval.service.ts` · `notification.service.ts` · `task-transcript.service.ts` ·
-`src/services/mailer/` · `src/utils/approval/` · `src/utils/document/`
+`src/services/approval.service.ts` · `approver-assignment.service.ts` · `notification.service.ts` ·
+`task-transcript.service.ts` · `src/services/mailer/` · `src/utils/approval/` · `src/utils/document/`
+
+Approvers decide through **two channels over one engine**: the emailed link, or the in-app
+approvals inbox. Whichever decides first wins; the other sees the step as decided
+(`409 APPROVAL_ALREADY_DECIDED` on a late decision). Each decision records `decided_via`
+(`email_link` or `app`) and `decided_by_user_id`.
 
 1. **Tokens** — an HMAC-signed token per dispatched approval, emailed as
    `${APP_PUBLIC_URL}/approvals/<token>`. Only `sha256(token)` is stored; it is cleared on
-   decision, cancel and expiry (`APPROVAL_TOKEN_TTL_DAYS`). No requester DTO contains it.
-2. **Three decisions with comments** — `approved`, `rejected`, `request_more_info`. A comment is
+   decision (through either channel), cancel and expiry (`APPROVAL_TOKEN_TTL_DAYS`). No
+   requester DTO contains it.
+2. **In-app inbox** (`/api/approver/approvals/*`, `task:approve`) — pending, history, a pending
+   count, the approver view and the decision. A step is the caller's when `assignee.user_id`
+   matches, or `assignee.email` matches their normalised account email (so approvers the
+   requester named by email are covered). The caller's own requests are excluded. The inbox
+   ignores token state, so a failed or expired email never blocks a signed-in approver, and
+   the whole flow works with mail off. Rules live in `utils/approval/approver-identity.util.ts`;
+   `ApprovalService` shares one view builder and one decision path between both channels.
+3. **Three decisions with comments** — `approved`, `rejected`, `request_more_info`. A comment is
    required for the last two. Rejection ends the task and revokes the other links.
-3. **More information inserts steps** (`information-request-insertion.util.ts`) — the approval
+4. **More information inserts steps** (`information-request-insertion.util.ts`) — the approval
    completes with `request_more_info`; an `information_request` step (one required answer
    field labelled with the approver's comment) and a repeat of the same approval are spliced in,
    and later steps are rewired to the repeat. Capped by `TASK_MAX_INFORMATION_REQUESTS_PER_STEP`.
-4. **Notifications** — approval request, action required, information requested, rejected and
+5. **Notifications** — approval request, action required, information requested, rejected and
    completed emails. Never throw. `MAIL_TRANSPORT=console` prints them, approval URLs included.
-5. **Transcript** — rendered on demand from the task and its pinned definition, never stored:
+   The approval email also points approvers who have an account to Approvals → Pending.
+6. **Transcript** — rendered on demand from the task and its pinned definition, never stored:
    conversation, form answers, information request Q&A, approval trail with comments, skipped
    steps marked "Not required". Emailed on completion and downloadable from
    `GET /tasks/:id/transcript`.
@@ -202,6 +217,16 @@ requester type), and each step shows **Directory** or **Requester provides** for
 sign-in. Request summary, requester, submitted sections, calculated values, information
 exchanges, earlier decisions and the plan; three decision buttons with a comment dialog;
 dedicated states for invalid (404) and expired (410) links.
+
+**Approvals inbox** (`task:approve`; `src/components/approvals/inbox/`, `workspace/`,
+`src/lib/approvals/`, `src/lib/hooks/useApproval*.ts`):
+- `/dashboard/approvals` — Pending: oldest first, search, a **Repeat review** badge, polls every
+  30 seconds. The sidebar shows the pending count on **Pending**.
+- `/dashboard/approvals/history` — every decision with its comment, a decision filter, and the
+  outcome ("Approved · now with Dean approval", "Waiting for the requester's answer").
+- `/dashboard/approvals/[taskId]/[stepId]` — the same summary, history, plan rail and decision
+  panel as the emailed page (`ApproverDetailLayout`), inside the dashboard. A step not assigned
+  to the caller shows "This approval isn't available to you".
 
 ---
 
@@ -273,9 +298,11 @@ dedicated states for invalid (404) and expired (410) links.
   yet. See area A.
 - **No rate limiting by IP** on login — only per-account failed-attempt lockout, and even
   that is off by default (`AUTH_MAX_FAILED_ATTEMPTS=0`).
-- **`task:approve` gates nothing yet** — approvers act through emailed, token-based
-  links with no account. Assignees carry `user_id`, so a signed-in approval inbox
-  (`/dashboard/approvals*`, still stubs) is a straightforward follow-up.
+- **Approvers can work in the app or by email** — the approvals inbox (`/dashboard/approvals*`)
+  and the emailed link both decide through the same engine. Approvers without an account, or
+  without `task:approve`, keep the emailed link only. Self-approval through the emailed link
+  is not blocked yet (the inbox excludes own requests). See
+  [approver-inbox-phase-plan.md](approver-inbox-phase-plan.md) §12.
 - **No academic advisor directory** — roles the directory does not model are named by the
   requester (name and email, unverified). Student attributes (index number, batch, degree
   programme) are not in the user model, so requesters type them.
@@ -312,6 +339,7 @@ Full detail in `unblock-ai-api/docs/api/api-documentation.md`. Base URL: `http:/
 | Selection | `GET /selection/catalogue` · `POST /selection/sessions` · `GET /selection/sessions/:id` · `POST /selection/sessions/:id/messages` · `POST /selection/sessions/:id/choose` · `DELETE /selection/sessions/:id` | `task:create`, own sessions only |
 | Tasks | `POST /tasks` · `GET /tasks` · `GET /tasks/:id` · `GET /tasks/:id/workflow-definition` · `PUT /tasks/:id/forms/:formId/draft` · `POST /tasks/:id/forms/:formId/submit` · `POST /tasks/:id/cancel` · `GET /tasks/:id/transcript` · `DELETE /tasks/:id` | `task:create`, own tasks only |
 | Approvals | `GET /approvals/:token` · `POST /approvals/:token/decision` | none — the approval token IS the auth |
+| Approver inbox | `GET /approver/approvals/pending` · `GET /approver/approvals/history` · `GET /approver/approvals/summary` · `GET /approver/approvals/:taskId/steps/:stepId` · `POST /approver/approvals/:taskId/steps/:stepId/decision` | `task:approve`, assigned steps only, never the caller's own requests |
 
 Authentication is a `Bearer` session token from `POST /auth/login`. A missing, expired or
 revoked token gets `401 AUTHENTICATION_REQUIRED`; a valid token without any of the route's

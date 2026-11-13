@@ -43,6 +43,8 @@ export enum TaskStepStatus {
   CANCELLED = "cancelled",
 }
 
+export const INFORMATION_REQUEST_STEP_NAME = "More information requested";
+
 export const ACTIVE_TASK_STEP_STATUSES: readonly TaskStepStatus[] = [TaskStepStatus.AWAITING_REQUESTER, TaskStepStatus.AWAITING_APPROVER];
 
 export enum TaskStepOutcome {

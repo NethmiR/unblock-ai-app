@@ -30,3 +30,7 @@ export function approvalCommentRequired(decision: ApprovalDecision): ValidationE
     code: ApprovalErrorCode.APPROVAL_COMMENT_REQUIRED,
   });
 }
+
+export function approvalNotFound(taskId: string, stepId: string): NotFoundError {
+  return new NotFoundError(`Approval '${stepId}' on task '${taskId}' was not found`, { code: ApprovalErrorCode.APPROVAL_NOT_FOUND });
+}

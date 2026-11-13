@@ -217,6 +217,8 @@ function workflowStep(
             decision: null,
             comment: null,
             decided_at: null,
+            decided_via: null,
+            decided_by_user_id: null,
             allows_information_request: step.outcomes.request_more_info !== null,
             terminates_on_rejection: step.outcomes.rejected?.action === TERMINATING_OUTCOME_ACTION,
           }

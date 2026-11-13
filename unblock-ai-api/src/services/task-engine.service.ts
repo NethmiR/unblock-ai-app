@@ -25,6 +25,7 @@ import {
   insertInformationRequest,
 } from "../utils/task/information-request-insertion.util.js";
 import type { TaskAuditEntry, TaskDocument, TaskStepRecord } from "../lib/types/task/task-document.type.js";
+import type { ApprovalActor } from "../lib/types/approval/approval.type.js";
 import type { TaskEffect, TaskEngineContext, TaskEngineResult } from "../lib/types/task/task-engine.type.js";
 import type { CompletionRule } from "../lib/types/workflow/workflow.type.js";
 
@@ -134,6 +135,7 @@ export class TaskEngineService {
     stepId: string,
     decision: ApprovalDecision,
     comment: string | null,
+    actor: ApprovalActor,
     context: TaskEngineContext,
   ): TaskEngineResult {
     assertActiveTask(task);
@@ -155,6 +157,8 @@ export class TaskEngineService {
         decision,
         comment,
         decided_at: context.now,
+        decided_via: actor.channel,
+        decided_by_user_id: actor.user_id,
       },
     }));
     next = audit(next, TaskAuditEvent.DECISION_RECORDED, context.now, stepId, decision);

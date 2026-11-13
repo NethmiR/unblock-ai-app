@@ -30,6 +30,7 @@ export const TASK_REQUEST_ERROR_MESSAGES: Record<TaskRequestErrorCode, string> =
   [ApprovalErrorCode.APPROVAL_ALREADY_DECIDED]: ERRORS.APPROVAL_ALREADY_DECIDED,
   [ApprovalErrorCode.APPROVAL_DECISION_NOT_ALLOWED]: ERRORS.APPROVAL_DECISION_NOT_ALLOWED,
   [ApprovalErrorCode.APPROVAL_COMMENT_REQUIRED]: ERRORS.APPROVAL_COMMENT_REQUIRED,
+  [ApprovalErrorCode.APPROVAL_NOT_FOUND]: ERRORS.APPROVAL_NOT_FOUND,
 };
 
 function isTaskRequestErrorCode(code: string): code is TaskRequestErrorCode {

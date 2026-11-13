@@ -1,9 +1,10 @@
 import { ObjectId } from "mongodb";
 import { AssigneeResolutionNote, AssigneeSource } from "../../src/data/constants/assignee.constant.js";
-import { TaskCreationSource, TaskStatus } from "../../src/data/constants/task.constant.js";
+import { ApprovalChannel, TaskCreationSource, TaskStatus } from "../../src/data/constants/task.constant.js";
 import { compileTaskPlan } from "../../src/utils/task/task-plan-compiler.util.js";
 import { assigneeFieldId } from "../../src/utils/task/task-field-id.util.js";
 import { sampleRequesterProfile } from "./organisation-catalogue.helper.js";
+import type { ApprovalActor } from "../../src/lib/types/approval/approval.type.js";
 import type { AssigneeResolution } from "../../src/lib/types/assignee/assignee-resolver.type.js";
 import type { RequesterProfile } from "../../src/lib/types/requester/requester.type.js";
 import type { TaskAssignee, TaskDocument } from "../../src/lib/types/task/task-document.type.js";
@@ -11,6 +12,8 @@ import type { TaskEngineContext } from "../../src/lib/types/task/task-engine.typ
 import type { WorkflowDefinition } from "../../src/lib/types/workflow/workflow.type.js";
 
 export const TASK_NOW = new Date("2026-11-13T09:00:00Z");
+
+export const EMAIL_ACTOR: ApprovalActor = { channel: ApprovalChannel.EMAIL_LINK, user_id: null };
 
 export function directoryResolution(stepId: string, fullName: string, email: string, designationTitle: string): AssigneeResolution {
   return {

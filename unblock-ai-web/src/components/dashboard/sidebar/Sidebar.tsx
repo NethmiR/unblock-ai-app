@@ -5,6 +5,7 @@ import { Icon } from "@/components/ui/icons/Icon";
 import { APP_CONFIG } from "@/lib/config/app.config";
 import { DASHBOARD_COPY } from "@/lib/constants/ui-copy";
 import { useDashboardNavigation } from "@/lib/hooks/useDashboardNavigation";
+import { useNavBadgeCounts } from "@/lib/hooks/useNavBadgeCounts";
 import { ACCOUNT_NAVIGATION } from "@/lib/navigation/dashboard-navigation";
 import { RoutePath } from "@/lib/routing/route-path";
 import { cn } from "@/lib/utils/cn";
@@ -28,6 +29,7 @@ interface SidebarProps {
 export function Sidebar({ id, isOpen, onClose }: SidebarProps) {
   const { groups, activeItem } = useDashboardNavigation();
   const activeHref = activeItem?.href ?? null;
+  const badgeCounts = useNavBadgeCounts();
 
   return (
     <aside
@@ -58,7 +60,7 @@ export function Sidebar({ id, isOpen, onClose }: SidebarProps) {
           <SidebarSection label={DASHBOARD_COPY.functionsSectionLabel}>
             {groups.map((group) => (
               <li key={group.permission}>
-                <SidebarNavGroup group={group} activeHref={activeHref} />
+                <SidebarNavGroup group={group} activeHref={activeHref} badgeCounts={badgeCounts} />
               </li>
             ))}
           </SidebarSection>

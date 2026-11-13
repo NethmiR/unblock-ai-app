@@ -5,7 +5,7 @@ manual testing in Postman.
 
 - **Server entry point:** `src/server.ts`
 - **App builder:** `src/app.ts`
-- **Route modules:** `src/routes/health.route.ts`, `src/routes/auth.route.ts`, `src/routes/user-session.route.ts`, `src/routes/user.route.ts`, `src/routes/workflow-template.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`, `src/routes/approval.route.ts`
+- **Route modules:** `src/routes/health.route.ts`, `src/routes/auth.route.ts`, `src/routes/user-session.route.ts`, `src/routes/user.route.ts`, `src/routes/workflow-template.route.ts`, `src/routes/selection.route.ts`, `src/routes/task.route.ts`, `src/routes/approval.route.ts`, `src/routes/approver.route.ts`
 
 ---
 
@@ -35,6 +35,8 @@ The port comes from the `PORT` environment variable and defaults to `3000`.
 | `sessionId`     | (filled in from a response) |
 | `taskId`        | (filled in from a response) |
 | `approvalToken` | (read from the console mailer's stdout log) |
+| `approverToken` | (filled in from `POST /auth/login` as the approver) |
+| `approvalStepId` | (filled in from `GET /approver/approvals/pending`) |
 
 The runnable Postman collection and environment ship at [../postman/](../postman/).
 
@@ -86,7 +88,9 @@ whose user has since been disabled.
 
 `/api/health` and all of `/api/approvals/*` have **no** guard — approval links
 are authenticated by their own per-step token (§8), not a session, and must
-keep working for an approver with no account at all.
+keep working for an approver with no account at all. The signed-in approver
+routes under `/api/approver/*` (§8.4–§8.9) are the opposite: they need a session
+**and** `task:approve`.
 
 **Permissions.** Every user holds one or more of these (never zero):
 
@@ -94,7 +98,7 @@ keep working for an approver with no account at all.
 | --- | --- |
 | `workflow:manage` | Create, generate, publish and archive workflow templates (§4) |
 | `task:create` | Find a workflow template (selection) and create, complete and manage **their own** tasks |
-| `task:approve` | Can be granted, but currently gates no endpoint — approvers act through approval links (§8) |
+| `task:approve` | List, open and decide the approvals assigned to them in the app (`/api/approver/*`, §8.4–§8.9). Approval links (§8.1–§8.2) work with or without it |
 | `user:manage` | Create and view users and their permissions (§13) |
 | `organisation:manage` | Configure faculties, departments, divisions and designations (§14–§15) |
 
@@ -174,8 +178,13 @@ only affects browsers; Postman ignores it.
 | 54 | `GET`   | `/api/users/:userId/affiliations`      | A user's memberships and designations (§16.1) | `user:manage` |
 | 55 | `PUT`   | `/api/users/:userId/affiliations`      | Replace a user's affiliations (§16.2) | `user:manage` |
 | 56 | `GET`   | `/api/auth/me/affiliations`            | The caller's own affiliations (§16.3) | authenticated |
+| 57 | `GET`   | `/api/approver/approvals/pending`      | Approvals waiting for the caller's decision (§8.5) | `task:approve` |
+| 58 | `GET`   | `/api/approver/approvals/history`      | Decisions the caller has made (§8.6) | `task:approve` |
+| 59 | `GET`   | `/api/approver/approvals/summary`      | Pending count for the sidebar (§8.7) | `task:approve` |
+| 60 | `GET`   | `/api/approver/approvals/:taskId/steps/:stepId` | Approver view of one assigned approval (§8.8) | `task:approve` + assignee |
+| 61 | `POST`  | `/api/approver/approvals/:taskId/steps/:stepId/decision` | Decide an assigned approval in the app (§8.9) | `task:approve` + assignee |
 
-56 route bindings. **authenticated** means `requireAuthentication()` — any
+61 route bindings. **authenticated** means `requireAuthentication()` — any
 active session, whatever its permissions. A permission name means
 `requireAnyPermission(...)`; "`workflow:manage` or `task:create`" passes with
 either. **+ owner** adds the task-ownership guard: a task created by another
@@ -184,6 +193,10 @@ guard returns on failure.
 
 > **+ session owner** is checked inside `SelectionService`: a session created by
 > another user answers `404 SELECTION_SESSION_NOT_FOUND`, exactly like an expired one.
+
+> **+ assignee** is checked inside `ApprovalService`: a step that is not assigned to the
+> caller, or that belongs to a task the caller created, answers `404 APPROVAL_NOT_FOUND`,
+> exactly like one that does not exist (§8.4).
 
 ---
 
@@ -843,7 +856,7 @@ LLM. Writes use an optimistic `revision`; a lost race is `409 TASK_REVISION_CONF
     "status": "awaiting_requester", "outcome": null, "is_conditional": false,
     "form_id": "entry_form__form",
     "assignee": { "source": "requester", "full_name": "…", "email": "…", "designation_title": null, "organisational_unit_name": null, "note": null },
-    "approval": null,               // { decision, comment, decided_at, notified_at } on approval steps
+    "approval": null,               // { decision, comment, decided_at, notified_at } on approval steps; who decided and through which channel are not exposed here
     "information_request": null,    // { requested_by_step_id, question } on inserted steps
     "activated_at": "…", "completed_at": null
   } ],
@@ -987,14 +1000,29 @@ marked "Not required", and computed values.
 
 ## 8. Approval endpoints (approver decision path)
 
+An approver can decide through **two channels**. Both use the same engine and the same rules
+in `ApprovalService`:
+
+- **The emailed link** (§8.1–§8.3): no session; the token is the credential.
+- **The in-app approvals inbox** (§8.4–§8.10): a signed-in user with `task:approve` lists,
+  opens and decides the approvals assigned to them. This works with mail switched off.
+
+Whichever channel decides first wins. The other then sees `decided`, or gets
+`409 APPROVAL_ALREADY_DECIDED` if it tries to decide. Every decision stores the channel
+(`email_link` or `app`) and the deciding user's id on the step's approval record.
+
+### Emailed link
+
 `src/routes/approval.route.ts` → `ApprovalController` → `ApprovalService`. **No session.**
 The token in the emailed link is the credential. Only `sha256(token)` is stored on the step;
 the raw token exists only in the email. Tokens expire after `APPROVAL_TOKEN_TTL_DAYS` and are
 invalidated on decision and on cancel.
 
 The approval email links to the web page `${APP_PUBLIC_URL}/approvals/<token>`, which calls
-these routes. With `MAIL_TRANSPORT=console` the whole email, including that URL, is printed to
-the API's stdout.
+these routes. When the approver has an account (`assignee.user_id` is set), the email adds a
+line pointing to `${APP_PUBLIC_URL}/dashboard/approvals`: "You can also find this request in
+Unblock under Approvals → Pending." With `MAIL_TRANSPORT=console` the whole email, including
+both URLs, is printed to the API's stdout.
 
 ### 8.1 `GET /api/approvals/:token`
 
@@ -1032,9 +1060,14 @@ The comment is required for `rejected` and `request_more_info` and at most 2000 
 - `request_more_info` completes this approval with that outcome, inserts an
   `information_request` step for the requester (one required text-area field labelled with
   your comment) and a repeat of the same approval after it. The requester is emailed; once
-  they answer, a fresh link is sent to the same approver.
+  they answer, a fresh link is sent to the same approver, and the repeat also appears in their
+  in-app inbox (§8.5).
 
-**200** `{ "decision": "approved", "task_status": "in_progress", "next_step_name": "Head of Department approval" }`.
+**200** `ApprovalDecisionResultDto`:
+`{ "decision": "approved", "task_status": "in_progress", "next_step_name": "Head of Department approval" }`.
+
+A decision through either channel clears the step's token. So deciding a step in the app also
+retires its emailed link: `GET /approvals/:token` then returns `decided`.
 
 ### 8.3 Error codes
 
@@ -1044,8 +1077,109 @@ The comment is required for `rejected` and `request_more_info` and at most 2000 
 | `APPROVAL_COMMENT_REQUIRED` | 400 | No comment on `rejected` or `request_more_info` |
 | `APPROVAL_DECISION_NOT_ALLOWED` | 400 | A decision the step does not offer, including `request_more_info` past the cap |
 | `APPROVAL_LINK_INVALID` | 404 | Bad signature, unknown hash, the step no longer holds that token, or the task was cancelled |
-| `APPROVAL_ALREADY_DECIDED` | 409 | §8.2 on a step that already has a decision |
+| `APPROVAL_ALREADY_DECIDED` | 409 | §8.2 on a step that already has a decision, through either channel |
+| `TASK_REVISION_CONFLICT` | 409 | The link and the app decided the same step at the same instant |
 | `APPROVAL_LINK_EXPIRED` | 410 | `token_expires_at` has passed |
+
+### Signed-in approver (in-app inbox)
+
+`src/routes/approver.route.ts` → `ApproverController` → `ApproverAssignmentService` (the lists
+and the count) and `ApprovalService` (the view and the decision). Every route needs a bearer
+session **and** `task:approve`. The separate `/approver` prefix means `/approvals/:token` can
+never swallow these routes.
+
+### 8.4 Assignment and access rules
+
+- **Assigned to the caller** means the step's `assignee.user_id` equals the caller's id, **or**
+  its `assignee.email` equals the caller's account email. Emails are stored and compared
+  normalised (trimmed, lower case). So an approver the requester named by email in a `person`
+  field (`user_id: null`) still sees the step. This is the same trust model as the emailed
+  link: whoever owns the mailbox can already decide.
+- **Own requests are excluded.** Tasks the caller created never appear in pending or history,
+  and the detail and decision routes answer `404` for them. Nobody can approve their own
+  request in the app.
+- **Link state is ignored.** The in-app channel never reads the token or its expiry. A step is
+  **live** when its status is `awaiting_approver`, its decision is `null` and the task is
+  `in_progress`. A failed or expired approval email does not block a signed-in approver.
+- **One row per approval step.** A row is one (task, approval step) pair. A repeat review after
+  `request_more_info` gives the same approver a second row on the same task.
+- Steps cancelled before a decision (for example, because another approver rejected first)
+  appear in neither list.
+
+Row shape, `ApprovalAssignmentDto`:
+
+```jsonc
+{
+  "task_id": "6734f…",
+  "step_id": "advisor_approval",
+  "reference": "TASK-2026-00123",
+  "title": "Overseas Leave – Faculty of IT",
+  "requester": { "full_name": "Kavindu Jayawardena", "email": "u17@u.c", "unit_names": ["…"] },
+  "step_name": "Academic advisor review",
+  "is_repeat": false,                  // true for the repeat review after request_more_info
+  "task_status": "in_progress",
+  "current_step_name": "Head of Department approval", // the task's first active step now, or null
+  "submitted_at": "…",                 // when the entry form was submitted
+  "activated_at": "…",                 // when the step reached the approver
+  "decision": null,                    // "approved" | "rejected" | "request_more_info" once decided
+  "comment": null,
+  "decided_at": null,
+  "decided_via": null                  // "email_link" | "app" once decided
+}
+```
+
+List response, `ApprovalAssignmentListResponseDto`:
+`{ "approvals": [ /* ApprovalAssignmentDto */ ], "page": { "total": 3, "limit": 20, "offset": 0 } }`.
+
+Query parameters for both lists:
+
+| Parameter | Default | Rules |
+| --- | --- | --- |
+| `search` | none | Case-insensitive match on the reference, title or requester name; at most 200 characters |
+| `limit` | `20` | Integer from 1 to 100 |
+| `offset` | `0` | Integer, 0 or more |
+
+### 8.5 `GET /api/approver/approvals/pending`
+
+Live steps assigned to the caller, **oldest first** (by `activated_at`). Accepts `search`,
+`limit` and `offset`. **200** `ApprovalAssignmentListResponseDto`; every row has `decision: null`.
+
+### 8.6 `GET /api/approver/approvals/history`
+
+Steps assigned to the caller that have a decision, **newest decision first**. Accepts
+`decision` (`approved`, `rejected` or `request_more_info`) as well as `search`, `limit` and
+`offset`. **200** `ApprovalAssignmentListResponseDto`. Decisions made through the emailed link
+appear here too, with `decided_via: "email_link"`.
+
+### 8.7 `GET /api/approver/approvals/summary`
+
+**200** `ApprovalAssignmentSummaryDto`: `{ "pending": 1 }`, the same total that §8.5 reports.
+The web sidebar shows it on **Approvals → Pending**.
+
+### 8.8 `GET /api/approver/approvals/:taskId/steps/:stepId`
+
+**200** the same `ApproverViewDto` as §8.1. It works for live and decided steps. A step that is
+no longer live returns an empty `allowed_decisions`, and `decided` when it has a decision.
+
+### 8.9 `POST /api/approver/approvals/:taskId/steps/:stepId/decision`
+
+The body, the rules and the effects are the same as §8.2: `{ "decision", "comment" }`, with a
+comment required for `rejected` and `request_more_info` and at most 2000 characters. The
+decision is stored with `decided_via: "app"` and the caller's user id, and it clears the step's
+emailed link. **200** `ApprovalDecisionResultDto`.
+
+### 8.10 Error codes (signed-in approver)
+
+| Code | HTTP | When |
+| --- | --- | --- |
+| `VALIDATION_ERROR` | 400 | A bad `limit`, `offset`, `search` or `decision` query value; an unknown `decision` or an over-long comment in the body |
+| `APPROVAL_COMMENT_REQUIRED` | 400 | §8.9 with no comment on `rejected` or `request_more_info` |
+| `APPROVAL_DECISION_NOT_ALLOWED` | 400 | A decision the step does not offer |
+| `AUTHENTICATION_REQUIRED` | 401 | No usable session |
+| `PERMISSION_DENIED` | 403 | The caller does not hold `task:approve` |
+| `APPROVAL_NOT_FOUND` | 404 | An unknown or malformed task id, an unknown step, a step that is not an approval, a step not assigned to the caller, or the caller's own task |
+| `APPROVAL_ALREADY_DECIDED` | 409 | §8.9 on a step that is no longer live (decided through either channel, or the task has ended) |
+| `TASK_REVISION_CONFLICT` | 409 | Both channels decided the same step at the same instant |
 
 ---
 
@@ -1061,8 +1195,8 @@ hierarchy) instead of maintaining a separate status lookup table:
 | `400`  | `{ "error", "code": "VALIDATION_ERROR" \| "TASK_FORM_INVALID" \| "SELECTION_OPTION_NOT_OFFERED" \| "APPROVAL_*", "details" }` | `ValidationError` — per-route body checks, form field issues (§7.6), decisions (§8.3) |
 | `401`  | `{ "error", "code": "AUTHENTICATION_REQUIRED" \| "INVALID_CREDENTIALS", "details": null }` | `UnauthorizedError` — no usable session on a guarded route (§1), or a bad login (§12.1) |
 | `403`  | `{ "error", "code": "PERMISSION_DENIED" \| "ACCOUNT_LOCKED" \| "ACCOUNT_DISABLED" \| "WORKFLOW_TEMPLATE_NOT_ELIGIBLE", "details": null }` | `ForbiddenError` — missing permission, a refused login (§12.1), or a template outside the requester's audience (§7.1) |
-| `404`  | `{ "error", "code": "NOT_FOUND" \| "WORKFLOW_TEMPLATE_*_NOT_FOUND" \| "SELECTION_SESSION_NOT_FOUND" \| "TASK_NOT_FOUND" \| "TASK_FORM_NOT_FOUND" \| "APPROVAL_LINK_INVALID" \| "USER_NOT_FOUND" \| "USER_SESSION_NOT_FOUND", "details" }` | `NotFoundError` |
-| `409`  | `{ "error", "code": "CONFLICT" \| "WORKFLOW_TEMPLATE_*" \| "SELECTION_SESSION_*" \| "TASK_*" \| "APPROVAL_ALREADY_DECIDED" \| "EMAIL_ALREADY_REGISTERED", "details" }` | `ConflictError` — lifecycle rules (§4.12, §6.7, §7.10, §8.3), duplicate email (§13.1) |
+| `404`  | `{ "error", "code": "NOT_FOUND" \| "WORKFLOW_TEMPLATE_*_NOT_FOUND" \| "SELECTION_SESSION_NOT_FOUND" \| "TASK_NOT_FOUND" \| "TASK_FORM_NOT_FOUND" \| "APPROVAL_LINK_INVALID" \| "APPROVAL_NOT_FOUND" \| "USER_NOT_FOUND" \| "USER_SESSION_NOT_FOUND", "details" }` | `NotFoundError` |
+| `409`  | `{ "error", "code": "CONFLICT" \| "WORKFLOW_TEMPLATE_*" \| "SELECTION_SESSION_*" \| "TASK_*" \| "APPROVAL_ALREADY_DECIDED" \| "EMAIL_ALREADY_REGISTERED", "details" }` | `ConflictError` — lifecycle rules (§4.12, §6.7, §7.10, §8.3, §8.10), duplicate email (§13.1) |
 | `410`  | `{ "error", "code": "APPROVAL_LINK_EXPIRED", "details": null }` | `GoneError` — an expired approval link (§8) |
 | `422`  | `{ "error", "code": "WORKFLOW_TEMPLATE_GENERATION_FAILED" \| "WORKFLOW_TEMPLATE_PROMPT_REJECTED", "details": <errors\|null> }` | `WorkflowTemplateGenerationError` only — the model could not produce a valid workflow template (§4.3, §4.6) |
 | `500`  | `{ "error": "Internal server error", "code": "INTERNAL_ERROR", "details": null }` | Anything untyped — details are logged, never returned |
@@ -1094,7 +1228,8 @@ failures, but only the second implies the LLM was involved.
 malformed task id returns `400` with `{ "error": "'<id>' is not a valid id", "code": "VALIDATION_ERROR" }`.
 `/selection/sessions/:id*` routes treat a malformed id like an unknown one: `404
 SELECTION_SESSION_NOT_FOUND`. `/approvals/:token*` never parses an ObjectId — a bad token
-is a clean `404 APPROVAL_LINK_INVALID`. Workflow template routes take a UUID, validated
+is a clean `404 APPROVAL_LINK_INVALID`. `/approver/approvals/:taskId/steps/:stepId*` treats a
+malformed task id like an unknown one: `404 APPROVAL_NOT_FOUND`. Workflow template routes take a UUID, validated
 before any lookup (§4.4).
 
 ---
@@ -1104,7 +1239,8 @@ before any lookup (§4.4).
 Run these folders in sequence — later calls depend on ids produced by earlier ones.
 The runnable collection at [../postman/](../postman/) automates this order with
 `pm.test` scripts that write the ids into collection variables, so a Collection Runner
-pass needs manual input only for the approval link (pasted from the console mailer).
+pass needs manual input only for the later approval links (pasted from the console mailer).
+The first approval is decided in the app by the Approver inbox folder, so it needs no link.
 
 | Folder | Call | Capture |
 | --- | ---- | ------- |
@@ -1121,7 +1257,16 @@ pass needs manual input only for the approval link (pasted from the console mail
 | Task requests | `PUT /tasks/{{taskId}}/forms/{{formId}}/draft` with some values | `saved_at` set, `status: "draft"` |
 | Task requests | `POST /tasks/{{taskId}}/forms/{{formId}}/submit` with every required value | the next step is `awaiting_approver`; the console prints the approval URL |
 | Task requests | `GET /tasks` and `GET /tasks/{{taskId}}/workflow-definition` | the task in the list; the pinned definition |
-| Approvals | paste the console URL (or the token) into `{{approvalUrl}}` | a pre-request script extracts `{{approvalToken}}` |
+| Approver inbox | `GET /tasks/{{taskId}}` (requester token) | the `awaiting_approver` step's `assignee.email` → `{{approverEmail}}` |
+| Approver inbox | `POST /auth/login` as `{{approverEmail}}` | `token` → `{{approverToken}}`; every other Approver inbox call sends it |
+| Approver inbox | `GET /approver/approvals/summary` | `pending` ≥ 1 |
+| Approver inbox | `GET /approver/approvals/pending` | the row for `{{taskId}}`; its `step_id` → `{{approvalStepId}}` |
+| Approver inbox | `GET /approver/approvals/{{taskId}}/steps/{{approvalStepId}}` | `allowed_decisions`, `decided: null` |
+| Approver inbox | `POST …/decision` with `request_more_info` and no comment | `400 APPROVAL_COMMENT_REQUIRED` |
+| Approver inbox | `POST …/decision` with `approved`, then the same again | `200`, then `409 APPROVAL_ALREADY_DECIDED` |
+| Approver inbox | `GET /approver/approvals/history?decision=approved` | the row for `{{taskId}}` with `decided_via: "app"` |
+| Approver inbox | `GET /approver/approvals/pending` with the requester token | `403 PERMISSION_DENIED` |
+| Approvals | paste the console URL of the **next** approval (or its token) into `{{approvalUrl}}` | a pre-request script extracts `{{approvalToken}}` |
 | Approvals | `GET /approvals/{{approvalToken}}` | `allowed_decisions`, `decided: null` |
 | Approvals | `POST /approvals/{{approvalToken}}/decision` with `request_more_info` and no comment | `400 APPROVAL_COMMENT_REQUIRED` |
 | Approvals | `POST /approvals/{{approvalToken}}/decision` with `approved` | `task_status`, `next_step_name`; repeat paste → get → decide for each approval |
@@ -1182,7 +1327,10 @@ pm.collectionVariables.set("approvalToken", decodeURIComponent(pasted.split("/ap
   submit answers `409 TASK_FORM_NOT_AWAITING_INPUT` until the step is reached.
 - **Approval links live in the console log, not the API response.** With
   `MAIL_TRANSPORT=console` the mailer prints the subject, recipient and full approval URL
-  to stdout.
+  to stdout. An approver who has an account and `task:approve` does not need the link: sign
+  in as them and use `/approver/approvals/*` (§8.4–§8.10), which works with mail off.
+- **Two channels, one decision.** Deciding a step in the app retires its emailed link, and
+  deciding by link removes the step from the approver's pending list (§8).
 - **Expired is 410, reused is 409, unknown is 404.** `GET /approvals/:token` keeps working
   on a decided link and returns `decided`. Set `APPROVAL_TOKEN_TTL_DAYS=0` (and restart) to
   see a 410.

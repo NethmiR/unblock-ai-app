@@ -38,3 +38,12 @@ test("an unknown holder id leaves the assignee unbound", () => {
 
   assert.equal(bound.steps.find((step) => step.id === "hod_review")?.assignee?.email, null);
 });
+
+test("a person value's email is stored normalised", () => {
+  const task = buildTaskDocument(LEAVE, [suppliedResolution("advisor_review")]);
+  const filled = { ...task, values: { ...task.values, "assignees.advisor_review": { user_id: null, name: "Ishara Bandara", email: "Ishara@U.C " } } };
+
+  const bound = applyAssigneeFieldValues(filled, filled.forms[0]!);
+
+  assert.equal(bound.steps.find((step) => step.id === "advisor_review")?.assignee?.email, "ishara@u.c");
+});

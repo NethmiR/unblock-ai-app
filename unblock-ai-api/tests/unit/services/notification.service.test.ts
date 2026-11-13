@@ -6,7 +6,7 @@ import { ApprovalDecision } from "../../../src/data/constants/task.constant.js";
 import { OrganisationalUnitType } from "../../../src/data/constants/organisational-unit.constant.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
 import { RecordingMailer } from "../../helpers/recording-mailer.helper.js";
-import { buildTaskDocument, engineContext, leaveResolutions } from "../../helpers/task-fixture.helper.js";
+import { buildTaskDocument, EMAIL_ACTOR, engineContext, leaveResolutions } from "../../helpers/task-fixture.helper.js";
 import type { RenderedDocument } from "../../../src/lib/types/document/document.type.js";
 import type { TaskDocument } from "../../../src/lib/types/task/task-document.type.js";
 
@@ -58,7 +58,7 @@ test("the approval request goes to the approver with the requester's details and
 test("a repeat review says so", async () => {
   const mailer = new RecordingMailer();
   let task = dispatchedTask();
-  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Which <institute>?", CONTEXT).task;
+  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Which <institute>?", EMAIL_ACTOR, CONTEXT).task;
 
   await service(mailer).sendInformationRequested(task, step(task, "advisor_review__information_request_1"));
   await service(mailer).sendApprovalRequest(task, step(task, "advisor_review__repeat_1"), "t");
@@ -72,7 +72,7 @@ test("a repeat review says so", async () => {
 
 test("the rejection email names who rejected it and why", async () => {
   const mailer = new RecordingMailer();
-  const task = engine.recordDecision(dispatchedTask(), "advisor_review", ApprovalDecision.REJECTED, "Exam clash", CONTEXT).task;
+  const task = engine.recordDecision(dispatchedTask(), "advisor_review", ApprovalDecision.REJECTED, "Exam clash", EMAIL_ACTOR, CONTEXT).task;
 
   await service(mailer).sendTaskRejected(task, step(task, "advisor_review"));
 
@@ -100,4 +100,18 @@ test("a failed send reports false and never throws", async () => {
   const task = dispatchedTask();
 
   assert.equal(await service(mailer).sendRequesterActionRequired(task, step(task, "entry_form")), false);
+});
+
+test("the approval email points to the in-app inbox only when the approver has an account", async () => {
+  const mailer = new RecordingMailer();
+  const task = dispatchedTask();
+  const advisor = step(task, "advisor_review");
+  const withAccount = { ...advisor, assignee: advisor.assignee && { ...advisor.assignee, user_id: "user-advisor" } };
+
+  await service(mailer).sendApprovalRequest(task, advisor, "t");
+  await service(mailer).sendApprovalRequest(task, withAccount, "t");
+
+  assert.doesNotMatch(mailer.sent[0]?.text ?? "", /Approvals → Pending/);
+  assert.match(mailer.sent[1]?.text ?? "", /Approvals → Pending\. https:\/\/unblock\.test\/dashboard\/approvals/);
+  assert.match(mailer.sent[1]?.html ?? "", /href="https:\/\/unblock\.test\/dashboard\/approvals"/);
 });

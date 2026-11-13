@@ -1,5 +1,5 @@
 import { TaskStepOrigin } from "../data/constants/task.constant.js";
-import { approvalRequestEmail, type RenderedEmail } from "../data/templates/approval-email.template.js";
+import { approvalInboxUrl, approvalRequestEmail, type RenderedEmail } from "../data/templates/approval-email.template.js";
 import {
   actionRequiredEmail,
   approvalUrl,
@@ -51,6 +51,7 @@ export class NotificationService implements ITaskNotifier {
         requesterUnits: task.requester.units.map(describeRequesterUnit),
         isRepeatReview: step.origin === TaskStepOrigin.APPROVAL_REPEAT,
         approvalUrl: approvalUrl(this.mailConfig.appPublicUrl, token),
+        inboxUrl: (step.assignee?.user_id ?? null) === null ? null : approvalInboxUrl(this.mailConfig.appPublicUrl),
       }),
     );
   }

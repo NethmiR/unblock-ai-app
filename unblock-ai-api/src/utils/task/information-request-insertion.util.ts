@@ -124,6 +124,8 @@ export function insertInformationRequest(task: TaskDocument, approvalStepId: str
       decision: null,
       comment: null,
       decided_at: null,
+      decided_via: null,
+      decided_by_user_id: null,
     },
     information_request: null,
     activated_at: null,

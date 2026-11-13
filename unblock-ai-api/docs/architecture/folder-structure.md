@@ -15,6 +15,7 @@ unblock-ai-api/
 │  │  ├─ selection.route.ts           # /selection: sessions, messages, choose, catalogue
 │  │  ├─ task.route.ts                # /tasks: create, list, get, forms, cancel, delete, transcript
 │  │  ├─ approval.route.ts            # /approvals/:token: approver view and decision (no session)
+│  │  ├─ approver.route.ts            # /approver/approvals: signed-in inbox, history, summary, view, decision (task:approve)
 │  │  ├─ auth.route.ts                # login, me, logout
 │  │  ├─ user-session.route.ts        # list / revoke own sessions under /auth/sessions
 │  │  ├─ user.route.ts                # user management (user:manage)
@@ -28,6 +29,7 @@ unblock-ai-api/
 │  │  ├─ task.controller.ts
 │  │  ├─ task-form.controller.ts      # form draft and submit
 │  │  ├─ approval.controller.ts
+│  │  ├─ approver.controller.ts       # signed-in approver: lists, summary, view, decision
 │  │  ├─ auth.controller.ts
 │  │  ├─ user-session.controller.ts
 │  │  ├─ user.controller.ts
@@ -52,7 +54,8 @@ unblock-ai-api/
 │  │  ├─ task-engine.service.ts       # pure state machine, returns TaskEffect[]
 │  │  ├─ task-transition.service.ts   # engine context, revision-checked commit, then effects
 │  │  ├─ task-effect-executor.service.ts # approval tokens, emails, notified_at
-│  │  ├─ approval.service.ts          # token-based approver view and decisions
+│  │  ├─ approval.service.ts          # approver view and decisions for both channels (token, signed-in)
+│  │  ├─ approver-assignment.service.ts # pending and decided approval lists, pending count
 │  │  ├─ notification.service.ts      # approval, requester and completion emails; never throws
 │  │  ├─ task-transcript.service.ts   # transcript PDF on demand
 │  │  ├─ audit.service.ts
@@ -96,7 +99,7 @@ unblock-ai-api/
 │  │  ├─ workflow-template.model.ts   # workflow_templates: list, update, retrieval queries, vector search
 │  │  ├─ workflow-template-version.model.ts # workflow_template_versions: immutable versions
 │  │  ├─ selection-session.model.ts   # selection_sessions: owned, TTL on expires_at
-│  │  ├─ task.model.ts                # tasks: optimistic revision, approval token hash lookup
+│  │  ├─ task.model.ts                # tasks: optimistic revision, approval token hash lookup, approver assignment queries
 │  │  ├─ audit-log.model.ts
 │  │  └─ index.model.ts
 │  ├─ config/
@@ -165,7 +168,7 @@ unblock-ai-api/
 │  │  ├─ assignee/                    # assignee-context-unit.util.ts
 │  │  ├─ task/                        # plan compiler, field and step ids, form layout, field validator,
 │  │  │                               #   information request insertion, condition namespace, reference
-│  │  ├─ approval/                    # token.util.ts (sign, verify, hash)
+│  │  ├─ approval/                    # token.util.ts (sign, verify, hash), approver-identity.util.ts (assignment rule, live check, Mongo clause)
 │  │  ├─ document/                    # task-transcript.util.ts, pdf-layout, document-format
 │  │  └─ http/
 │  │     ├─ request-validator.util.ts
@@ -174,6 +177,7 @@ unblock-ai-api/
 │  │     ├─ workflow-template-serializer.util.ts
 │  │     ├─ selection-request.util.ts / selection-serializer.util.ts
 │  │     ├─ task-request.util.ts / task-serializer.util.ts
+│  │     ├─ approver-request.util.ts  # approver list query, path params, decision body
 │  │     └─ approval-serializer.util.ts
 │  ├─ data/
 │  │  ├─ prompts/
@@ -197,6 +201,7 @@ unblock-ai-api/
 │  │  │  ├─ assignee.constant.ts
 │  │  │  ├─ selection.constant.ts
 │  │  │  ├─ task-error.constant.ts / selection-error.constant.ts / approval-error.constant.ts
+│  │  │  ├─ approval.constant.ts      # ApprovalAssignmentState, approver route segments
 │  │  │  ├─ workflow-template.constant.ts # statuses, title / prompt limits
 │  │  │  ├─ workflow-template-error.constant.ts
 │  │  │  ├─ ai-provider.constant.ts
@@ -231,7 +236,7 @@ unblock-ai-api/
 │  │     ├─ organisation/organisation-catalogue.type.ts
 │  │     ├─ assignee/assignee-resolver.type.ts
 │  │     ├─ task/                     # document, form, value, plan, engine, DTOs
-│  │     ├─ approval/                 # approver view, decision DTOs, token, mail
+│  │     ├─ approval/                 # approver view, decision DTOs, assignment DTOs, approver identity, token, mail
 │  │     ├─ document/document.type.ts # TaskTranscript
 │  │     ├─ retrieval/retrieval.type.ts
 │  │     ├─ ai/llm.type.ts

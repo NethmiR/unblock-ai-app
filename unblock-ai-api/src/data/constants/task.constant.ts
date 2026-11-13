@@ -138,3 +138,8 @@ export const TASK_STEP_OUTCOME_BY_DECISION: Readonly<Record<ApprovalDecision, Ta
 };
 
 export const TERMINATING_OUTCOME_ACTION = "terminate_workflow";
+
+export enum ApprovalChannel {
+  EMAIL_LINK = "email_link",
+  APP = "app",
+}

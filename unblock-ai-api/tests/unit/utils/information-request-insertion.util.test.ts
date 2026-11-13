@@ -44,6 +44,8 @@ test("an information request and a repeat approval are spliced after the approva
   assert.equal(repeat.definition_step_id, "advisor_review");
   assert.equal(repeat.assignee?.email, "advisor_review@u.c");
   assert.equal(repeat.approval?.decision, null);
+  assert.equal(repeat.approval?.decided_via, null);
+  assert.equal(repeat.approval?.decided_by_user_id, null);
   assert.deepEqual(repeat.depends_on, [{ step_id: "advisor_review__information_request_1", required_outcome: TaskStepOutcome.COMPLETED }]);
 
   for (const dependant of ["hod_review", "finance_review"]) {

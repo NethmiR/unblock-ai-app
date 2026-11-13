@@ -27,6 +27,10 @@ export function taskDetailPath(taskId: string, stepId?: string): string {
   return stepId === undefined ? path : `${path}?${new URLSearchParams({ [TASK_STEP_QUERY_PARAMETER]: stepId })}`;
 }
 
+export function approvalDetailPath(taskId: string, stepId: string): string {
+  return `${RoutePath.APPROVALS}/${encodeURIComponent(taskId)}/${encodeURIComponent(stepId)}`;
+}
+
 export const WORKFLOW_TEMPLATE_VERSION_QUERY_PARAMETER = "version";
 
 export function workflowTemplateDetailPath(workflowTemplateId: string, version?: number): string {

@@ -36,6 +36,8 @@ import { TaskEffectExecutorService } from "./services/task-effect-executor.servi
 import { TaskFormController } from "./controllers/task-form.controller.js";
 import { ApprovalController } from "./controllers/approval.controller.js";
 import { ApprovalService } from "./services/approval.service.js";
+import { ApproverController } from "./controllers/approver.controller.js";
+import { ApproverAssignmentService } from "./services/approver-assignment.service.js";
 import { TaskTranscriptService } from "./services/task-transcript.service.js";
 import { createDocumentRenderer } from "./services/document/index.document.js";
 import { createRepositoryRegistry } from "./repositories/repository-registry.factory.js";
@@ -161,6 +163,7 @@ async function main(): Promise<void> {
   });
   const taskFormService = new TaskFormService({ taskModel, taskEngine, transitions });
   const approvalService = new ApprovalService({ taskModel, taskEngine, transitions, mailConfig: config.mail });
+  const approverAssignmentService = new ApproverAssignmentService({ taskModel });
   const serialization = { documentsEnabled: config.document.enabled, isDeletable: TaskService.isDeletable };
 
   const controllers = {
@@ -170,6 +173,7 @@ async function main(): Promise<void> {
     taskController: new TaskController({ taskService, serialization, transcriptService }),
     taskFormController: new TaskFormController({ taskFormService, serialization }),
     approvalController: new ApprovalController({ approvalService }),
+    approverController: new ApproverController({ assignmentService: approverAssignmentService, approvalService }),
     authController: new AuthController({ authenticationService }),
     userSessionController: new UserSessionController({ userSessionService }),
     userController: new UserController({ userService }),

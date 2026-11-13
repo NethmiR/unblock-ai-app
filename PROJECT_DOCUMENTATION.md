@@ -119,6 +119,7 @@ plausible answer. See [§5.6](#56-selection--the-assistant-conversation).
 | Retrieval + clarifying-question selection | **Working**, with a scored evaluation harness |
 | Requirement collection and validation | **Working** |
 | Email approval chain (approve / reject / request-more-info) | **Working**, default transport logs to console |
+| Signed-in approvals inbox (pending, history, in-app decisions, sidebar count) | **Working** — the whole approval chain runs with mail off ([§5.8](#58-approvals)) |
 | Completion PDF record | **Working**, deterministic and hash-verified |
 | Email login, permission-based access, revocable server-side sessions, user management API | **Working** — no password change or reset yet |
 | Task deletion audit log | **Working** |
@@ -705,7 +706,7 @@ in a `user_permissions` join table against a `permissions` catalogue (the
 |---|---|
 | `workflow:manage` | Create, generate, publish and archive workflow templates |
 | `task:create` | Find a workflow, and create, complete and manage **one's own** task requests. Also grants read access to published templates via `GET /workflow-templates*` |
-| `task:approve` | Defined in the catalogue and grantable — but **gates nothing yet**. Approval links stay token-based ([§12.2](#122-two-independent-authentication-mechanisms)) |
+| `task:approve` | List, open and decide one's assigned approvals in the app (`/dashboard/approvals*`, `/api/approver/*`). Approval links stay token-based and work without it ([§12.2](#122-two-independent-authentication-mechanisms)) |
 | `user:manage` | Create and view users and their permissions |
 
 A user can hold any combination. **Every user must hold at least one permission**,
@@ -1214,14 +1215,39 @@ app refetches.
 
 ## 5.8 Approvals
 
-`src/services/approval.service.ts` · `notification.service.ts` · `src/utils/approval/token.util.ts` ·
+`src/services/approval.service.ts` · `approver-assignment.service.ts` · `notification.service.ts` ·
+`src/utils/approval/token.util.ts` · `src/utils/approval/approver-identity.util.ts` ·
 `src/utils/task/information-request-insertion.util.ts`
+
+### Two channels, one engine
+
+An approver decides either from the **emailed link** or in the **approvals inbox** inside the
+dashboard. Both go through `TaskEngineService.recordDecision` and the same revision-checked
+commit. Whichever decides first wins; the other channel then shows the step as decided, or
+answers `409 APPROVAL_ALREADY_DECIDED`. `ApprovalService` has two resolvers (`resolveToken`,
+`resolveAssignment`) that build the same `ApprovalContext`, and one shared view builder and
+decision path, so the comment rules and the allowed decisions are written once. Each decision
+records `decided_via` (`email_link` or `app`) and `decided_by_user_id`.
+
+The inbox (`/api/approver/approvals/*`, `task:approve`):
+
+- **Assignment** — a step is the caller's when `assignee.user_id` is their id, or
+  `assignee.email` is their normalised account email. Assignee emails are stored trimmed and
+  lower-cased, so an approver the requester named by email is covered too. The rule lives only
+  in `approver-identity.util.ts`.
+- **No self-approval in the app** — the caller's own requests never appear, and opening one
+  answers `404 APPROVAL_NOT_FOUND`, like any step not assigned to them.
+- **Link state is ignored** — a failed or expired email never blocks a signed-in approver.
+- **Per-step rows** — one aggregation (`$elemMatch` pre-filter, `$unwind`, `$facet`) returns one
+  row per (task, approval step), so a repeat review is a second row. Pending is oldest first;
+  history is newest decision first and filterable by decision.
 
 ### Tokens never leave the approver channel
 
 Each dispatched approval gets an HMAC-signed token, emailed as
 `${APP_PUBLIC_URL}/approvals/<token>`. Only `sha256(token)` is stored on the step. No requester
-DTO contains a token or a hash. Tokens are invalidated on decision and on cancel, and expire
+DTO contains a token or a hash. Tokens are invalidated on decision (through either channel) and
+on cancel, and expire
 after `APPROVAL_TOKEN_TTL_DAYS`: an invalid link is 404, an expired one 410, a decided one 409
 for a new decision (the view still loads and shows the decision).
 
@@ -1705,6 +1731,9 @@ approvals actually ran against.
 | `/dashboard/tasks` | Server → Client | `proxy.ts` + `requireRouteAccess` (`task:create`) | The requester's task requests: search, status filter, pagination, all in the URL |
 | `/dashboard/tasks/[taskId]` | Server → Client | `proxy.ts` + `requireRouteAccess` + API ownership | The task workspace: step rail, forms, approver cards, information requests, outcome banner, plan drawer, transcript. `?step=<id>` selects a step; the topbar shows the workflow title |
 | `/old/account` | Server, `force-dynamic` | `proxy.ts` + session | Profile, permission badges, active sessions (revoke one, sign out of other sessions), sign out |
+| `/dashboard/approvals` | Server → Client | `proxy.ts` + `requireRouteAccess` (`task:approve`) | Pending approvals: oldest first, search, **Repeat review** badge, polls every 30 s; the sidebar shows the pending count |
+| `/dashboard/approvals/history` | Server → Client | `proxy.ts` + `requireRouteAccess` (`task:approve`) | The approver's decisions: decision filter, search, comment, outcome and channel |
+| `/dashboard/approvals/[taskId]/[stepId]` | Server → Client | `proxy.ts` + `requireRouteAccess` (`task:approve`) + API assignment | The in-app approval page: the same summary, history, plan rail and decision panel as the emailed page; "This approval isn't available to you" when not assigned |
 | `/approvals/[token]` | Server → Client | **none** | The approver page: request summary, decisions with comments; dedicated invalid (404) and expired (410) states |
 | `/api/auth/login` | Route Handler | — | Calls the API login (forwarding `User-Agent`), sets the httpOnly `ua_session` cookie |
 | `/api/auth/logout` | Route Handler | — | Revokes the session at the API, then clears the cookie |
@@ -1718,7 +1747,9 @@ removed, and so was the old requester portal; `/old/account` is reachable by URL
 
 > **`/approvals/*` lives deliberately outside `/dashboard`.** The approver
 > holds a token from an email, not a session. The route must not inherit a
-> navigation shell that implies an account they don't have.
+> navigation shell that implies an account they don't have. Approvers who do have
+> an account use `/dashboard/approvals/*`, which renders the same body
+> (`ApproverDetailLayout`) inside the shell.
 
 ## 8.2 The single API chokepoint
 
@@ -1895,11 +1926,21 @@ steps), error messages, and the approver decision rules. All copy lives in
 
 ### Approvals — `src/components/approvals/`
 
-`ApproverView` (header, two-column layout), `ApproverTaskSummary` (request, requester, submitted
-sections, calculated values, information exchanges), `ApproverHistory` (earlier decisions),
-`ApproverDecisionPanel` (step, instructions, repeat-review notice, decision buttons or the
-recorded result), `ApproverDecisionDialog` (comment, required for reject and more information),
-`ApproverPlanRail`, `ApprovalLinkUnavailable` (invalid and expired links), `ApproverSection`.
+`ApproverView` (the token page: `ApproverHeader` plus `ApproverDetailLayout`),
+`ApproverDetailLayout` (the two-column body both channels render), `ApproverTaskSummary`
+(request, requester, submitted sections, calculated values, information exchanges),
+`ApproverHistory` (earlier decisions), `ApproverDecisionPanel` (step, instructions,
+repeat-review notice, decision buttons or the recorded result; channel-agnostic through
+`onDecide` / `onDecided` props), `ApproverDecisionDialog` (comment, required for reject and
+more information), `ApproverPlanRail`, `ApprovalLinkUnavailable` (invalid and expired links),
+`ApproverSection`.
+
+`inbox/` — `ApprovalInboxScreen` (Pending), `ApprovalHistoryScreen` (History, with a decision
+`SegmentedControl`) and `ApprovalAssignmentTable` (one table, columns chosen by mode, stacking
+into cards on narrow screens). `workspace/` — `ApprovalWorkspaceScreen` (the in-app approval
+page). Pure rules live in `src/lib/approvals/` (list filters, row presentation), data in
+`useApprovalInbox`, `useApprovalHistory`, `useApprovalAssignment` and
+`usePendingApprovalCount`.
 
 ### Account and sign-in — `src/components/account/`, `src/components/auth/`
 
@@ -1959,7 +2000,7 @@ means `requireAnyPermission(...)` with that permission.
 
 ## 9.2 Route bindings
 
-The 38 bindings below cover every area except the organisational unit, designation
+The 43 bindings below cover every area except the organisational unit, designation
 and user affiliation routes, which are documented in
 [`api-documentation.md`](unblock-ai-api/docs/api/api-documentation.md).
 
@@ -2050,8 +2091,18 @@ someone else is `404`.
 | 37 | `GET` | `/approvals/:token` | The approver page's data | **none — the token IS the auth** |
 | 38 | `POST` | `/approvals/:token/decision` | Approve, reject or request more information, with a comment | **none — the token IS the auth** |
 
-`task:approve` exists in the permission catalogue and can be granted, but no route
-checks it yet: approvers act through the token links above.
+### Approver inbox
+
+| # | Method | Path | Purpose | Auth |
+|---|---|---|---|---|
+| 57 | `GET` | `/approver/approvals/pending` | Live approval steps assigned to the caller, oldest first | `task:approve` |
+| 58 | `GET` | `/approver/approvals/history` | The caller's decisions, newest first; `?decision=` filter | `task:approve` |
+| 59 | `GET` | `/approver/approvals/summary` | `{ pending }` for the sidebar count | `task:approve` |
+| 60 | `GET` | `/approver/approvals/:taskId/steps/:stepId` | The same approver view as `/approvals/:token` | `task:approve` + assignee |
+| 61 | `POST` | `/approver/approvals/:taskId/steps/:stepId/decision` | Decide in the app; same rules as the token route | `task:approve` + assignee |
+
+Numbers match the endpoint index in `api-documentation.md`. **+ assignee**: a step not
+assigned to the caller, or on a task the caller created, answers `404 APPROVAL_NOT_FOUND`.
 
 > **Route ordering notes:** `POST /workflow-templates/generate`
 > before the `/:workflowTemplateId` routes, and `DELETE /auth/sessions/others` before
@@ -2388,8 +2439,9 @@ is scaled to that, and the gaps are documented rather than implied.
 +------------------------------------------------------------------+
 |  SESSION AUTH                    |  APPROVAL TOKEN AUTH           |
 |                                  |                                |
-|  Who:  every user with an        |  Who:  approvers, no account   |
-|        account (email login)     |                                |
+|  Who:  every user with an        |  Who:  any approver, with or   |
+|        account (email login),    |        without an account      |
+|        approvers in the inbox    |                                |
 |  Form: opaque random bearer      |  Form: HMAC token in the URL   |
 |        token in an httpOnly      |        path                    |
 |        cookie; only its SHA-256  |                                |
@@ -2804,7 +2856,7 @@ thing.
 | **No SLA, reminders, or escalation** | `WorkflowStep.sla` is carried in the schema and never read | Needs a scheduler |
 | **No self-registration, password reset, or password change** | Every user keeps the `USER_DEFAULT_PASSWORD` they were created with | The most important auth gap — see [§12.6](#126-what-is-not-protected--the-honest-list) |
 | **No user update, disable, or delete** | The user API is create, list and get-by-id; permissions are fixed at creation | `status = 'disabled'` is already honoured at login and per request |
-| **`task:approve` gates nothing** | Approvers act through token links, not accounts | The permission is defined and grantable, ready for an approver sign-in flow |
+| **Self-approval by link is not blocked** | A requester who names themselves as approver can decide through the emailed link | The inbox already excludes own requests; closing the link path is a small follow-up (see `docs/approver-inbox-phase-plan.md` §12) |
 | **No IP rate limiting** | Only per-account lockout, off by default | |
 | **No LLM assistance in the approval flow** | Question phrasing, context summarising, and reject-vs-more-info suggestions are plain data for the caller to render | Deliberate — see [§11.1](#111-where-the-llm-is-used--and-where-it-deliberately-is-not) |
 | **No metrics, tracing, or readiness probe** | `/health` is liveness only and stays green while Mongo is down | |
@@ -2814,7 +2866,7 @@ thing.
 | Issue | Detail | Fix |
 |---|---|---|
 | **Legacy template versions** | Versions generated before the revamp have no audience codes or `collects_inputs`; they are open to everyone and compile into one entry form | Regenerate the template from its prompt |
-| **Expired approval links** | There is no re-issue; the requester must start again | A requester-side **Resend link** that re-runs `DISPATCH_APPROVAL` |
+| **Expired approval links** | There is no re-issue. An approver with an account and `task:approve` can still decide from the inbox; anyone else needs a new request | A requester-side **Resend link** that re-runs `DISPATCH_APPROVAL` |
 | **SMTP config unvalidated at startup** | A bad host surfaces only at send time | Intentional: caught and logged rather than crashing the process |
 | **`revalidate` is inert on API-backed pages** | The shared client sends `cache: "no-store"`, opting routes out of the Data Cache | Documented; `router.refresh()` is used instead |
 
@@ -2859,10 +2911,9 @@ escalation to `fallback_role` at `escalate_after_hours`. Both fields already exi
 
 ### Tier 3 — Product depth
 
-**5. Approver accounts and permission-aware dashboards**
-Put `task:approve` to work — approvers sign in to act on their steps instead of
-holding a bare token link. Assignees already carry `user_id`, so the inbox query is
-`steps.assignee.user_id = me AND status = awaiting_approver`.
+**5. Approver delegation and out-of-office**
+The signed-in approvals inbox is built (`docs/approver-inbox-phase-plan.md`). Next:
+delegation, out-of-office cover, and push updates instead of 30-second polling.
 
 **6. Analytics on the corpus**
 Which workflows are used most, which steps bottleneck, which get rejected, average
@@ -3149,11 +3200,13 @@ permission, so it can drive both the authoring and the requester parts.
 
 1. **Switch to the API terminal.** The console mailer printed the approval URL. Open it in a
    private window. *Talking point: no session, no account; only the token's hash is stored.*
+   (An approver with an account can instead sign in and decide from **Approvals → Pending**.)
 2. Choose **Request more information** with a comment. Back on the workspace, a **More
    information requested** step and a repeat review have appeared. Answer it; a fresh link
    prints; approve.
 3. Approve as the HoD and the Dean (a 40-day trip needs the Dean; a 10-day one shows that step
-   as "Not required").
+   as "Not required"). Sign in as Dinesh (`u19@u.c`) and approve from his **Pending** inbox to
+   show the in-app channel.
 
 ### 5 · Completion (1 min)
 
@@ -3193,6 +3246,7 @@ acceptance walk is Appendix A of
 | Completion documents | `b47746d` → `b98f6bd` (9 phases) | The PDF record, end to end |
 | User access & sessions | 8 phases (see `docs/user-access-and-session-management-phase-plan.md`) | One `users` table with permissions, server-side revocable sessions, the user management API, the Postgres seed pack, owner-only tasks, the single `/login` and `/account` page |
 | Workflow templates | — | Extraction renamed to workflow template generation; drafts, template delete and the deletion log replaced by the draft → unpublished → published lifecycle, immutable versions and archive/restore; management moved to `/dashboard/workflows` |
+| Approver inbox | 6 phases (see `docs/approver-inbox-phase-plan.md`) | Signed-in approvals inbox: pending, history, in-app decisions sharing one core with the emailed link, normalised assignee emails, the `approval-inbox` migration, the sidebar count |
 
 Every feature followed the same pattern: a design or phase-plan commit, then one
 commit per shippable phase. The `docs/` folder preserves all of it.

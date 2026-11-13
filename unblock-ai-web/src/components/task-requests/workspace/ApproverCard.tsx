@@ -6,7 +6,7 @@ import { ApprovalDecisionBadge } from "@/components/task-requests/shared/TaskSta
 import { assigneeDisplayName } from "@/lib/task-request/assignee-presentation";
 import { TASK_REQUEST_COPY } from "@/lib/task-request/task-request-copy";
 import { IconName } from "@/types/icon";
-import { TaskStepOrigin, type TaskStepDto } from "@/types/task";
+import { TaskStepOrigin, TaskStepStatus, type TaskStepDto } from "@/types/task";
 
 const COPY = TASK_REQUEST_COPY.approval;
 
@@ -44,9 +44,13 @@ export function ApproverCard({ step }: { step: TaskStepDto }) {
         <p className="text-[13px] text-muted">{COPY.noRemarks}</p>
       )}
       <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[12px] text-muted">
-        <span>
-          {COPY.sentOn} {approval?.notified_at ? <DateTime iso={approval.notified_at} /> : COPY.notYetSent}
-        </span>
+        {approval?.notified_at ? (
+          <span>
+            {COPY.sentOn} <DateTime iso={approval.notified_at} />
+          </span>
+        ) : (
+          <span>{step.status === TaskStepStatus.AWAITING_APPROVER ? COPY.waitingInInbox : `${COPY.sentOn} ${COPY.notYetSent}`}</span>
+        )}
         {approval?.decided_at && (
           <span>
             {COPY.decidedOn} <DateTime iso={approval.decided_at} />

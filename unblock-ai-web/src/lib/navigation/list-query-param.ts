@@ -2,6 +2,7 @@ export enum ListQueryParam {
   SEARCH = "search",
   STATUS = "status",
   UNIT = "unit",
+  DECISION = "decision",
   OFFSET = "offset",
 }
 

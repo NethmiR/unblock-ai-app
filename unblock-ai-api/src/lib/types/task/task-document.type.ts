@@ -3,6 +3,7 @@ import type { AssigneeResolutionNote, AssigneeSource } from "../../../data/const
 import type { OrganisationalUnitType } from "../../../data/constants/organisational-unit.constant.js";
 import type { SelectionMessageRole } from "../../../data/constants/selection.constant.js";
 import type {
+  ApprovalChannel,
   ApprovalDecision,
   TaskAuditEvent,
   TaskCreationSource,
@@ -56,6 +57,8 @@ export interface TaskApprovalRecord {
   decision: ApprovalDecision | null;
   comment: string | null;
   decided_at: Date | null;
+  decided_via: ApprovalChannel | null;
+  decided_by_user_id: string | null;
   allows_information_request: boolean;
   terminates_on_rejection: boolean;
 }

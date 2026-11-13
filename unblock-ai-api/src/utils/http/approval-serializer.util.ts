@@ -1,8 +1,15 @@
 import { AssigneeSource } from "../../data/constants/assignee.constant.js";
 import { COMMENT_REQUIRED_DECISIONS, TaskStepOrigin } from "../../data/constants/task.constant.js";
-import { informationExchanges, submittedFormSections, taskSubmittedAt } from "../task/task-view.util.js";
+import { describeRequesterUnit, informationExchanges, submittedFormSections, taskSubmittedAt } from "../task/task-view.util.js";
 import { serializeAssignee, serializeRequesterSnapshot } from "./task-serializer.util.js";
-import type { ApproverView, ApproverViewDto } from "../../lib/types/approval/approval.type.js";
+import type {
+  ApprovalAssignmentDto,
+  ApprovalAssignmentListResponseDto,
+  ApprovalAssignmentPage,
+  ApprovalAssignmentRow,
+  ApproverView,
+  ApproverViewDto,
+} from "../../lib/types/approval/approval.type.js";
 import type { TaskAssigneeDto } from "../../lib/types/task/task-dto.type.js";
 
 const UNKNOWN_APPROVER: TaskAssigneeDto = {
@@ -71,4 +78,33 @@ export function serializeApproverView({ context, allowedDecisions, computed }: A
         ? { decision: approval.decision, comment: approval.comment, decided_at: approval.decided_at.toISOString() }
         : null,
   };
+}
+
+export function serializeApprovalAssignment({ task, step }: ApprovalAssignmentRow): ApprovalAssignmentDto {
+  const approval = step.approval;
+  return {
+    task_id: String(task._id),
+    step_id: step.id,
+    reference: task.reference,
+    title: task.title,
+    requester: {
+      full_name: task.requester.full_name,
+      email: task.requester.email,
+      unit_names: task.requester.units.map(describeRequesterUnit),
+    },
+    step_name: step.name,
+    is_repeat: step.origin === TaskStepOrigin.APPROVAL_REPEAT,
+    task_status: task.status,
+    current_step_name: task.active_step_name,
+    submitted_at: taskSubmittedAt(task).toISOString(),
+    activated_at: step.activated_at?.toISOString() ?? null,
+    decision: approval?.decision ?? null,
+    comment: approval?.comment ?? null,
+    decided_at: approval?.decided_at?.toISOString() ?? null,
+    decided_via: approval?.decided_via ?? null,
+  };
+}
+
+export function serializeApprovalAssignmentList(page: ApprovalAssignmentPage, limit: number, offset: number): ApprovalAssignmentListResponseDto {
+  return { approvals: page.rows.map(serializeApprovalAssignment), page: { total: page.total, limit, offset } };
 }

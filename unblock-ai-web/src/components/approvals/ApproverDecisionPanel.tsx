@@ -1,5 +1,4 @@
 "use client";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -8,7 +7,6 @@ import { Notice } from "@/components/ui/Notice";
 import { ApprovalDecisionBadge } from "@/components/task-requests/shared/TaskStatusBadges";
 import { ApproverDecisionDialog } from "./ApproverDecisionDialog";
 import { ApproverSectionHeading } from "./ApproverSection";
-import { approvalsApi } from "@/lib/api/approvals";
 import {
   APPROVAL_DECISION_BUTTON_VARIANT,
   isCommentRequired,
@@ -18,7 +16,7 @@ import {
 import { hasErrorCode, taskRequestErrorMessage } from "@/lib/task-request/task-error-message";
 import { TASK_REQUEST_COPY } from "@/lib/task-request/task-request-copy";
 import { APPROVAL_DECISION_PRESENTATION } from "@/lib/task-request/task-status-presentation";
-import { ApprovalErrorCode, type ApprovalDecisionResultDto, type ApproverViewDto } from "@/types/approval";
+import { ApprovalErrorCode, type ApprovalDecisionInputDto, type ApprovalDecisionResultDto, type ApproverViewDto } from "@/types/approval";
 import type { ApprovalDecision } from "@/types/task";
 
 const COPY = TASK_REQUEST_COPY.approver;
@@ -41,8 +39,16 @@ function DecidedCard({ decided, result }: { decided: NonNullable<ApproverViewDto
   );
 }
 
-export function ApproverDecisionPanel({ token, view }: { token: string; view: ApproverViewDto }) {
-  const router = useRouter();
+export interface ApproverDecisionHandlers {
+  onDecide: (input: ApprovalDecisionInputDto) => Promise<ApprovalDecisionResultDto>;
+  onDecided: (result: ApprovalDecisionResultDto | null) => void;
+}
+
+interface ApproverDecisionPanelProps extends ApproverDecisionHandlers {
+  view: ApproverViewDto;
+}
+
+export function ApproverDecisionPanel({ view, onDecide, onDecided }: ApproverDecisionPanelProps) {
   const [selected, setSelected] = useState<ApprovalDecision | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,16 +69,16 @@ export function ApproverDecisionPanel({ token, view }: { token: string; view: Ap
     setError(null);
     const comment = normaliseDecisionComment(rawComment);
     try {
-      const outcome = await approvalsApi.decide(token, { decision, comment });
+      const outcome = await onDecide({ decision, comment });
       setResult(outcome);
       setOptimistic({ decision, comment, decided_at: new Date().toISOString() });
       setSelected(null);
-      router.refresh();
+      onDecided(outcome);
     } catch (err: unknown) {
       if (hasErrorCode(err, ApprovalErrorCode.APPROVAL_ALREADY_DECIDED)) {
         setSelected(null);
         setNotice(COPY.alreadyDecided);
-        router.refresh();
+        onDecided(null);
       } else {
         setError(taskRequestErrorMessage(err, COPY.dialog.failed));
       }

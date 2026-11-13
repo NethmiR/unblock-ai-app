@@ -36,7 +36,10 @@ is `USER_DEFAULT_PASSWORD` (`12345` by default).
 | Dinesh Wijesinghe | `u19@u.c` | Head of Department, IT — found in the directory |
 | Sunethra Ratnayake | `u18@u.c` | Dean, Faculty of IT — found in the directory |
 
-Approvers never sign in. They act from the emailed link.
+Approvers can work either way. Someone with an account and `task:approve` (Dinesh, Sunethra)
+finds the request in **Approvals → Pending** in the dashboard. Anyone, with or without an
+account, can act from the emailed link. The demo shows both: the advisor (named by Kavindu,
+no account) uses the link, and Dinesh uses his inbox.
 
 ### Browser setup — the one thing that will break the demo
 
@@ -48,8 +51,10 @@ administrator's session in the same browser profile. Set up **two separate windo
 - **Window B** (incognito / second profile) → sign in as `u17@u.c`. Open **New task
   request** (`/dashboard/tasks/new`).
 - **Window B, second tab** → kept free for approval links.
+- **Window C** (a third browser profile) → sign in as Dinesh (`u19@u.c`) and open
+  **Approvals → Pending** (`/dashboard/approvals`). It stays empty until the advisor approves.
 
-Sign both in *before* you start talking. Do not sign in on camera.
+Sign all three in *before* you start talking. Do not sign in on camera.
 
 ### Data setup
 
@@ -203,10 +208,14 @@ Type an answer and click **Send answer**. A new advisor link prints. Open it, sh
 
 ### 8:15 – 8:45 · Directory approvers
 
-Open the HoD link (Dinesh) and **Approve**, then the Dean link (Sunethra) and **Approve**.
+Switch to Window C. Dinesh's sidebar shows **Pending 1** (it refreshes within 30 seconds).
+Open the row, show the same summary inside the dashboard, and **Approve**. Then open the Dean
+link (Sunethra) and **Approve**.
 
-> "Nobody typed these two people's names. And the Dean only came into it because the trip is
-> over 30 days — a ten-day trip would show that step as 'Not required'."
+> "Dinesh has an account, so the request was already waiting in his inbox — no email needed.
+> The advisor had no account, so she used the link. Same rules, same engine. Nobody typed
+> these two people's names. And the Dean only came into it because the trip is over 30 days —
+> a ten-day trip would show that step as 'Not required'."
 
 ### 8:45 – 9:15 · Completion and the transcript
 
@@ -222,7 +231,8 @@ Back on the workspace: **Request completed**. Click **Download transcript**.
 
 > "An administrator wrote a paragraph of policy and got back a verified graph that already
 > knows who it's for and who approves. A student described his problem in one sentence and
-> got a form that was half filled in. Approvers acted from a link without an account.
+> got a form that was half filled in. Approvers acted from their inbox, or from a link
+> without an account.
 >
 > The boundary is the point. The model does two jobs — turning prose into a graph once per
 > version, and picking a template once per message. Everything after Start — the approvers,
@@ -276,6 +286,6 @@ Cut in this order — each is self-contained:
 |---|---|
 | **Generate takes >60s** | Keep a pre-published Engineering template in a second tab; say "here's one I compiled earlier" and keep talking through validation. |
 | **Engineering template shows "Everyone" instead of Faculty of Engineering** | The model missed the audience. Regenerate before the demo, or skip the "left out" beat. |
-| **Approval link not found** | It is printed by the API process with `MAIL_TRANSPORT=console`. Keep that terminal visible. |
+| **Approval link not found** | It is printed by the API process with `MAIL_TRANSPORT=console`. Keep that terminal visible. For Dinesh or Sunethra, skip the link and use their **Approvals → Pending** inbox instead. |
 | **Session cookie collision** | Two browser windows, both signed in before you start. This is the number one failure mode. |
 | **The assistant asks a question** | Answer it with "IT faculty" and move on; the trace still shows the profile was used. |

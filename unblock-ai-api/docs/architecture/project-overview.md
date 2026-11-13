@@ -4,7 +4,7 @@
 
 ## 1. What this project does
 
-UNBLOCK-AI turns a **plain-English description of an institutional approval workflow** (e.g. "students who want to travel overseas must get approval from their advisor, then the Head of Department...") into a **strict, machine-readable JSON workflow definition**, then runs it for requesters: an assistant picks the right published template from the requester's request and profile, a task plan is compiled with approvers resolved from the directory and details prefilled, the requester fills step forms, approvers decide through emailed links, and a transcript PDF closes the request.
+UNBLOCK-AI turns a **plain-English description of an institutional approval workflow** (e.g. "students who want to travel overseas must get approval from their advisor, then the Head of Department...") into a **strict, machine-readable JSON workflow definition**, then runs it for requesters: an assistant picks the right published template from the requester's request and profile, a task plan is compiled with approvers resolved from the directory and details prefilled, the requester fills step forms, approvers decide in their in-app approvals inbox or through emailed links, and a transcript PDF closes the request.
 
 ```
 Admin writes a title + prompt
@@ -27,7 +27,8 @@ Admin writes a title + prompt
                                                │
                                                ▼
                                      Task engine (pure) + effect executor:
-                                     forms → approval emails → decisions
+                                     forms → approvals (inbox or emailed
+                                     link) → decisions
                                      (approve / reject / more information)
                                                │ completed
                                                ▼
@@ -213,7 +214,8 @@ one store. The reasoning, and the consequences it forces:
 - **Permissions, not roles.** Each user holds one or more of `workflow:manage`,
   `task:create`, `task:approve` and `user:manage`
   ([src/data/constants/permission.constant.ts](../../src/data/constants/permission.constant.ts)).
-  `task:approve` is grantable but gates nothing yet; approvers act through emailed links.
+  `task:approve` gates the signed-in approver routes (`/api/approver/*`). Emailed approval
+  links stay token-based and need no session.
 
 ## 9. HTTP API
 
@@ -231,7 +233,8 @@ permissions) do the actual gating, applied per-route:
 restoring workflow templates; `workflow:manage` or `task:create` for reading
 workflow templates and their versions; `task:create` for
 `/selection` and `/tasks` (selection sessions are also owner-checked inside
-`SelectionService`); `user:manage` for `/users`.
+`SelectionService`); `task:approve` for `/approver/*` (assignment is checked inside
+`ApprovalService`); `user:manage` for `/users`.
 [src/middlewares/require-task-ownership.middleware.ts](../../src/middlewares/require-task-ownership.middleware.ts)
 limits `/tasks/:id*` to the task's creator and answers `404` for anyone else's task. The split matters because `/api/approvals/*` is authenticated by a
 *different* mechanism (a per-step approval token) and must keep working for
@@ -263,7 +266,20 @@ full design. Summary of what exists in code:
   [effect executor](../../src/services/task-effect-executor.service.ts) issues hashed approval
   tokens and sends notifications after a successful write, and never throws into the caller.
 - **Approvals** ([src/services/approval.service.ts](../../src/services/approval.service.ts)) —
-  token resolution (invalid 404, expired 410, decided 409), comment rules, decisions.
+  two channels over one shared core. `resolveToken` (emailed link: invalid 404, expired 410,
+  decided 409) and `resolveAssignment` (signed-in approver: not assigned or own task 404,
+  link state ignored) each build an `ApprovalContext`. One private `buildView` and one
+  private `applyDecision` hold the comment rules, the allowed-decisions check and the commit,
+  so both channels behave the same. Each decision records an `ApprovalActor`
+  (`decided_via: email_link | app`, `decided_by_user_id`).
+- **Approver inbox** ([src/services/approver-assignment.service.ts](../../src/services/approver-assignment.service.ts),
+  [src/utils/approval/approver-identity.util.ts](../../src/utils/approval/approver-identity.util.ts)) —
+  lists the caller's pending and decided approval steps and counts the pending ones. A step
+  belongs to the caller when `assignee.user_id` matches their id or `assignee.email` matches
+  their normalised account email. The rule lives only in `approver-identity.util.ts`, which
+  also builds the Mongo `$elemMatch` clause. `TaskModel.findApprovalAssignmentPage` runs one
+  aggregation (`$match` → `$unwind: "$steps"` → `$match` → `$sort` → `$facet`) that returns
+  one row per (task, approval step), with the caller's own tasks excluded.
 - **Transcript** ([src/services/task-transcript.service.ts](../../src/services/task-transcript.service.ts),
   [src/utils/document/task-transcript.util.ts](../../src/utils/document/task-transcript.util.ts)) —
   built from the task and its pinned definition and rendered by the pluggable
@@ -308,9 +324,9 @@ These live under [src/data/samples/](../../src/data/samples/) (`input/`, `expect
 
 - **No academic advisor directory, file uploads, reminders, SLA escalation or re-issue of expired approval links.** Roles the directory does not model are named by the requester. See §20 of the task request revamp plan.
 - **No self-registration, password reset, or password change.** Every user starts with `USER_DEFAULT_PASSWORD` and keeps it. The user API covers create, list and get-by-id only — no update, deactivate or delete yet.
-- **`task:approve` gates nothing yet** — approval links stay public and token-based; requiring approvers to sign in is a later revamp.
+- **Self-approval through the emailed link is not blocked** — the in-app inbox excludes the caller's own tasks, but a requester who names themselves as approver can still decide by link. See §12 of [approver-inbox-phase-plan.md](../../../docs/approver-inbox-phase-plan.md).
 - **No rate limiting by IP** — only per-account failed-attempt lockout (§8.1), and that enforcement is off by default (`AUTH_MAX_FAILED_ATTEMPTS=0`).
-- **No signed-in approval inbox** — assignees carry `user_id`, so it is a straightforward follow-up.
+- **No push updates or delegation for approvers** — the inbox polls every 30 seconds; delegation, out-of-office and bulk decisions are not built.
 
 ## 15. Quick reference — how to run it
 

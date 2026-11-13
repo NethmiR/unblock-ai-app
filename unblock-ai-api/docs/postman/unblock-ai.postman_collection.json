@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b6f0a1c2-3e6a-4b1a-9b7a-9f6d1c2a5e01",
     "name": "UNBLOCK-AI API",
-    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Auth, Users, Organisation, User affiliations, Workflow Templates, Task requests, Approvals, Transcript, Error cases. Most requests need a bearer token - the collection-level auth reads it from {{authToken}}, captured by the 'Login' request in the Auth folder from {{loginEmail}} / {{loginPassword}}. Set loginEmail to the administrator seeded by 'npm run seed:pg:run' (SEED_ADMINISTRATOR_EMAIL) and loginPassword to the server's USER_DEFAULT_PASSWORD. The Task requests, Approvals and Transcript folders run as {{requesterEmail}} (a seeded sample user, SEED_SAMPLE_USERS=true) through {{requesterToken}}. The Approvals folder needs the approval URL pasted by hand from the console mailer's stdout into {{approvalUrl}} after 'Submit form' -- it cannot be fully automated by the Collection Runner.",
+    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Auth, Users, Organisation, User affiliations, Workflow Templates, Task requests, Approver inbox, Approvals, Transcript, Error cases. Most requests need a bearer token - the collection-level auth reads it from {{authToken}}, captured by the 'Login' request in the Auth folder from {{loginEmail}} / {{loginPassword}}. Set loginEmail to the administrator seeded by 'npm run seed:pg:run' (SEED_ADMINISTRATOR_EMAIL) and loginPassword to the server's USER_DEFAULT_PASSWORD. The Task requests, Approvals and Transcript folders run as {{requesterEmail}} (a seeded sample user, SEED_SAMPLE_USERS=true) through {{requesterToken}}. The Approver inbox folder decides the first approval in the app as the approver it finds on the task (through {{approverToken}}), with no email involved. The Approvals folder needs the next approval URL pasted by hand from the console mailer's stdout into {{approvalUrl}} after 'Submit form' -- it cannot be fully automated by the Collection Runner.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -103,7 +103,27 @@
       "value": "{}"
     },
     {
+      "key": "advisorName",
+      "value": "Ishara Bandara"
+    },
+    {
+      "key": "advisorEmail",
+      "value": "U6@U.C"
+    },
+    {
       "key": "approvalUrl",
+      "value": ""
+    },
+    {
+      "key": "approverEmail",
+      "value": ""
+    },
+    {
+      "key": "approverToken",
+      "value": ""
+    },
+    {
+      "key": "approvalStepId",
       "value": ""
     }
   ],
@@ -2173,7 +2193,7 @@
                   "    case \"phone\": return \"+94 77 123 4567\";",
                   "    case \"switch\": return true;",
                   "    case \"select\": return field.options.length ? field.options[0].value : null;",
-                  "    case \"person\": return { name: \"Dr. Sample Advisor\", email: \"advisor@example.edu\" };",
+                  "    case \"person\": return { name: pm.collectionVariables.get(\"advisorName\"), email: pm.collectionVariables.get(\"advisorEmail\") };",
                   "    default: return \"Sample text\";",
                   "  }",
                   "}",
@@ -2246,8 +2266,561 @@
       ]
     },
     {
+      "name": "Approver inbox",
+      "description": "Signed-in approver path (task:approve), no email involved. Finds who the task is waiting on, logs in as them into {{approverToken}}, then lists, opens and decides the approval in the app. Runs after Task requests: the entry form names {{advisorEmail}} (default the seeded Ishara Bandara, U6@U.C in mixed case on purpose) as the academic advisor, so the first approval is in her inbox. Every request sends {{approverToken}} unless it says otherwise.",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{approverToken}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Find current approver",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}"
+              ]
+            },
+            "header": [],
+            "description": "Runs as the requester. Stores the email of the step that is awaiting_approver in {{approverEmail}}.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{requesterToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var step = pm.response.json().steps.find(function (s) { return s.status === \"awaiting_approver\"; });",
+                  "pm.test(\"a step is awaiting an approver\", function () { pm.expect(step).to.be.an(\"object\"); pm.expect(step.assignee.email).to.be.a(\"string\"); });",
+                  "if (step) pm.collectionVariables.set(\"approverEmail\", step.assignee.email);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as approver",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Logs in as {{approverEmail}} with USER_DEFAULT_PASSWORD and stores the token in {{approverToken}}.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{approverEmail}}\",\n  \"password\": \"{{loginPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set(\"approverToken\", pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pending count",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "summary"
+              ]
+            },
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"at least one pending\", function () { pm.expect(pm.response.json().pending).to.be.at.least(1); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List pending approvals",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/pending?limit=20&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "pending"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "header": [],
+            "description": "Oldest first. Stores the step id of this task's row in {{approvalStepId}}."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "var row = json.approvals.find(function (a) { return a.task_id === pm.collectionVariables.get(\"taskId\"); });",
+                  "pm.test(\"task is pending for this approver\", function () { pm.expect(row).to.be.an(\"object\"); pm.expect(row.decision).to.eql(null); });",
+                  "pm.test(\"page has a total\", function () { pm.expect(json.page.total).to.be.at.least(1); });",
+                  "if (row) pm.collectionVariables.set(\"approvalStepId\", row.step_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Open approval",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/{{taskId}}/steps/{{approvalStepId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "{{taskId}}",
+                "steps",
+                "{{approvalStepId}}"
+              ]
+            },
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"has allowed decisions\", function () { pm.expect(json.allowed_decisions).to.include(\"approved\"); });",
+                  "pm.test(\"not decided yet\", function () { pm.expect(json.decided).to.eql(null); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Request more information without comment (400)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/{{taskId}}/steps/{{approvalStepId}}/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "{{taskId}}",
+                "steps",
+                "{{approvalStepId}}",
+                "decision"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "The same comment rules as the emailed link.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"request_more_info\",\n  \"comment\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", function () { pm.response.to.have.status(400); });",
+                  "pm.test(\"code is APPROVAL_COMMENT_REQUIRED\", function () { pm.expect(pm.response.json().code).to.eql(\"APPROVAL_COMMENT_REQUIRED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve in the app",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/{{taskId}}/steps/{{approvalStepId}}/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "{{taskId}}",
+                "steps",
+                "{{approvalStepId}}",
+                "decision"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Records decided_via: app and clears this step's emailed link. To try the information request loop instead, send {\"decision\": \"request_more_info\", \"comment\": \"…\"}; after the requester answers, the repeat review shows up in pending again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approved\",\n  \"comment\": \"Approved in the app from Postman.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"decision recorded\", function () { pm.expect(json.decision).to.eql(\"approved\"); pm.expect(json).to.have.property(\"task_status\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve again (409)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/{{taskId}}/steps/{{approvalStepId}}/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "{{taskId}}",
+                "steps",
+                "{{approvalStepId}}",
+                "decision"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approved\",\n  \"comment\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", function () { pm.response.to.have.status(409); });",
+                  "pm.test(\"code is APPROVAL_ALREADY_DECIDED\", function () { pm.expect(pm.response.json().code).to.eql(\"APPROVAL_ALREADY_DECIDED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Open approval after deciding",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/{{taskId}}/steps/{{approvalStepId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "{{taskId}}",
+                "steps",
+                "{{approvalStepId}}"
+              ]
+            },
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"decided, nothing allowed\", function () { pm.expect(json.decided.decision).to.eql(\"approved\"); pm.expect(json.allowed_decisions).to.eql([]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List history",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/history?decision=approved&limit=20&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "decision",
+                  "value": "approved"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "header": [],
+            "description": "Newest decision first, filtered to approvals."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var row = pm.response.json().approvals.find(function (a) { return a.task_id === pm.collectionVariables.get(\"taskId\") && a.step_id === pm.collectionVariables.get(\"approvalStepId\"); });",
+                  "pm.test(\"decision is in history\", function () { pm.expect(row).to.be.an(\"object\"); pm.expect(row.decision).to.eql(\"approved\"); pm.expect(row.decided_via).to.eql(\"app\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pending count after deciding",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "summary"
+              ]
+            },
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"pending is a number\", function () { pm.expect(pm.response.json().pending).to.be.a(\"number\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requester has no inbox (403)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/pending",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "pending"
+              ]
+            },
+            "header": [],
+            "description": "Runs as the requester, who holds task:create only.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{requesterToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 403\", function () { pm.response.to.have.status(403); });",
+                  "pm.test(\"code is PERMISSION_DENIED\", function () { pm.expect(pm.response.json().code).to.eql(\"PERMISSION_DENIED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown step (404)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approver/approvals/{{taskId}}/steps/no_such_step",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approver",
+                "approvals",
+                "{{taskId}}",
+                "steps",
+                "no_such_step"
+              ]
+            },
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", function () { pm.response.to.have.status(404); });",
+                  "pm.test(\"code is APPROVAL_NOT_FOUND\", function () { pm.expect(pm.response.json().code).to.eql(\"APPROVAL_NOT_FOUND\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Approvals",
-      "description": "Approver path, no session. Paste the approval URL printed by the console mailer (MAIL_TRANSPORT=console) into the {{approvalUrl}} collection variable (a bare token also works). The folder's pre-request script extracts {{approvalToken}}. Repeat paste, view and approve for each approval step.",
+      "description": "Approver path, no session. The Approver inbox folder has already decided the first approval in the app, so paste the URL of the NEXT approval email printed by the console mailer (MAIL_TRANSPORT=console) into the {{approvalUrl}} collection variable (a bare token also works). The folder's pre-request script extracts {{approvalToken}}. Repeat paste, view and approve for each remaining approval step. A link for a step already decided in the app shows decided.",
       "auth": {
         "type": "noauth"
       },

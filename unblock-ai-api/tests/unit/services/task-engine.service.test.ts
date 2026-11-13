@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { TaskEngineService } from "../../../src/services/task-engine.service.js";
 import {
+  ApprovalChannel,
   ApprovalDecision,
   ENTRY_FORM_STEP_ID,
   TaskEffectKind,
@@ -14,7 +15,7 @@ import {
 import { ApprovalErrorCode } from "../../../src/data/constants/approval-error.constant.js";
 import { withErrorCode } from "../../helpers/error-assertion.helper.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
-import { buildTaskDocument, directoryResolution, engineContext, leaveResolutions } from "../../helpers/task-fixture.helper.js";
+import { buildTaskDocument, EMAIL_ACTOR, directoryResolution, engineContext, leaveResolutions } from "../../helpers/task-fixture.helper.js";
 import type { TaskDocument } from "../../../src/lib/types/task/task-document.type.js";
 import type { TaskEffect } from "../../../src/lib/types/task/task-engine.type.js";
 import type { TaskFieldValue } from "../../../src/lib/types/task/task-value.type.js";
@@ -79,7 +80,7 @@ test("submitting the entry form dispatches the advisor and binds the supplied ap
 test("the full IT story with one information request completes through the Dean for a 40-day trip", () => {
   let task = startedLeave(40);
 
-  let result = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Attach the invitation letter details", CONTEXT);
+  let result = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Attach the invitation letter details", EMAIL_ACTOR, CONTEXT);
   task = result.task;
   assert.deepEqual(task.steps.map((entry) => entry.id), [
     ENTRY_FORM_STEP_ID,
@@ -99,12 +100,12 @@ test("the full IT story with one information request completes through the Dean 
   assert.deepEqual(kinds(result.effects), [`${TaskEffectKind.DISPATCH_APPROVAL}:advisor_review__repeat_1`]);
   assert.equal(step(task, "advisor_review__repeat_1").assignee?.email, "advisor@u.c");
 
-  task = engine.recordDecision(task, "advisor_review__repeat_1", ApprovalDecision.APPROVED, null, CONTEXT).task;
+  task = engine.recordDecision(task, "advisor_review__repeat_1", ApprovalDecision.APPROVED, null, EMAIL_ACTOR, CONTEXT).task;
   assert.equal(step(task, "hod_review").status, TaskStepStatus.AWAITING_APPROVER);
-  task = engine.recordDecision(task, "hod_review", ApprovalDecision.APPROVED, null, CONTEXT).task;
+  task = engine.recordDecision(task, "hod_review", ApprovalDecision.APPROVED, null, EMAIL_ACTOR, CONTEXT).task;
   assert.equal(step(task, "dean_review").status, TaskStepStatus.AWAITING_APPROVER);
 
-  result = engine.recordDecision(task, "dean_review", ApprovalDecision.APPROVED, "Enjoy", CONTEXT);
+  result = engine.recordDecision(task, "dean_review", ApprovalDecision.APPROVED, "Enjoy", EMAIL_ACTOR, CONTEXT);
   assert.equal(result.task.status, TaskStatus.COMPLETED);
   assert.ok(result.task.completed_at);
   assert.deepEqual(kinds(result.effects), [TaskEffectKind.NOTIFY_TASK_COMPLETED]);
@@ -113,9 +114,9 @@ test("the full IT story with one information request completes through the Dean 
 
 test("the Dean step is skipped for a 10-day trip and the task completes after the HoD", () => {
   let task = startedLeave(10);
-  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.APPROVED, null, CONTEXT).task;
+  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.APPROVED, null, EMAIL_ACTOR, CONTEXT).task;
 
-  const { task: done, effects } = engine.recordDecision(task, "hod_review", ApprovalDecision.APPROVED, null, CONTEXT);
+  const { task: done, effects } = engine.recordDecision(task, "hod_review", ApprovalDecision.APPROVED, null, EMAIL_ACTOR, CONTEXT);
 
   assert.equal(step(done, "dean_review").status, TaskStepStatus.SKIPPED);
   assert.equal(done.status, TaskStatus.COMPLETED);
@@ -138,7 +139,7 @@ test("a condition on a value that is not submitted yet runs the step", () => {
 test("a terminating rejection ends the task, cancels the rest and revokes links", () => {
   const task = startedLeave(40);
 
-  const { task: rejected, effects } = engine.recordDecision(task, "advisor_review", ApprovalDecision.REJECTED, "Exams clash", CONTEXT);
+  const { task: rejected, effects } = engine.recordDecision(task, "advisor_review", ApprovalDecision.REJECTED, "Exams clash", EMAIL_ACTOR, CONTEXT);
 
   assert.equal(rejected.status, TaskStatus.REJECTED);
   assert.equal(step(rejected, "hod_review").status, TaskStepStatus.CANCELLED);
@@ -149,12 +150,12 @@ test("a terminating rejection ends the task, cancels the rest and revokes links"
 test("the information request cap removes the option", () => {
   let task = startedLeave(40);
   const context = engineContext(LEAVE, { maxInformationRequestsPerStep: 1 });
-  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Why?", context).task;
+  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Why?", EMAIL_ACTOR, context).task;
   task = engine.submitForm(withValues(task, { "responses.advisor_review__information_request_1": "Because" }), "advisor_review__information_request_1__form", context).task;
 
   assert.deepEqual(engine.allowedDecisions(task, "advisor_review__repeat_1", context), [ApprovalDecision.APPROVED, ApprovalDecision.REJECTED]);
   assert.throws(
-    () => engine.recordDecision(task, "advisor_review__repeat_1", ApprovalDecision.REQUEST_MORE_INFO, "Again?", context),
+    () => engine.recordDecision(task, "advisor_review__repeat_1", ApprovalDecision.REQUEST_MORE_INFO, "Again?", EMAIL_ACTOR, context),
     withErrorCode(ApprovalErrorCode.APPROVAL_DECISION_NOT_ALLOWED),
   );
 });
@@ -190,7 +191,7 @@ test("a notification step completes immediately", () => {
   let task = engine.start(buildTaskDocument(definition, resolutionsFor(definition)), context).task;
   task = engine.submitForm(withValues(task, entryValues(10)), "entry_form__form", context).task;
 
-  const { task: done, effects } = engine.recordDecision(task, "hall", ApprovalDecision.APPROVED, null, context);
+  const { task: done, effects } = engine.recordDecision(task, "hall", ApprovalDecision.APPROVED, null, EMAIL_ACTOR, context);
 
   assert.equal(step(done, "notify_office").kind, TaskStepKind.NOTIFICATION);
   assert.equal(step(done, "notify_office").status, TaskStepStatus.COMPLETED);
@@ -207,7 +208,7 @@ test("a non-terminating rejection with no downstream path ends the task as rejec
   let task = engine.start(buildTaskDocument(definition, resolutionsFor(definition)), context).task;
   task = engine.submitForm(withValues(task, entryValues(10)), "entry_form__form", context).task;
 
-  const { task: ended, effects } = engine.recordDecision(task, "hall", ApprovalDecision.REJECTED, "Booked", context);
+  const { task: ended, effects } = engine.recordDecision(task, "hall", ApprovalDecision.REJECTED, "Booked", EMAIL_ACTOR, context);
 
   assert.equal(ended.status, TaskStatus.REJECTED);
   assert.equal(step(ended, "finance").status, TaskStepStatus.CANCELLED);
@@ -225,7 +226,7 @@ test("a later form step activated by a decision notifies the requester", () => {
   let task = engine.start(buildTaskDocument(definition, resolutionsFor(definition).slice(0, 1)), context).task;
   task = engine.submitForm(withValues(task, entryValues(10)), "entry_form__form", context).task;
 
-  const { task: next, effects } = engine.recordDecision(task, "hall", ApprovalDecision.APPROVED, null, context);
+  const { task: next, effects } = engine.recordDecision(task, "hall", ApprovalDecision.APPROVED, null, EMAIL_ACTOR, context);
 
   assert.equal(step(next, "travel_documents").status, TaskStepStatus.AWAITING_REQUESTER);
   assert.deepEqual(kinds(effects), [`${TaskEffectKind.NOTIFY_REQUESTER_ACTION_REQUIRED}:travel_documents`]);
@@ -239,4 +240,24 @@ test("cancel closes every open step and revokes links", () => {
   assert.equal(cancelled.status, TaskStatus.CANCELLED);
   assert.ok(cancelled.steps.filter((entry) => entry.origin !== TaskStepOrigin.ENTRY_FORM).every((entry) => entry.status === TaskStepStatus.CANCELLED));
   assert.deepEqual(kinds(effects), [TaskEffectKind.REVOKE_APPROVAL_LINKS]);
+});
+
+test("recordDecision stamps the channel and the deciding user for every decision", () => {
+  const actor = { channel: ApprovalChannel.APP, user_id: "user-advisor" };
+  for (const decision of [ApprovalDecision.APPROVED, ApprovalDecision.REJECTED, ApprovalDecision.REQUEST_MORE_INFO]) {
+    const { task } = engine.recordDecision(startedLeave(40), "advisor_review", decision, "Noted", actor, CONTEXT);
+    const approval = step(task, "advisor_review").approval;
+    assert.deepEqual([approval?.decision, approval?.decided_via, approval?.decided_by_user_id], [decision, ApprovalChannel.APP, "user-advisor"]);
+  }
+
+  const { task } = engine.recordDecision(startedLeave(40), "advisor_review", ApprovalDecision.APPROVED, null, EMAIL_ACTOR, CONTEXT);
+  assert.deepEqual([step(task, "advisor_review").approval?.decided_via, step(task, "advisor_review").approval?.decided_by_user_id], [ApprovalChannel.EMAIL_LINK, null]);
+});
+
+test("the repeat review does not inherit the first decision's channel or user", () => {
+  const actor = { channel: ApprovalChannel.APP, user_id: "user-advisor" };
+  const { task } = engine.recordDecision(startedLeave(40), "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Why?", actor, CONTEXT);
+  const repeat = step(task, "advisor_review__repeat_1").approval;
+
+  assert.deepEqual([repeat?.decision, repeat?.decided_via, repeat?.decided_by_user_id], [null, null, null]);
 });

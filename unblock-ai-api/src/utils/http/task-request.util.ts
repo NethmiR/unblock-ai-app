@@ -26,7 +26,13 @@ export function parseCreateTaskInput(body: unknown): CreateTaskInput {
   }
 }
 
-export function parseTaskListFilter(query: Request["query"]): TaskListFilter {
+export interface ListWindow {
+  search: string | null;
+  limit: number;
+  offset: number;
+}
+
+export function parseListWindow(query: Request["query"]): ListWindow {
   const limit = parseIntegerQuery(query.limit, "limit", TASK_FIELD_LIMIT.LIST_DEFAULT_LIMIT);
   const offset = parseIntegerQuery(query.offset, "offset", 0);
   if (limit < 1 || limit > TASK_FIELD_LIMIT.LIST_MAX_LIMIT) {
@@ -38,12 +44,11 @@ export function parseTaskListFilter(query: Request["query"]): TaskListFilter {
   if (search !== null && search.length > TASK_FIELD_LIMIT.SEARCH_MAX_LENGTH) {
     throw new ValidationError(`search must be at most ${TASK_FIELD_LIMIT.SEARCH_MAX_LENGTH} characters`);
   }
-  return {
-    status: parseOptionalOneOfQuery(query.status, "status", TASK_STATUSES),
-    search: search === "" ? null : search,
-    limit,
-    offset,
-  };
+  return { search: search === "" ? null : search, limit, offset };
+}
+
+export function parseTaskListFilter(query: Request["query"]): TaskListFilter {
+  return { status: parseOptionalOneOfQuery(query.status, "status", TASK_STATUSES), ...parseListWindow(query) };
 }
 
 export function parseFormValues(body: unknown): FormValuesInput {

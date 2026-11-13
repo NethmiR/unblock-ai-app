@@ -5,6 +5,7 @@ import {
 } from "../../data/constants/assignee.constant.js";
 import { contextUnitIds } from "../../utils/assignee/assignee-context-unit.util.js";
 import { assigneeFieldId } from "../../utils/task/task-field-id.util.js";
+import { normalizeEmail } from "../../utils/user/email.util.js";
 import type { IAssigneeResolver } from "./assignee-resolver.interface.js";
 import type { IUserAffiliationRepository } from "../../repositories/user-affiliation-repository/user-affiliation-repository.interface.js";
 import type { AssigneeResolution, AssigneeResolverContext } from "../../lib/types/assignee/assignee-resolver.type.js";
@@ -100,7 +101,7 @@ export class DirectoryAssigneeResolver implements IAssigneeResolver {
           source: AssigneeSource.DIRECTORY,
           user_id: only.holder.id,
           full_name: only.holder.fullName,
-          email: only.holder.email,
+          email: normalizeEmail(only.holder.email),
           designation_title: search.designation.title,
           organisational_unit_name: unitNameOf(only),
           field_id: null,
@@ -126,7 +127,7 @@ export class DirectoryAssigneeResolver implements IAssigneeResolver {
         candidates: search.holders.map((holder) => ({
           user_id: holder.holder.id,
           name: holder.holder.fullName,
-          email: holder.holder.email,
+          email: normalizeEmail(holder.holder.email),
         })),
       },
       options,

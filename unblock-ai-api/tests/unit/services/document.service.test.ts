@@ -10,7 +10,7 @@ import { ApprovalDecision } from "../../../src/data/constants/task.constant.js";
 import { SelectionMessageRole } from "../../../src/data/constants/selection.constant.js";
 import { buildTaskTranscript } from "../../../src/utils/document/task-transcript.util.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
-import { buildTaskDocument, engineContext, leaveResolutions, TASK_NOW } from "../../helpers/task-fixture.helper.js";
+import { buildTaskDocument, EMAIL_ACTOR, engineContext, leaveResolutions, TASK_NOW } from "../../helpers/task-fixture.helper.js";
 import type { TaskTranscript } from "../../../src/lib/types/document/document.type.js";
 import type { TaskDocument } from "../../../src/lib/types/task/task-document.type.js";
 import type { TaskFieldValue } from "../../../src/lib/types/task/task-value.type.js";
@@ -36,11 +36,11 @@ function completedLeave(): TaskDocument {
     conversation: [{ role: SelectionMessageRole.REQUESTER, text: "I need overseas leave for a research visit", sent_at: TASK_NOW }],
   };
   task = engine.submitForm(task, "entry_form__form", CONTEXT).task;
-  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Which institute?", CONTEXT).task;
+  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Which institute?", EMAIL_ACTOR, CONTEXT).task;
   task = { ...task, values: { ...task.values, "responses.advisor_review__information_request_1": "Tokyo Tech" } };
   task = engine.submitForm(task, "advisor_review__information_request_1__form", CONTEXT).task;
-  task = engine.recordDecision(task, "advisor_review__repeat_1", ApprovalDecision.APPROVED, "Fine", CONTEXT).task;
-  return engine.recordDecision(task, "hod_review", ApprovalDecision.APPROVED, null, CONTEXT).task;
+  task = engine.recordDecision(task, "advisor_review__repeat_1", ApprovalDecision.APPROVED, "Fine", EMAIL_ACTOR, CONTEXT).task;
+  return engine.recordDecision(task, "hod_review", ApprovalDecision.APPROVED, null, EMAIL_ACTOR, CONTEXT).task;
 }
 
 function transcript(): TaskTranscript {

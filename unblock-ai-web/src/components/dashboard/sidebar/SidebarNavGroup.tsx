@@ -4,6 +4,7 @@ import { Icon } from "@/components/ui/icons/Icon";
 import { cn } from "@/lib/utils/cn";
 import { IconName } from "@/types/icon";
 import type { RoutePath } from "@/lib/routing/route-path";
+import type { NavBadgeCounts } from "@/lib/hooks/useNavBadgeCounts";
 import type { NavGroup } from "@/types/navigation";
 import { SidebarNavLink } from "./SidebarNavLink";
 import { sidebarRowClass } from "./sidebar-row";
@@ -11,10 +12,11 @@ import { sidebarRowClass } from "./sidebar-row";
 interface SidebarNavGroupProps {
   group: NavGroup;
   activeHref: RoutePath | null;
+  badgeCounts: NavBadgeCounts;
 }
 
 /** A collapsible permission group. Opens itself whenever the URL moves into it. */
-export function SidebarNavGroup({ group, activeHref }: SidebarNavGroupProps) {
+export function SidebarNavGroup({ group, activeHref, badgeCounts }: SidebarNavGroupProps) {
   const panelId = useId();
   const containsActive = group.items.some((item) => item.href === activeHref);
   const [isExpanded, setIsExpanded] = useState(containsActive);
@@ -46,7 +48,11 @@ export function SidebarNavGroup({ group, activeHref }: SidebarNavGroupProps) {
       <ul id={panelId} className={cn("mt-0.5 flex-col gap-0.5 pl-4", isExpanded ? "flex" : "hidden")}>
         {group.items.map((item) => (
           <li key={item.href}>
-            <SidebarNavLink item={item} isActive={item.href === activeHref} />
+            <SidebarNavLink
+              item={item}
+              isActive={item.href === activeHref}
+              badge={item.badgeKey === undefined ? null : badgeCounts[item.badgeKey]}
+            />
           </li>
         ))}
       </ul>

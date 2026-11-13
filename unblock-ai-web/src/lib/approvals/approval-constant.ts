@@ -1,0 +1,2 @@
+export const APPROVAL_INBOX_POLL_INTERVAL_MS = 30_000;
+export const APPROVAL_LIST_PAGE_SIZE = 20;

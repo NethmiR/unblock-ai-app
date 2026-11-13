@@ -125,3 +125,41 @@ test("both migrations apply and roll back", async () => {
   await sessions.down({ db });
   assert.equal((await db.collection("selection_sessions").indexes()).some((index) => index.name === "selection_session_expiry"), false);
 });
+
+test("the approval inbox migration normalises assignee emails, adds the decision stamps and indexes, and rolls back", async () => {
+  const db = await mongo.getDb();
+  const load = async (path: string): Promise<MongoMigration> => (await import(path)).default as MongoMigration;
+  const revamp = await load("../../src/db/migration/mongo/migrations/20261113090856_task-request-revamp.migration.js");
+  const inbox = await load("../../src/db/migration/mongo/migrations/20261113180653_approval-inbox.migration.js");
+
+  await revamp.up({ db });
+  const legacy = leaveTask();
+  const legacySteps = legacy.steps.map((step) => {
+    const withEmail = step.assignee ? { ...step, assignee: { ...step.assignee, email: step.assignee.email && ` ${step.assignee.email.toUpperCase()} ` } } : step;
+    if (!withEmail.approval) return withEmail;
+    const { decided_via: _via, decided_by_user_id: _by, ...approval } = withEmail.approval;
+    return { ...withEmail, approval };
+  });
+  await db.collection("tasks").insertOne({ ...legacy, steps: legacySteps });
+
+  await inbox.up({ db });
+  const migrated = await db.collection("tasks").findOne({ _id: legacy._id });
+  const steps = (migrated?.steps ?? []) as Array<{ assignee: { email: string | null } | null; approval: Record<string, unknown> | null }>;
+  const emailed = steps.filter((step) => typeof step.assignee?.email === "string");
+  assert.ok(emailed.length > 0);
+  assert.ok(emailed.every((step) => step.assignee?.email === step.assignee?.email?.trim().toLowerCase()));
+  const approvals = steps.flatMap((step) => (step.approval ? [step.approval] : []));
+  assert.ok(approvals.length > 0);
+  assert.ok(approvals.every((approval) => approval.decided_via === null && approval.decided_by_user_id === null));
+  const indexNames = (await db.collection("tasks").indexes()).map((index) => index.name);
+  assert.ok(indexNames.includes("task_step_assignee_user_status"));
+  assert.ok(indexNames.includes("task_step_assignee_email_status"));
+
+  await inbox.down({ db });
+  const rolledBack = await db.collection("tasks").findOne({ _id: legacy._id });
+  const rolledApprovals = ((rolledBack?.steps ?? []) as Array<{ approval: Record<string, unknown> | null }>).flatMap((step) => (step.approval ? [step.approval] : []));
+  assert.ok(rolledApprovals.every((approval) => !("decided_via" in approval) && !("decided_by_user_id" in approval)));
+  assert.equal((await db.collection("tasks").indexes()).some((index) => index.name === "task_step_assignee_user_status"), false);
+
+  await revamp.down({ db });
+});

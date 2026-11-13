@@ -30,7 +30,10 @@ src/db/migration/
    ├─ mongo.migration-engine.ts
    └─ migrations/
       ├─ 20261111000000_initial-schema.migration.ts
-      └─ 20261111101053_workflow-templates.migration.ts
+      ├─ 20261111101053_workflow-templates.migration.ts
+      ├─ 20261113084701_ephemeral-selection-sessions.migration.ts
+      ├─ 20261113090856_task-request-revamp.migration.ts
+      └─ 20261113180653_approval-inbox.migration.ts
 
 scripts/db/
 ├─ migrate-postgres.script.ts             CLI entry point for Postgres
@@ -181,6 +184,7 @@ MongoDB holds no user data; `tasks.created_by` and `workflow_templates.created_b
 | `20261111101053_workflow-templates` | Drops `templates` and `drafts`, creates `workflow_templates` and `workflow_template_versions`, and replaces the `tasks` index on `workflow_id` with one on `workflow_template_id` |
 | `20261113084701_ephemeral-selection-sessions` | Drops `selection_sessions` and recreates it with `selection_session_expiry` (TTL on `expires_at`, `expireAfterSeconds: 0`) and `selection_session_owner` (`created_by`, `created_at`). `down` recreates it without indexes |
 | `20261113090856_task-request-revamp` | Renames `tasks` to `legacy_tasks` (kept for reference, never read) and creates a fresh `tasks` collection with its indexes. `down` drops the new `tasks` and renames `legacy_tasks` back |
+| `20261113180653_approval-inbox` | Prepares `tasks` for the signed-in approver inbox. Trims and lower-cases every `steps.assignee.email`; sets `decided_via: null` and `decided_by_user_id: null` on every step approval that lacks them; creates `task_step_assignee_user_status` (`steps.assignee.user_id`, `steps.status`) and `task_step_assignee_email_status` (`steps.assignee.email`, `steps.status`). `down` drops both indexes and unsets the two approval fields. It leaves emails lower-cased on purpose: the change is harmless, and the original casing is not kept |
 
 > **`20261111101053_workflow-templates` does not migrate data.** It drops the `templates` and `drafts` collections outright; nothing is copied into the new collections. Existing tasks and selection sessions keep their old `workflow_id` / `version` / `selected_workflow_id` fields, which the code no longer reads, so they stop resolving. Recreate templates through `/api/workflow-templates` after applying it, and treat old tasks and sessions as unusable. `down` recreates `templates` and `drafts` empty; it does not bring their data back.
 
@@ -191,6 +195,6 @@ After these migrations the collections are:
 - `workflow_templates` — one document per template, keyed by a string UUID `_id`: `title`, `description`, `status` (`draft` \| `unpublished` \| `published`), `draft_prompt`, `current_version`, `archived_at`, `created_by`, `updated_by`, timestamps, and `retrieval` — the current version's embedded text, vector, aliases, `retrieval_summary` and `institution_type`. Indexes: `workflow_template_archived_updated` (`archived_at`, `updated_at`) and `workflow_template_retrieval_filter` (`status`, `archived_at`, `retrieval.institution_type`).
 - `workflow_template_versions` — one immutable document per generated version: `workflow_template_id`, `version`, `prompt`, `definition`, `generation_attempts`, `created_by`, `created_at`. Unique index `workflow_template_version_unique` on (`workflow_template_id`, `version`).
 - `selection_sessions` — ephemeral assistant conversations: `created_by`, `status`, `messages`, frozen `candidates`, `rounds_used`, `selected_workflow_template_id`, `expires_at`, timestamps. Indexes: `selection_session_expiry` (TTL on `expires_at`) and `selection_session_owner` (`created_by`, `created_at`).
-- `tasks` — one document per task: `reference`, `revision`, `created_by`, the `requester` snapshot, `workflow_template_id` + `workflow_template_version`, `status`, `creation_source`, `conversation`, ordered `steps`, `forms`, `values`, `unsupported_inputs`, `audit`, timestamps. Indexes: `task_reference_unique`, `task_created_by_updated`, `task_created_by_status`, `task_workflow_template_status` and `task_approval_token_hash` (partial, where `steps.approval.token_hash` is a string).
+- `tasks` — one document per task: `reference`, `revision`, `created_by`, the `requester` snapshot, `workflow_template_id` + `workflow_template_version`, `status`, `creation_source`, `conversation`, ordered `steps`, `forms`, `values`, `unsupported_inputs`, `audit`, timestamps. Step assignee emails are stored normalised (trimmed, lower case), and each step approval records `decided_via` (`email_link` \| `app` \| `null`) and `decided_by_user_id`. Indexes: `task_reference_unique`, `task_created_by_updated`, `task_created_by_status`, `task_workflow_template_status`, `task_approval_token_hash` (partial, where `steps.approval.token_hash` is a string), `task_step_assignee_user_status` and `task_step_assignee_email_status` (the approver inbox queries).
 - `legacy_tasks` — pre-revamp tasks, never read.
 - `counters` and `audit_logs` — as created by the initial schema.

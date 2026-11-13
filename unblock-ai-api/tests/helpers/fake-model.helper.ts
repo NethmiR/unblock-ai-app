@@ -17,7 +17,12 @@ import type { ISelectionSessionModel } from "../../src/models/selection-session.
 import type { WorkflowTemplateAudience } from "../../src/lib/types/selection/eligibility.type.js";
 import { taskRevisionConflict } from "../../src/errors/task.error.js";
 import type { ITaskModel } from "../../src/models/task.model.js";
-import type { TaskDocument } from "../../src/lib/types/task/task-document.type.js";
+import type { TaskDocument, TaskStepRecord } from "../../src/lib/types/task/task-document.type.js";
+import { ApprovalAssignmentState } from "../../src/data/constants/approval.constant.js";
+import { ACTIVE_TASK_STEP_STATUSES, TaskStatus } from "../../src/data/constants/task.constant.js";
+import { isAssignedTo, isLiveApproval } from "../../src/utils/approval/approver-identity.util.js";
+import type { ApprovalAssignmentFilter, ApprovalAssignmentPage, ApprovalAssignmentRow } from "../../src/lib/types/approval/approval.type.js";
+import type { ApproverIdentity } from "../../src/lib/types/approval/approver-identity.type.js";
 import type { TaskListFilter, TaskListPage } from "../../src/lib/types/task/task-dto.type.js";
 import type { AuditLogDocument, AuditResource } from "../../src/lib/types/audit/audit.type.js";
 
@@ -202,6 +207,42 @@ export class FakeTaskModel implements ITaskModel {
   findByApprovalTokenHash(tokenHash: string): Promise<TaskDocument | null> {
     const found = [...this.tasks.values()].find((task) => task.steps.some((step) => step.approval?.token_hash === tokenHash));
     return Promise.resolve(found ? cloneDocument(found) : null);
+  }
+
+  findApprovalAssignmentPage(identity: ApproverIdentity, filter: ApprovalAssignmentFilter): Promise<ApprovalAssignmentPage> {
+    const rows = this.assignmentRows(identity, filter);
+    return Promise.resolve({ rows: rows.slice(filter.offset, filter.offset + filter.limit), total: rows.length });
+  }
+
+  countPendingApprovalAssignments(identity: ApproverIdentity): Promise<number> {
+    const filter = { state: ApprovalAssignmentState.PENDING, decision: null, search: null, limit: Number.MAX_SAFE_INTEGER, offset: 0 };
+    return Promise.resolve(this.assignmentRows(identity, filter).length);
+  }
+
+  private assignmentRows(identity: ApproverIdentity, filter: ApprovalAssignmentFilter): ApprovalAssignmentRow[] {
+    const search = filter.search?.toLowerCase() ?? null;
+    const pending = filter.state === ApprovalAssignmentState.PENDING;
+    const stepMatches = (step: TaskStepRecord): boolean =>
+      step.approval !== null
+      && isAssignedTo(step.assignee, identity)
+      && (pending
+        ? isLiveApproval(step)
+        : step.approval.decision !== null && (filter.decision === null || step.approval.decision === filter.decision));
+    const rows = [...this.tasks.values()]
+      .filter((task) => task.created_by !== identity.userId && (!pending || task.status === TaskStatus.IN_PROGRESS))
+      .filter((task) => search === null || [task.reference, task.title, task.requester.full_name].some((text) => text.toLowerCase().includes(search)))
+      .flatMap((task) => {
+        const { forms, values: _values, conversation: _conversation, audit: _audit, steps, ...rest } = cloneDocument(task);
+        const active = steps.find((step) => ACTIVE_TASK_STEP_STATUSES.includes(step.status));
+        const projection = {
+          ...rest,
+          forms: forms.map((form) => ({ step_id: form.step_id, submitted_at: form.submitted_at })),
+          active_step_name: active?.name ?? null,
+        };
+        return steps.filter(stepMatches).map((step) => ({ task: projection, step }));
+      });
+    const time = (row: ApprovalAssignmentRow): number => (pending ? row.step.activated_at : row.step.approval?.decided_at)?.getTime() ?? 0;
+    return rows.sort((a, b) => (pending ? time(a) - time(b) : time(b) - time(a)));
   }
 
   deleteById(id: string): Promise<boolean> {

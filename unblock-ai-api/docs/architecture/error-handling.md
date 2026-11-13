@@ -21,7 +21,7 @@ this is exactly what gets serialized into the HTTP response body.
 | Class | File | Status | `code` | Used for |
 | --- | --- | --- | --- | --- |
 | `ValidationError` | `src/errors/validation.error.ts` | 400 | `VALIDATION_ERROR` | Malformed or missing request bodies/fields; has `ValidationError.forField()` and `ValidationError.forObject()` factory helpers. |
-| `NotFoundError` | `src/errors/not-found.error.ts` | 404 | `NOT_FOUND` | Missing workflow template, template version, selection session, task, form or approval link; has a `NotFoundError.of(resource, id)` factory helper. |
+| `NotFoundError` | `src/errors/not-found.error.ts` | 404 | `NOT_FOUND` | Missing workflow template, template version, selection session, task, form, approval link, or an approval not assigned to the signed-in caller (`APPROVAL_NOT_FOUND`); has a `NotFoundError.of(resource, id)` factory helper. |
 | `ConflictError` | `src/errors/conflict.error.ts` | 409 | `CONFLICT` | A request that is well-formed but conflicts with the current state (e.g. starting a task from a session that hasn't matched, submitting a form twice, a task revision conflict, or publishing a template that is already published). |
 | `GoneError` | `src/errors/gone.error.ts` | 410 | `GONE` | A resource that existed but is no longer usable; raised as `APPROVAL_LINK_EXPIRED` for an expired approval link. |
 | `WorkflowTemplateGenerationError` | `src/errors/workflow-template-generation.error.ts` | 422 | `WORKFLOW_TEMPLATE_GENERATION_FAILED` | Workflow template generation failed after all repair attempts (`details` lists the last validation errors). Raised with code `WORKFLOW_TEMPLATE_PROMPT_REJECTED` when the model flags the prompt as not describing a workflow (`details` lists the model's `metadata.ambiguities`). |
@@ -41,7 +41,8 @@ example, `src/errors/workflow-template.error.ts` returns `NotFoundError` or
 `WORKFLOW_TEMPLATE_NOT_ELIGIBLE`), defined in
 `src/data/constants/workflow-template-error.constant.ts`. The task request flow follows the
 same pattern: `selection-session.error.ts` (`SELECTION_*`), `task.error.ts` (`TASK_*`, with
-`TASK_FORM_INVALID` carrying `details.issues`) and `approval.error.ts` (`APPROVAL_*`), with
+`TASK_FORM_INVALID` carrying `details.issues`) and `approval.error.ts` (`APPROVAL_*`, including
+`approvalNotFound(taskId, stepId)` for the signed-in approver routes), with
 their codes in `selection-error.constant.ts`, `task-error.constant.ts` and
 `approval-error.constant.ts`.
 
@@ -63,4 +64,4 @@ rejected promise from a controller reaches this middleware instead of crashing t
 process.
 
 See [../api/api-documentation.md](../api/api-documentation.md) §9 for the error response
-shapes, and §6.7, §7.10 and §8.3 for the per-area codes.
+shapes, and §6.7, §7.10, §8.3 and §8.10 for the per-area codes.

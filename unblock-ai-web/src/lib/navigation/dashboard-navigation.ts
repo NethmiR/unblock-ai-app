@@ -1,7 +1,7 @@
 import { IconName } from "@/types/icon";
 import { Permission } from "@/types/permission";
 import { RoutePath } from "@/lib/routing/route-path";
-import type { NavGroup, NavItem } from "@/types/navigation";
+import { NavBadgeKey, type NavGroup, type NavItem } from "@/types/navigation";
 
 /**
  * The sidebar, as data: one group per backend `Permission`, in display order.
@@ -41,6 +41,7 @@ export const DASHBOARD_NAVIGATION = {
         label: "Pending",
         href: RoutePath.APPROVALS,
         icon: IconName.INBOX,
+        badgeKey: NavBadgeKey.PENDING_APPROVALS,
         title: "Pending Approvals",
         description: "Requests waiting for your decision.",
       },

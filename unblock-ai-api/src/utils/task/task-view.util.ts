@@ -1,9 +1,10 @@
 import { FormSectionKind, TaskFormStatus } from "../../data/constants/task-form.constant.js";
-import { TaskStepKind, TaskStepOrigin } from "../../data/constants/task.constant.js";
+import { ENTRY_FORM_STEP_ID, TaskStepKind } from "../../data/constants/task.constant.js";
 import { computedLabel, computeValues } from "../workflow/computed-evaluator.util.js";
 import { trustedTaskValues } from "./task-condition-namespace.util.js";
 import { inputFieldId } from "./task-field-id.util.js";
 import { formatFieldValue } from "./task-field-format.util.js";
+import type { TaskFormSubmissionStamp } from "../../lib/types/approval/approval.type.js";
 import type { DocumentField, DocumentSection } from "../../lib/types/document/document.type.js";
 import type { RequesterSnapshotUnit, TaskDocument, TaskStepRecord } from "../../lib/types/task/task-document.type.js";
 import type { WorkflowDefinition } from "../../lib/types/workflow/workflow.type.js";
@@ -18,10 +19,8 @@ export interface InformationExchangeView {
   answer: string | null;
 }
 
-export function taskSubmittedAt(task: TaskDocument): Date {
-  const entry = task.steps.find((step) => step.origin === TaskStepOrigin.ENTRY_FORM);
-  const form = entry ? task.forms.find((candidate) => candidate.step_id === entry.id) : undefined;
-  return form?.submitted_at ?? task.created_at;
+export function taskSubmittedAt(task: Pick<TaskDocument, "created_at"> & { forms: TaskFormSubmissionStamp[] }): Date {
+  return task.forms.find((form) => form.step_id === ENTRY_FORM_STEP_ID)?.submitted_at ?? task.created_at;
 }
 
 export function submittedFormSections(task: TaskDocument): DocumentSection[] {

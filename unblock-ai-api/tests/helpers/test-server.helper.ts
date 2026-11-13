@@ -42,9 +42,13 @@ const CREATED_AT = new Date("2026-01-01T00:00:00Z");
 const SESSION_EXPIRY = new Date("2099-01-01T00:00:00Z");
 
 function testUser(id: string, identity: TestIdentity, fullName: string, permissions: Permission[]): UserCredentialRecord {
+  return testUserRecord(id, `${identity}@example.com`, fullName, permissions);
+}
+
+export function testUserRecord(id: string, email: string, fullName: string, permissions: Permission[]): UserCredentialRecord {
   return {
     id,
-    email: `${identity}@example.com`,
+    email,
     fullName,
     passwordHash: "unused-in-tests",
     status: UserStatus.ACTIVE,
@@ -99,11 +103,20 @@ export const TEST_SESSION_TOKENS: Record<TestIdentity, string> = {
   [TestIdentity.ADMINISTRATOR]: "test-session-token-administrator",
 };
 
+export interface ExtraTestSession {
+  userId: string;
+  token: string;
+}
+
 function testSession(identity: TestIdentity, index: number): UserSessionRecord {
+  return sessionRecord(`00000000-0000-4000-9000-00000000000${index + 1}`, TEST_USERS[identity].id, TEST_SESSION_TOKENS[identity]);
+}
+
+function sessionRecord(id: string, userId: string, token: string): UserSessionRecord {
   return {
-    id: `00000000-0000-4000-9000-00000000000${index + 1}`,
-    userId: TEST_USERS[identity].id,
-    tokenHash: hashUserSessionToken(TEST_SESSION_TOKENS[identity]),
+    id,
+    userId,
+    tokenHash: hashUserSessionToken(token),
     userAgent: null,
     createdAt: CREATED_AT,
     lastSeenAt: new Date(),
@@ -122,13 +135,18 @@ export interface TestAuthentication {
 }
 
 export function createTestAuthentication(
-  options: { users?: UserCredentialRecord[]; authConfig?: AuthConfig } = {},
+  options: { users?: UserCredentialRecord[]; sessions?: ExtraTestSession[]; authConfig?: AuthConfig } = {},
 ): TestAuthentication {
   const authConfig = options.authConfig ?? TEST_AUTH_CONFIG;
   const identities = Object.values(TestIdentity);
   const repositories = createInMemoryRepositoryRegistry({
     users: [...identities.map((identity) => TEST_USERS[identity]), ...(options.users ?? [])],
-    userSessions: identities.map((identity, index) => testSession(identity, index)),
+    userSessions: [
+      ...identities.map((identity, index) => testSession(identity, index)),
+      ...(options.sessions ?? []).map((session, index) =>
+        sessionRecord(`00000000-0000-4000-9100-${String(index + 1).padStart(12, "0")}`, session.userId, session.token),
+      ),
+    ],
   });
   const { userRepository, userSessionRepository } = repositories;
   const userSessionService = new UserSessionService({ userSessionRepository, authConfig });
@@ -171,6 +189,7 @@ export function createTestControllers(overrides: Partial<ApiControllers> = {}): 
     taskController: unusedController(),
     taskFormController: unusedController(),
     approvalController: unusedController(),
+    approverController: unusedController(),
     authController: unusedController(),
     userSessionController: unusedController(),
     userController: unusedController(),

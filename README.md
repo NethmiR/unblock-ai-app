@@ -4,8 +4,8 @@ Turns a plain-English description of an institutional approval workflow into a s
 machine-readable workflow graph, then runs it for requesters: an assistant picks the right
 process from one sentence and the requester's profile, a task plan arrives with approvers
 resolved from the directory and details prefilled, the requester fills step forms, approvers
-approve, reject or ask for more information from an emailed link, and a transcript PDF closes
-the request.
+approve, reject or ask for more information from their in-app approvals inbox or an emailed
+link, and a transcript PDF closes the request.
 
 Two applications run side by side:
 
@@ -306,6 +306,8 @@ Then open:
 - Workflow templates: **http://localhost:3001/dashboard/workflows** (needs `workflow:manage`)
 - New task request (assistant): **http://localhost:3001/dashboard/tasks/new** (needs `task:create`)
 - My task requests: **http://localhost:3001/dashboard/tasks**
+- Approvals inbox: **http://localhost:3001/dashboard/approvals** (needs `task:approve`) — pending
+  approvals, history at `/dashboard/approvals/history`
 - Approver page: `http://localhost:3001/approvals/<token>` (from the approval email; no sign-in)
 - API health check: **http://localhost:3000/api/health**
 
@@ -330,7 +332,7 @@ one or more permissions:
 |---|---|
 | `workflow:manage` | Create, generate, publish, archive and restore workflow templates |
 | `task:create` | Read workflow templates, use the assistant, create and run **their own** task requests |
-| `task:approve` | Grantable, but gates nothing yet (approvals still use emailed links) |
+| `task:approve` | See, open and decide the approvals assigned to them in **Approvals → Pending**, and review their past decisions in **Approvals → History** |
 | `user:manage` | Create, list and view users, and manage their affiliations |
 | `organisation:manage` | Configure faculties, departments, divisions and designations |
 
@@ -371,9 +373,15 @@ There is no self-registration, password reset, or password change yet — every 
 The `/account` page shows your profile, permissions and active sessions; you can revoke a
 single session, sign out of all other sessions, or sign out.
 
-Approvers do not have accounts. An approver receives an emailed link containing a signed
-approval token, and that token is the authentication — with `MAIL_TRANSPORT=console` the link
-is printed in the backend terminal.
+Approvers can decide in two ways, and whichever comes first wins:
+
+- **In the app.** A user with `task:approve` sees every approval assigned to them under
+  **Approvals → Pending**, with a count in the sidebar. A step is theirs when it names their
+  account, or their account email (so approvers named by the requester are included). Their
+  own requests never appear. This works with email switched off.
+- **From the emailed link.** Every approver, with or without an account, receives a link
+  containing a signed approval token, and that token is the authentication. With
+  `MAIL_TRANSPORT=console` the link is printed in the backend terminal.
 
 ---
 
@@ -399,11 +407,14 @@ A typical end-to-end walkthrough: sign in as the bootstrap administrator → ope
 `unblock-ai-api/src/data/samples/demo-drafts/it_overseas_leave.txt` → Generate → check the
 flowchart shows **Applies to: Faculty of Information Technology** → Publish → sign out → sign in
 as `u17@u.c` → **New task request** → "I want to take 1 month overseas leave for a research
-visit" → **Start this task** → fill in the form → **Submit and continue** → open the approval
-link printed in the backend terminal → approve (or request more information and answer it as
-the requester) → repeat for each approver → **Download transcript**. The full script, with
-expected results at each step, is Appendix A of
-[docs/task-request-revamp-phase-plan.md](docs/task-request-revamp-phase-plan.md).
+visit" → **Start this task** → fill in the form → **Submit and continue** → sign in as the
+approver and open **Approvals → Pending** (or open the approval link printed in the backend
+terminal) → approve (or request more information and answer it as the requester) → repeat
+for each approver → **Download transcript**. The full script, with expected results at each
+step, is Appendix A of
+[docs/task-request-revamp-phase-plan.md](docs/task-request-revamp-phase-plan.md). The same
+journey with email switched off, done entirely in the approvals inbox, is Appendix A of
+[docs/approver-inbox-phase-plan.md](docs/approver-inbox-phase-plan.md).
 
 ---
 
@@ -425,7 +436,8 @@ expected results at each step, is Appendix A of
 | Generating a workflow template returns 422 | `WORKFLOW_TEMPLATE_PROMPT_REJECTED`: the model judged the prompt not to be a workflow. `WORKFLOW_TEMPLATE_GENERATION_FAILED`: no valid definition after `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` attempts — check the backend logs. A `.env` still setting the old `EXTRACTION_MAX_ATTEMPTS` is ignored; rename it |
 | Embedding errors / dimension mismatch | `AZURE_EMBEDDING_DIM` does not match the deployed model (1536 for `text-embedding-3-small`, 3072 for `-large`) |
 | The assistant finds nothing | The template is not published, is archived, or does not apply to the requester's faculty, department or division (check **Applies to** in the editor, and the requester's affiliations on *Users*). Retrieval only sees published, non-archived templates the requester is eligible for |
-| An approval link shows "This link has expired" | It is older than `APPROVAL_TOKEN_TTL_DAYS`. Re-issuing links is not built yet; start a new request |
+| An approval link shows "This link has expired" | It is older than `APPROVAL_TOKEN_TTL_DAYS`. Re-issuing links is not built yet. If the approver has an account with `task:approve`, they can still decide from **Approvals → Pending**; otherwise start a new request |
+| An approver's **Pending** list is empty | The step names a different email or account, the request is the approver's own, or it was already decided (see **Approvals → History**). The list refreshes every 30 seconds |
 
 ---
 
@@ -441,5 +453,6 @@ expected results at each step, is Appendix A of
 | [docs/user-access-and-session-management-phase-plan.md](docs/user-access-and-session-management-phase-plan.md) | Design of users, permissions and server-side sessions |
 | [docs/organisational-structure-and-user-affiliations-phase-plan.md](docs/organisational-structure-and-user-affiliations-phase-plan.md) | Design of faculties, departments, divisions, designations and user affiliations |
 | [docs/task-request-revamp-phase-plan.md](docs/task-request-revamp-phase-plan.md) | Design of the assistant, task plans, forms, approvals and transcripts, with the end-to-end acceptance script |
+| [docs/approver-inbox-phase-plan.md](docs/approver-inbox-phase-plan.md) | Design of the signed-in approvals inbox (pending, history, in-app decisions), with a mail-off acceptance script |
 | [docs/demo-script.md](docs/demo-script.md) | A 10-minute demo of the whole journey |
 | [unblock-ai-api/docs/postman/](unblock-ai-api/docs/postman/) | Postman collection that chains ids automatically |

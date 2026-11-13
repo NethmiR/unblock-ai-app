@@ -1,3 +1,4 @@
+import { ApprovalHistoryScreen } from "@/components/approvals/inbox/ApprovalHistoryScreen";
 import { requireRouteAccess } from "@/lib/auth/session";
 import { dashboardPageMetadata } from "@/lib/navigation/page-metadata";
 import { RoutePath } from "@/lib/routing/route-path";
@@ -8,5 +9,5 @@ export const metadata = dashboardPageMetadata(ROUTE);
 
 export default async function ApprovalHistoryPage() {
   await requireRouteAccess(ROUTE);
-  return null;
+  return <ApprovalHistoryScreen />;
 }

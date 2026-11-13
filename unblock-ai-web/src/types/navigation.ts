@@ -8,11 +8,16 @@ export interface PageMeta {
   description: string;
 }
 
+export enum NavBadgeKey {
+  PENDING_APPROVALS = "pending_approvals",
+}
+
 /** A single sidebar link and the page it opens. */
 export interface NavItem extends PageMeta {
   label: string;
   href: RoutePath;
   icon: IconName;
+  badgeKey?: NavBadgeKey;
 }
 
 /** A collapsible sidebar group, shown only to users holding `permission`. */

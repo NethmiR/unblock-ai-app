@@ -12,7 +12,19 @@ This plan **extends** [`task-request-revamp-phase-plan.md`](task-request-revamp-
 
 Each phase can be built on its own by an agent that first reads **§1 Ground rules**, **§2 Architecture**, **§3 Decisions** and **§4 Contracts** of *this* plan, then the revamp plan's §1, §3 and §4, then its own phase section. Every phase must leave `npm run typecheck && npm test` green in each app it touches, plus `npm run lint` in the web app. **Stop after each phase, run its verification block, then move on.**
 
-> **Status (2026-11-13):** planned, not started.
+> **Status (2026-11-14):** Phases 1–6 implemented. Phase 6 updated the API reference (§8.4–§8.10, endpoint index rows 57–61), the architecture docs, the migrations guide, the Postman collection (a new **Approver inbox** folder) and the root docs, and marked revamp D-25 and its §20 inbox row superseded. API `typecheck` + `test` (616 tests) and web `typecheck` + `lint` + `test` (128 tests) + `build` are green. The `approval-inbox` migration is applied. **The Appendix A browser walk with mail off has not been run yet.** The configured environment uses hosted databases and a real mail transport (`brevo`).
+>
+> Refinements made during Phase 6:
+> - The Postman **Submit form** pre-request now names `{{advisorName}}` / `{{advisorEmail}}` (default Ishara Bandara, `U6@U.C`) in `person` fields, so the first approval lands in a real inbox. **Approver inbox** runs before **Approvals**. It finds the current approver from the task, so the Approvals folder now takes the *next* approval link.
+> - A malformed `:taskId` on `/approver/approvals/:taskId/steps/:stepId*` answers `404 APPROVAL_NOT_FOUND`. `TaskModel.findById` returns `null` for it.
+>
+> Refinements made during Phases 3–5:
+> - `ApproverDecisionPanel` takes `onDecide` and `onDecided(result: ApprovalDecisionResultDto | null)`. `null` means the step was already decided (409), so no success toast is shown. `ApproverView` is now a Client Component, so the server page passes only `token` and `view`.
+> - The web mirrors `INFORMATION_REQUEST_STEP_NAME` in `types/task.ts`. `historyOutcomeText` uses it to show "Waiting for the requester's answer".
+> - The web adds request-only types `ApprovalAssignmentListQuery` and `ApprovalHistoryListQuery` in `types/approval.ts`. The DTOs in §4.3 are unchanged.
+> - `useNavBadgeCounts()` returns `Record<NavBadgeKey, { count; label } | null>`. `Sidebar` calls it once and passes each badge down to `SidebarNavLink`.
+> - One `revalidateApiPaths("/approver/approvals")` call refreshes the inbox, history, count and the open assignment after a decision.
+> - Appendix A step 9: `requireRouteAccess(RoutePath.APPROVALS)` redirects a user without `task:approve` to `/dashboard`, so they never reach the page. "This approval isn't available to you" appears only for approvers who are not assigned to the step.
 
 ---
 
@@ -215,7 +227,17 @@ export interface ApprovalAssignmentPage { rows: ApprovalAssignmentRow[]; total: 
 
 `TaskApprovalRecord` (`task/task-document.type.ts`) gains `decided_via: ApprovalChannel | null` and `decided_by_user_id: string | null`. The compiler and `insertInformationRequest` initialise both to `null`.
 
-`ApprovalAssignmentRow.task` is a projection without `forms`, `values`, `conversation` or `audit` (§4.5). Type it as `Omit<TaskDocument, "forms" | "values" | "conversation" | "audit">` and name it `TaskAssignmentProjection`.
+`ApprovalAssignmentRow.task` is a projection without `values`, `conversation` or `audit`, and without `steps` (the matched step is `ApprovalAssignmentRow.step`). `forms` is slimmed to `{ step_id, submitted_at }` (`TaskFormSubmissionStamp`), so `taskSubmittedAt` still works. The pipeline adds `active_step_name` (§4.5). The type is named `TaskAssignmentProjection`:
+
+```ts
+export type TaskFormSubmissionStamp = Pick<TaskFormRecord, "step_id" | "submitted_at">;
+export type TaskAssignmentProjection = Omit<TaskDocument, "forms" | "values" | "conversation" | "audit" | "steps"> & {
+  forms: TaskFormSubmissionStamp[];
+  active_step_name: string | null;
+};
+```
+
+`taskSubmittedAt` takes `Pick<TaskDocument, "created_at"> & { forms: TaskFormSubmissionStamp[] }`, and reads the form of `ENTRY_FORM_STEP_ID`.
 
 ### 4.3 DTOs and web mirrors
 
@@ -270,8 +292,9 @@ countPendingApprovalAssignments(identity: ApproverIdentity): Promise<number>;
 
 - The base match is `{ created_by: { $ne: identity.userId }, steps: { $elemMatch: approvalAssignmentStepMatch(identity, filter) } }`. `approvalAssignmentStepMatch` lives in `approver-identity.util.ts` and is unit-tested.
 - PENDING also requires `status: in_progress` on the task.
-- The pipeline is `$match` → `$project` (drop `forms`, `values`, `conversation`, `audit`) → `$unwind: "$steps"` → `$match` on the unwound step with the same clause, re-prefixed to `steps.` → `$match` on `search` → `$sort` → `$facet { rows: [$skip, $limit], total: [$count] }`.
-- `current_step_name` needs the task's other steps, and `$unwind` removes them. Keep a `$first`-free solution: before the `$unwind`, add `active_step_name` with `$let`/`$filter` over `steps` (the first step whose status is in `ACTIVE_TASK_STEP_STATUSES`). Pass the status values in from the constants, not as literals.
+- The pipeline is `$match` (including `search`, matched on the task before unwinding) → `$set` (slim `forms`, add `active_step_name`) → `$unset` (`values`, `conversation`, `audit`) → `$unwind: "$steps"` → `$match` on the unwound step with the same clause, re-prefixed to `steps.` by `unwoundStepMatch` (which also recurses into `$or`) → `$sort` (with `_id` and `steps.id` as tiebreakers) → `$facet { rows: [$skip, $limit], total: [$count] }`.
+- `current_step_name` needs the task's other steps, and `$unwind` removes them. Before the `$unwind`, add `active_step_name` with `$arrayElemAt` 0 over a `$map` of names over a `$filter` of `steps` (status in `ACTIVE_TASK_STEP_STATUSES`), wrapped in `$ifNull: [..., null]`. Pass the status values in from the constants, not as literals.
+- The step clause includes `kind: approval`, because `approval.decision: null` would also match steps whose `approval` is `null`.
 
 **Mongo migration `<timestamp>_approval-inbox.migration.ts`** (literals only):
 
@@ -286,7 +309,7 @@ countPendingApprovalAssignments(identity: ApproverIdentity): Promise<number>;
 
 | Rule | Lives in | Used by |
 |---|---|---|
-| Identity from the auth user; `isAssignedTo(assignee, identity)`; `approvalAssignmentStepMatch(identity, filter)` | `utils/approval/approver-identity.util.ts` | `ApprovalService.resolveAssignment`, `TaskModel` |
+| Identity from the auth user; `isAssignedTo(assignee, identity)`; `approvalAssignmentStepMatch(identity, filter)`; `unwoundStepMatch(clause, "steps")` | `utils/approval/approver-identity.util.ts` | `ApprovalService.resolveAssignment`, `TaskModel` |
 | Assignee email normalisation on bind | `utils/task/task-assignee-binding.util.ts` (calls `normalizeEmail`) | engine |
 | Live check `isLiveApproval(step)` | `utils/approval/approver-identity.util.ts` | `ApprovalService` (both resolvers) |
 | Assignment row → DTO | `utils/http/approval-serializer.util.ts` (`serializeApprovalAssignment`) | `ApproverController` |
@@ -546,7 +569,7 @@ Then walk Appendix A below in the browser.
 
 Preconditions: the revamp plan's Appendix A preconditions, except that **mail is disabled** (no notifier, or a mail transport that fails). Both Phase 1 migrations are applied. Before step 2, check the seeded emails: Ishara Bandara (IT senior lecturer, `task:approve`) is expected at `u6@u.c`, Dinesh at `u19@u.c` and Sunethra at `u18@u.c`.
 
-1. As Kavindu (`u17@u.c`), start the IT overseas-leave task (revamp Appendix A steps 1–4). In the entry form, name the academic advisor as **Ishara Bandara**, `Ishara@U.C` (mixed case on purpose). Use a 40-day trip and submit. The advisor card says "Waiting in the approver's Unblock inbox".
+1. As Kavindu (`u17@u.c`), start the IT overseas-leave task (revamp Appendix A steps 1–4). In the entry form, name the academic advisor as **Ishara Bandara**, `U6@U.C` (the account email in mixed case, on purpose). Use a 40-day trip and submit. The advisor card says "Waiting in the approver's Unblock inbox".
 2. Sign in as Ishara (`u6@u.c`). The sidebar shows **Pending 1**. Pending lists the request, with Kavindu as requester and "Academic advisor review" as the step.
 3. Open it. The page shows Kavindu's details, the form answers and the plan rail, inside the dashboard. Choose **Request more information** with no comment: blocked. Add a comment and confirm. Pending is empty. History shows "More information requested · Waiting for the requester's answer".
 4. As Kavindu, answer the information request.

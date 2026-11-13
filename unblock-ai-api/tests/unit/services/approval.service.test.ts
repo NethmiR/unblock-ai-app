@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApprovalErrorCode } from "../../../src/data/constants/approval-error.constant.js";
-import { ApprovalDecision, TaskCreationSource, TaskStatus, TaskStepStatus } from "../../../src/data/constants/task.constant.js";
+import { ApprovalChannel, ApprovalDecision, TaskCreationSource, TaskStatus, TaskStepStatus } from "../../../src/data/constants/task.constant.js";
+import { approverIdentityOf } from "../../../src/utils/approval/approver-identity.util.js";
+import type { ApproverIdentity } from "../../../src/lib/types/approval/approver-identity.type.js";
 import { issueToken } from "../../../src/utils/approval/token.util.js";
 import { withErrorCode } from "../../helpers/error-assertion.helper.js";
 import { IT_LEAVE_ID } from "../../helpers/selection-testbed.helper.js";
@@ -125,4 +127,113 @@ test("approving through to the end completes the task and sends the completion e
   assert.equal(result.next_step_name, null);
   assert.equal((await bed.taskService.get(taskId)).status, TaskStatus.COMPLETED);
   assert.ok(notifier.calls.some((call) => call.kind === "completed"));
+});
+
+const ADVISOR: ApproverIdentity = approverIdentityOf({ id: "user-advisor", email: "Advisor@U.C" });
+
+function identityOf(bed: TaskTestbed, fullName: string, email: string): ApproverIdentity {
+  return approverIdentityOf({ id: bed.world.userIdOf(fullName), email });
+}
+
+async function approveAdvisorInApp(dispatched: Dispatched): Promise<void> {
+  await dispatched.bed.approvalService.decideAsAssignee(dispatched.taskId, "advisor_review", ADVISOR, { decision: ApprovalDecision.APPROVED, comment: null });
+}
+
+test("a requester-supplied approver matched by email decides in the app, and the decision records the app channel", async () => {
+  const dispatched = await dispatchedLeave();
+  const { bed, taskId } = dispatched;
+
+  const view = await bed.approvalService.getViewForAssignee(taskId, "advisor_review", ADVISOR);
+  assert.equal(view.context.live, true);
+  assert.deepEqual(view.allowedDecisions, [ApprovalDecision.APPROVED, ApprovalDecision.REJECTED, ApprovalDecision.REQUEST_MORE_INFO]);
+
+  await approveAdvisorInApp(dispatched);
+  const approval = (await bed.taskService.get(taskId)).steps.find((step) => step.id === "advisor_review")?.approval;
+  assert.deepEqual([approval?.decided_via, approval?.decided_by_user_id], [ApprovalChannel.APP, "user-advisor"]);
+});
+
+test("a directory assignee views and decides in the app by user id", async () => {
+  const dispatched = await dispatchedLeave();
+  const { bed, taskId } = dispatched;
+  await approveAdvisorInApp(dispatched);
+  const dinesh = identityOf(bed, "Dinesh Wijesinghe", "someone-else@u.c");
+
+  const view = await bed.approvalService.getViewForAssignee(taskId, "hod_review", dinesh);
+  const result = await bed.approvalService.decideAsAssignee(taskId, "hod_review", dinesh, { decision: ApprovalDecision.APPROVED, comment: null });
+
+  assert.equal(view.context.step.assignee?.user_id, dinesh.userId);
+  assert.equal(result.next_step_name, "Dean of IT Faculty Approval");
+});
+
+test("a non-assignee, the requester and an unknown step all get approval not found", async () => {
+  const { bed, taskId } = await dispatchedLeave();
+  const stranger = approverIdentityOf({ id: "user-stranger", email: "stranger@u.c" });
+  const requesterAsAdvisor = approverIdentityOf({ id: bed.world.userIdOf("Kavindu Jayawardena"), email: "advisor@u.c" });
+  const notFound = withErrorCode(ApprovalErrorCode.APPROVAL_NOT_FOUND);
+
+  await assert.rejects(bed.approvalService.getViewForAssignee(taskId, "advisor_review", stranger), notFound);
+  await assert.rejects(bed.approvalService.decideAsAssignee(taskId, "advisor_review", stranger, { decision: ApprovalDecision.APPROVED, comment: null }), notFound);
+  await assert.rejects(bed.approvalService.getViewForAssignee(taskId, "advisor_review", requesterAsAdvisor), notFound);
+  await assert.rejects(bed.approvalService.getViewForAssignee(taskId, "entry_form", ADVISOR), notFound);
+  await assert.rejects(bed.approvalService.getViewForAssignee(taskId, "missing", ADVISOR), notFound);
+  await assert.rejects(bed.approvalService.getViewForAssignee("not-an-id", "advisor_review", ADVISOR), notFound);
+});
+
+test("a decided step shows the decision in the app and refuses a second decision", async () => {
+  const dispatched = await dispatchedLeave();
+  const { bed, taskId } = dispatched;
+  await approveAdvisorInApp(dispatched);
+
+  const view = await bed.approvalService.getViewForAssignee(taskId, "advisor_review", ADVISOR);
+
+  assert.equal(view.context.live, false);
+  assert.deepEqual(view.allowedDecisions, []);
+  await assert.rejects(
+    bed.approvalService.decideAsAssignee(taskId, "advisor_review", ADVISOR, { decision: ApprovalDecision.REJECTED, comment: "Late" }),
+    withErrorCode(ApprovalErrorCode.APPROVAL_ALREADY_DECIDED),
+  );
+});
+
+test("an expired link or a missing link does not block the in-app decision", async () => {
+  let now = new Date("2026-11-13T09:00:00Z");
+  const expired = await dispatchedLeave({ now: () => now });
+  now = new Date("2026-12-31T09:00:00Z");
+  await approveAdvisorInApp(expired);
+  assert.equal((await expired.bed.taskService.get(expired.taskId)).steps.find((step) => step.id === "advisor_review")?.status, TaskStepStatus.COMPLETED);
+
+  const unsent = await dispatchedLeave();
+  const stored = unsent.bed.taskModel.tasks.get(unsent.taskId);
+  assert.ok(stored);
+  unsent.bed.taskModel.tasks.set(unsent.taskId, {
+    ...stored,
+    steps: stored.steps.map((step) => (step.approval ? { ...step, approval: { ...step.approval, token_hash: null, token_expires_at: null, notified_at: null } } : step)),
+  });
+  await approveAdvisorInApp(unsent);
+  assert.equal((await unsent.bed.taskService.get(unsent.taskId)).steps.find((step) => step.id === "advisor_review")?.outcome, "approved");
+});
+
+test("an in-app decision kills the emailed link, which then shows the decision", async () => {
+  const dispatched = await dispatchedLeave();
+  const token = dispatched.notifier.tokenFor("advisor_review");
+  await approveAdvisorInApp(dispatched);
+
+  const view = await dispatched.bed.approvalService.getView(token);
+
+  assert.equal(view.context.live, false);
+  assert.equal(view.context.step.approval?.token_hash, null);
+  await assert.rejects(dispatched.bed.approvalService.decide(token, { decision: ApprovalDecision.APPROVED, comment: null }), withErrorCode(ApprovalErrorCode.APPROVAL_ALREADY_DECIDED));
+});
+
+test("the comment rules apply to the in-app channel too, and the link channel records itself", async () => {
+  const { bed, notifier, taskId } = await dispatchedLeave();
+
+  for (const decision of [ApprovalDecision.REJECTED, ApprovalDecision.REQUEST_MORE_INFO]) {
+    await assert.rejects(
+      bed.approvalService.decideAsAssignee(taskId, "advisor_review", ADVISOR, { decision, comment: null }),
+      withErrorCode(ApprovalErrorCode.APPROVAL_COMMENT_REQUIRED),
+    );
+  }
+  await bed.approvalService.decide(notifier.tokenFor("advisor_review"), { decision: ApprovalDecision.APPROVED, comment: null });
+  const approval = (await bed.taskService.get(taskId)).steps.find((step) => step.id === "advisor_review")?.approval;
+  assert.deepEqual([approval?.decided_via, approval?.decided_by_user_id], [ApprovalChannel.EMAIL_LINK, null]);
 });

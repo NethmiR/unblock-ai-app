@@ -1,11 +1,11 @@
+"use client";
+import { useRouter } from "next/navigation";
 import { BrandMark } from "@/components/ui/BrandMark";
-import { ApproverDecisionPanel } from "./ApproverDecisionPanel";
-import { ApproverHistory } from "./ApproverHistory";
-import { ApproverPlanRail } from "./ApproverPlanRail";
-import { ApproverTaskSummary } from "./ApproverTaskSummary";
+import { ApproverDetailLayout } from "./ApproverDetailLayout";
+import { approvalsApi } from "@/lib/api/approvals";
 import { APP_CONFIG } from "@/lib/config/app.config";
 import { TASK_REQUEST_COPY } from "@/lib/task-request/task-request-copy";
-import type { ApproverViewDto } from "@/types/approval";
+import type { ApprovalDecisionInputDto, ApproverViewDto } from "@/types/approval";
 
 const COPY = TASK_REQUEST_COPY.approver;
 
@@ -22,20 +22,16 @@ export function ApproverHeader() {
 }
 
 export function ApproverView({ token, view }: { token: string; view: ApproverViewDto }) {
+  const router = useRouter();
   return (
     <>
       <ApproverHeader />
-      <main className="mx-auto grid max-w-[1180px] gap-8 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:py-10">
-        <div className="min-w-0 space-y-4">
-          <ApproverTaskSummary view={view} />
-          <ApproverHistory history={view.history} />
-          <ApproverDecisionPanel token={token} view={view} />
-        </div>
-        <aside className="lg:border-l lg:border-line-admin lg:pl-6">
-          <div className="lg:sticky lg:top-6">
-            <ApproverPlanRail plan={view.plan} />
-          </div>
-        </aside>
+      <main className="mx-auto max-w-[1180px] px-4 py-8 sm:px-6 lg:py-10">
+        <ApproverDetailLayout
+          view={view}
+          onDecide={(input: ApprovalDecisionInputDto) => approvalsApi.decide(token, input)}
+          onDecided={() => router.refresh()}
+        />
       </main>
     </>
   );
