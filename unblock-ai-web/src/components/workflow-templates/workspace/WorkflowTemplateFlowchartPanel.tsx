@@ -1,8 +1,11 @@
 "use client";
 import dynamic from "next/dynamic";
+import { useMemo } from "react";
 import { Spinner } from "@/components/ui/Spinner";
 import { FlowchartPlaceholder } from "./FlowchartPlaceholder";
+import { WorkflowTemplateAudienceSummary } from "./WorkflowTemplateAudienceSummary";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { useDesignations } from "@/lib/hooks/useOrganisationData";
 import { WORKFLOW_TEMPLATE_COPY } from "@/lib/workflow-template/workflow-template-copy";
 import type { WorkflowTemplateDefinition } from "@/types/workflow-template";
 
@@ -32,7 +35,19 @@ export function WorkflowTemplateFlowchartPanel({
   isStale = false,
   hasPrompt = true,
 }: WorkflowTemplateFlowchartPanelProps) {
-  const meta = definition ? `${COPY.readOnly} · ${COPY.stepCount(definition.steps.length)}` : COPY.readOnly;
+  const { data: designations } = useDesignations(false);
+  const designationCodes = useMemo(
+    () => (designations ? new Set(designations.designations.map((designation) => designation.code)) : null),
+    [designations],
+  );
+  const meta = definition ? (
+    <span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+      <WorkflowTemplateAudienceSummary definition={definition} />
+      <span>{`${COPY.readOnly} · ${COPY.stepCount(definition.steps.length)}`}</span>
+    </span>
+  ) : (
+    COPY.readOnly
+  );
 
   return (
     <WorkspacePanel heading={COPY.heading} meta={meta}>
@@ -49,7 +64,7 @@ export function WorkflowTemplateFlowchartPanel({
             </p>
           )}
           <div className="min-h-0 flex-1">
-            <WorkflowFlowchart definition={definition} />
+            <WorkflowFlowchart definition={definition} designationCodes={designationCodes} />
           </div>
         </div>
       ) : (

@@ -1,8 +1,11 @@
 # Unblock AI
 
 Turns a plain-English description of an institutional approval workflow into a structured,
-machine-readable workflow graph, then lets requesters find the right workflow by chatting,
-fill in what it needs, and run the approval chain end to end.
+machine-readable workflow graph, then runs it for requesters: an assistant picks the right
+process from one sentence and the requester's profile, a task plan arrives with approvers
+resolved from the directory and details prefilled, the requester fills step forms, approvers
+approve, reject or ask for more information from an emailed link, and a transcript PDF closes
+the request.
 
 Two applications run side by side:
 
@@ -301,7 +304,9 @@ Then open:
 - App: **http://localhost:3001**
 - Login (every user): **http://localhost:3001/login** — after sign-in you land on `/dashboard`
 - Workflow templates: **http://localhost:3001/dashboard/workflows** (needs `workflow:manage`)
-- Requester dashboard: **http://localhost:3001/old/portal** (reachable by URL, not linked yet)
+- New task request (assistant): **http://localhost:3001/dashboard/tasks/new** (needs `task:create`)
+- My task requests: **http://localhost:3001/dashboard/tasks**
+- Approver page: `http://localhost:3001/approvals/<token>` (from the approval email; no sign-in)
 - API health check: **http://localhost:3000/api/health**
 
 The frontend **must** run on port 3001 — it is the backend's default `CORS_ORIGIN`. If you
@@ -324,7 +329,7 @@ one or more permissions:
 | Permission | Allows |
 |---|---|
 | `workflow:manage` | Create, generate, publish, archive and restore workflow templates |
-| `task:create` | Read workflow templates, chat with the selector, create and run **their own** requests |
+| `task:create` | Read workflow templates, use the assistant, create and run **their own** task requests |
 | `task:approve` | Grantable, but gates nothing yet (approvals still use emailed links) |
 | `user:manage` | Create, list and view users, and manage their affiliations |
 | `organisation:manage` | Configure faculties, departments, divisions and designations |
@@ -338,10 +343,12 @@ Student, …) within them. `organisation:manage` holders configure the structure
 sees their own affiliations on *Profile*. Design and rules:
 [docs/organisational-structure-and-user-affiliations-phase-plan.md](docs/organisational-structure-and-user-affiliations-phase-plan.md).
 
-**Sample users** — with `SEED_SAMPLE_USERS=true`, `u1@u.c` … `u16@u.c` (password
+**Sample users** — with `SEED_SAMPLE_USERS=true`, `u1@u.c` … `u19@u.c` (password
 `USER_DEFAULT_PASSWORD`) cover the Vice-Chancellor, Registrar (`u2@u.c`, user and
 organisation management), Deans, Heads of Department, lecturers, administrative staff,
-students and one user without affiliations.
+students and one user without affiliations. The task request demo uses `u17@u.c` (Kavindu, an
+IT student) as the requester, with `u19@u.c` (Head of Department, IT) and `u18@u.c` (Dean,
+Faculty of IT) resolved from the directory; `u12@u.c` (Hasitha) is an Engineering student.
 With the suggested `.env` in section 5.1 that is `admin@example.com` / `12345`.
 
 **Other users** are created by a `user:manage` holder through the API. Every new user gets the
@@ -378,7 +385,7 @@ cd unblock-ai-api
 npm run smoke-test:azure        # chat deployment reachable?
 npm run smoke-test:embeddings   # embedding deployment reachable + right dimensions?
 npm run smoke-test:mail         # mail transport works?
-npm run smoke-test:document     # completion-document PDF renders?
+npm run smoke-test:document     # transcript PDF renders?
 
 npm run typecheck               # tsc --noEmit
 npm test                        # unit + integration tests (in-memory Mongo + fake models,
@@ -388,11 +395,15 @@ npm test                        # unit + integration tests (in-memory Mongo + fa
 Frontend checks: `npm run typecheck`, `npm run lint`, `npm test` from `unblock-ai-web/`.
 
 A typical end-to-end walkthrough: sign in as the bootstrap administrator → open
-`/dashboard/workflows` → **New workflow template** → enter a title and describe the process
-in the prompt → Generate → Publish → create a `task:create` user (section 8) →
-sign out → sign in as that user → open `/old/portal` → start a new job → describe the request in
-chat → fill in the requirements → submit → copy the approval link from the backend terminal →
-approve.
+`/dashboard/workflows` → **New workflow template** → paste
+`unblock-ai-api/src/data/samples/demo-drafts/it_overseas_leave.txt` → Generate → check the
+flowchart shows **Applies to: Faculty of Information Technology** → Publish → sign out → sign in
+as `u17@u.c` → **New task request** → "I want to take 1 month overseas leave for a research
+visit" → **Start this task** → fill in the form → **Submit and continue** → open the approval
+link printed in the backend terminal → approve (or request more information and answer it as
+the requester) → repeat for each approver → **Download transcript**. The full script, with
+expected results at each step, is Appendix A of
+[docs/task-request-revamp-phase-plan.md](docs/task-request-revamp-phase-plan.md).
 
 ---
 
@@ -413,7 +424,8 @@ approve.
 | `EADDRINUSE` on port 3000 | Something else holds the port — free it, or change `PORT` and `NEXT_PUBLIC_API_BASE_URL` together |
 | Generating a workflow template returns 422 | `WORKFLOW_TEMPLATE_PROMPT_REJECTED`: the model judged the prompt not to be a workflow. `WORKFLOW_TEMPLATE_GENERATION_FAILED`: no valid definition after `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` attempts — check the backend logs. A `.env` still setting the old `EXTRACTION_MAX_ATTEMPTS` is ignored; rename it |
 | Embedding errors / dimension mismatch | `AZURE_EMBEDDING_DIM` does not match the deployed model (1536 for `text-embedding-3-small`, 3072 for `-large`) |
-| Nothing found when searching for a template | The template is not published, or it is archived — retrieval only sees published, non-archived templates. Publish or restore it in `/dashboard/workflows` |
+| The assistant finds nothing | The template is not published, is archived, or does not apply to the requester's faculty, department or division (check **Applies to** in the editor, and the requester's affiliations on *Users*). Retrieval only sees published, non-archived templates the requester is eligible for |
+| An approval link shows "This link has expired" | It is older than `APPROVAL_TOKEN_TTL_DAYS`. Re-issuing links is not built yet; start a new request |
 
 ---
 
@@ -428,4 +440,6 @@ approve.
 | [unblock-ai-api/docs/guides/database-seeding.md](unblock-ai-api/docs/guides/database-seeding.md) | The Postgres seed pack and the bootstrap administrator |
 | [docs/user-access-and-session-management-phase-plan.md](docs/user-access-and-session-management-phase-plan.md) | Design of users, permissions and server-side sessions |
 | [docs/organisational-structure-and-user-affiliations-phase-plan.md](docs/organisational-structure-and-user-affiliations-phase-plan.md) | Design of faculties, departments, divisions, designations and user affiliations |
+| [docs/task-request-revamp-phase-plan.md](docs/task-request-revamp-phase-plan.md) | Design of the assistant, task plans, forms, approvals and transcripts, with the end-to-end acceptance script |
+| [docs/demo-script.md](docs/demo-script.md) | A 10-minute demo of the whole journey |
 | [unblock-ai-api/docs/postman/](unblock-ai-api/docs/postman/) | Postman collection that chains ids automatically |

@@ -1,6 +1,7 @@
 import type { WorkflowDefinition } from "../../lib/types/workflow/workflow.type.js";
 import type { Condition } from "../../lib/types/workflow/condition.type.js";
-import type { WorkflowStep } from "../../lib/types/workflow/step.type.js";
+import type { StepType, WorkflowStep } from "../../lib/types/workflow/step.type.js";
+import type { ActorResolution } from "../../lib/types/workflow/actor.type.js";
 import { declaredNamespaceIds, isValidNamespacePath, looksLikeNamespacePath } from "./namespace-path.util.js";
 
 type StepMap = Map<string, WorkflowStep>;
@@ -202,6 +203,41 @@ function checkNamespacePaths(workflow: WorkflowDefinition, steps: StepMap, error
   }
 }
 
+const DATA_COLLECTION_STEP_TYPE: StepType = "data_collection";
+const REQUESTER_RESOLUTION: ActorResolution = "requester";
+
+function isRequesterFormStep(step: WorkflowStep): boolean {
+  return step.type === DATA_COLLECTION_STEP_TYPE && step.assignee.resolution === REQUESTER_RESOLUTION;
+}
+
+function checkCollectedInputs(workflow: WorkflowDefinition, steps: StepMap, errors: string[]): void {
+  const inputs = new Map((workflow.inputs ?? []).map((input) => [input.id, input]));
+  const collectedBy = new Map<string, string>();
+
+  for (const step of steps.values()) {
+    const collected = step.collects_inputs ?? [];
+    if (collected.length > 0 && !isRequesterFormStep(step)) {
+      errors.push(`Step '${step.id}' lists collects_inputs but is not a data_collection step assigned to the requester`);
+    }
+    for (const inputId of collected) {
+      const input = inputs.get(inputId);
+      if (!input) {
+        errors.push(`Step '${step.id}' collects unknown input '${inputId}'`);
+        continue;
+      }
+      if (input.collected_from.resolution !== REQUESTER_RESOLUTION) {
+        errors.push(`Step '${step.id}' collects input '${inputId}', which is not collected from the requester`);
+      }
+      const previous = collectedBy.get(inputId);
+      if (previous !== undefined) {
+        errors.push(`Input '${inputId}' is collected by both step '${previous}' and step '${step.id}'`);
+      } else {
+        collectedBy.set(inputId, step.id);
+      }
+    }
+  }
+}
+
 const CHECKS: Check[] = [
   checkDependencyReferences,
   checkRequiredOutcomes,
@@ -211,6 +247,7 @@ const CHECKS: Check[] = [
   checkApprovalOutcomes,
   checkCompletionRequiredSteps,
   checkNamespacePaths,
+  checkCollectedInputs,
 ];
 
 export function validateGraph(workflow: WorkflowDefinition): string[] {

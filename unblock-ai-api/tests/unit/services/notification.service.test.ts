@@ -1,273 +1,103 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ObjectId } from "mongodb";
 import { NotificationService } from "../../../src/services/notification.service.js";
+import { TaskEngineService } from "../../../src/services/task-engine.service.js";
+import { ApprovalDecision } from "../../../src/data/constants/task.constant.js";
+import { OrganisationalUnitType } from "../../../src/data/constants/organisational-unit.constant.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
-import { LEAVE_WORKFLOW_TEMPLATE_ID } from "../../helpers/workflow-template.helper.js";
-import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
-import type { MailMessage, MailSendResult } from "../../../src/lib/types/approval/mail.type.js";
-import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
-import type { TaskDocument, TaskStepState } from "../../../src/lib/types/task/task.type.js";
+import { RecordingMailer } from "../../helpers/recording-mailer.helper.js";
+import { buildTaskDocument, engineContext, leaveResolutions } from "../../helpers/task-fixture.helper.js";
 import type { RenderedDocument } from "../../../src/lib/types/document/document.type.js";
+import type { TaskDocument } from "../../../src/lib/types/task/task-document.type.js";
 
-const LEAVE_WORKFLOW = loadExpectedFixture("it_faculty_overseas_leave.json");
+const LEAVE = loadExpectedFixture("it_faculty_overseas_leave.json");
+const engine = new TaskEngineService();
+const CONTEXT = engineContext(LEAVE);
 
-class FakeMailer implements IMailer {
-  readonly sent: MailMessage[] = [];
-  private readonly result: MailSendResult;
-  private readonly shouldThrow: boolean;
-
-  constructor(options: { result?: MailSendResult; shouldThrow?: boolean } = {}) {
-    this.result = options.result ?? { sent: true, error: null };
-    this.shouldThrow = options.shouldThrow ?? false;
-  }
-
-  send(message: MailMessage): Promise<MailSendResult> {
-    if (this.shouldThrow) return Promise.reject(new Error("smtp exploded"));
-    this.sent.push(message);
-    return Promise.resolve(this.result);
-  }
+function service(mailer: RecordingMailer, maxAttachmentBytes = 1_000_000): NotificationService {
+  return new NotificationService({
+    mailer,
+    mailConfig: { appPublicUrl: "https://unblock.test" },
+    documentConfig: { attachToEmail: true, maxAttachmentBytes },
+  });
 }
 
-const FAKE_CONFIG = {
-  mail: { appPublicUrl: "https://unblock.example" },
-  document: { attachToEmail: true, maxAttachmentBytes: 5_000_000 },
-} as unknown as AppConfig;
-
-function fakeRenderedDocument(overrides: Partial<RenderedDocument> = {}): RenderedDocument {
-  return {
-    buffer: Buffer.from("record"),
-    filename: "TASK-2026-00042-record.pdf",
-    contentType: "application/pdf",
-    byteSize: 6,
-    sha256: "deadbeef",
-    ...overrides,
+function dispatchedTask(): TaskDocument {
+  let task = engine.start(buildTaskDocument(LEAVE, leaveResolutions()), CONTEXT).task;
+  task = {
+    ...task,
+    requester: { ...task.requester, units: [{ id: "u", code: "IT", name: "Department of Information Technology", unit_type: OrganisationalUnitType.DEPARTMENT, parent_name: "Faculty of Information Technology", designation_titles: ["Student"] }] },
+    values: {
+      ...task.values,
+      "inputs.departure_date": "2026-12-01",
+      "inputs.return_date": "2026-12-10",
+      "assignees.advisor_review": { user_id: null, name: "Dr Advisor", email: "advisor@u.c" },
+    },
   };
+  return engine.submitForm(task, "entry_form__form", CONTEXT).task;
 }
 
-function baseTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
-  const now = new Date();
-  return {
-    _id: new ObjectId(),
-    reference: "TASK-2026-00042",
-    session_id: "session-1",
-    created_by: "user-1",
-    workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID,
-    workflow_template_version: 1,
-    status: "in_progress",
-    requirements: [],
-    values: {},
-    steps: [],
-    audit: [],
-    completion_document: null,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
+function step(task: TaskDocument, id: string) {
+  return task.steps.find((candidate) => candidate.id === id)!;
 }
 
-function advisorStep(overrides: Partial<TaskStepState> = {}): TaskStepState {
-  return {
-    step_id: "advisor_review",
-    name: "Academic Advisor Review",
-    type: "approval",
-    depends_on: [],
-    state: "pending_approval",
-    assignee: { name: "Dr. Advisor", email: "advisor@example.com" },
-    outcome: null,
-    reason: null,
-    responded_at: null,
-    approval_token: "abc123.signature",
-    token_expires_at: null,
-    token_used_at: null,
-    notified_at: null,
-    reopen_count: 0,
-    ...overrides,
-  };
-}
+test("the approval request goes to the approver with the requester's details and a link", async () => {
+  const mailer = new RecordingMailer();
+  const task = dispatchedTask();
 
-test("sendApprovalRequest emails the assignee with the token URL and step name", async () => {
-  const mailer = new FakeMailer();
-  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
-  const task = baseTask();
-  const step = advisorStep();
+  assert.equal(await service(mailer).sendApprovalRequest(task, step(task, "advisor_review"), "tok.en"), true);
 
-  const result = await service.sendApprovalRequest(task, LEAVE_WORKFLOW, step);
-
-  assert.equal(result, true);
-  assert.equal(mailer.sent.length, 1);
-  assert.equal(mailer.sent[0]!.to, "advisor@example.com");
-  assert.match(mailer.sent[0]!.text, /https:\/\/unblock\.example\/approvals\/abc123\.signature/);
-  assert.match(mailer.sent[0]!.text, /Academic Advisor Review/);
+  const [mail] = mailer.sent;
+  assert.equal(mail?.to, "advisor@u.c");
+  assert.match(mail?.text ?? "", /Kavindu Jayawardena \(Department of Information Technology \(Faculty of Information Technology\) — Student\)/);
+  assert.match(mail?.text ?? "", /Academic Advisor Review/);
+  assert.match(mail?.text ?? "", /https:\/\/unblock\.test\/approvals\/tok\.en/);
+  assert.doesNotMatch(mail?.text ?? "", /repeat review/);
 });
 
-test("sendApprovalRequest returns false without sending when the step has no assignee", async () => {
-  const mailer = new FakeMailer();
-  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
-  const task = baseTask();
-  const step = advisorStep({ assignee: null });
+test("a repeat review says so", async () => {
+  const mailer = new RecordingMailer();
+  let task = dispatchedTask();
+  task = engine.recordDecision(task, "advisor_review", ApprovalDecision.REQUEST_MORE_INFO, "Which <institute>?", CONTEXT).task;
 
-  const result = await service.sendApprovalRequest(task, LEAVE_WORKFLOW, step);
+  await service(mailer).sendInformationRequested(task, step(task, "advisor_review__information_request_1"));
+  await service(mailer).sendApprovalRequest(task, step(task, "advisor_review__repeat_1"), "t");
 
-  assert.equal(result, false);
-  assert.equal(mailer.sent.length, 0);
+  assert.equal(mailer.sent[0]?.to, "u17@u.c");
+  assert.match(mailer.sent[0]?.text ?? "", /Question: Which <institute>\?/);
+  assert.match(mailer.sent[0]?.html ?? "", /Which &lt;institute&gt;\?/);
+  assert.match(mailer.sent[0]?.text ?? "", /https:\/\/unblock\.test\/dashboard\/tasks\//);
+  assert.match(mailer.sent[1]?.text ?? "", /repeat review/);
 });
 
-test("sendRejectionNotice contains the reason text verbatim", async () => {
-  const mailer = new FakeMailer();
-  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
-  const task = baseTask({
-    requirements: [
-      {
-        key: "requester_email",
-        source: "input",
-        ref: "requester_email",
-        label: "Email",
-        description: null,
-        type: "email",
-        required: true,
-        validation: null,
-        collection_hint: null,
-        status: "filled",
-      },
-    ],
-    values: { requester_email: "student@example.com" },
-  });
-  const step = advisorStep({
-    state: "rejected",
-    outcome: "rejected",
-    reason: "Cannot approve leave 12–20 Aug — final exams are scheduled that week.",
-  });
+test("the rejection email names who rejected it and why", async () => {
+  const mailer = new RecordingMailer();
+  const task = engine.recordDecision(dispatchedTask(), "advisor_review", ApprovalDecision.REJECTED, "Exam clash", CONTEXT).task;
 
-  const result = await service.sendRejectionNotice(task, LEAVE_WORKFLOW, step);
+  await service(mailer).sendTaskRejected(task, step(task, "advisor_review"));
 
-  assert.equal(result, true);
-  assert.equal(mailer.sent[0]!.to, "student@example.com");
-  assert.match(
-    mailer.sent[0]!.text,
-    /Cannot approve leave 12–20 Aug — final exams are scheduled that week\./,
-  );
+  assert.match(mailer.sent[0]?.text ?? "", /Dr Advisor rejected/);
+  assert.match(mailer.sent[0]?.text ?? "", /Comment: Exam clash/);
 });
 
-const REQUESTER_EMAIL_REQUIREMENT = {
-  key: "requester_email",
-  source: "input" as const,
-  ref: "requester_email",
-  label: "Email",
-  description: null,
-  type: "email" as const,
-  required: true,
-  validation: null,
-  collection_hint: null,
-  status: "filled" as const,
-};
+test("the completion email attaches the transcript only within the size limit", async () => {
+  const transcript: RenderedDocument = { buffer: Buffer.from("pdf"), filename: "T-transcript.pdf", contentType: "application/pdf", byteSize: 3, sha256: "x" };
+  const small = new RecordingMailer();
+  const large = new RecordingMailer();
+  const task = dispatchedTask();
 
-test("sendCompletionNotice with no document carries the portal link but no attachment", async () => {
-  const mailer = new FakeMailer();
-  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
-  const task = baseTask({
-    requirements: [REQUESTER_EMAIL_REQUIREMENT],
-    values: { requester_email: "student@example.com" },
-  });
+  await service(small).sendTaskCompleted(task, transcript);
+  await service(large, 2).sendTaskCompleted(task, transcript);
 
-  const result = await service.sendCompletionNotice(task, LEAVE_WORKFLOW);
-
-  assert.equal(result, true);
-  assert.equal(mailer.sent[0]!.to, "student@example.com");
-  assert.equal(mailer.sent[0]!.attachments, undefined);
-  assert.doesNotMatch(mailer.sent[0]!.text, /attached/);
-  assert.match(mailer.sent[0]!.text, /Download it here/);
+  assert.equal(small.sent[0]?.attachments?.[0]?.filename, "T-transcript.pdf");
+  assert.match(small.sent[0]?.text ?? "", /transcript of this request is attached/);
+  assert.equal(large.sent[0]?.attachments, undefined);
 });
 
-test("sendCompletionNotice with a document attaches it and mentions the attachment", async () => {
-  const mailer = new FakeMailer();
-  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
-  const task = baseTask({
-    requirements: [REQUESTER_EMAIL_REQUIREMENT],
-    values: { requester_email: "student@example.com" },
-  });
-  const document = fakeRenderedDocument();
+test("a failed send reports false and never throws", async () => {
+  const mailer = new RecordingMailer();
+  mailer.failNext = true;
+  const task = dispatchedTask();
 
-  const result = await service.sendCompletionNotice(task, LEAVE_WORKFLOW, document);
-
-  assert.equal(result, true);
-  assert.equal(mailer.sent[0]!.attachments?.length, 1);
-  assert.equal(mailer.sent[0]!.attachments?.[0]!.filename, document.filename);
-  assert.match(mailer.sent[0]!.text, /attached/);
-});
-
-test("sendCompletionNotice drops the attachment when it exceeds the configured size limit", async () => {
-  const mailer = new FakeMailer();
-  const config = {
-    ...FAKE_CONFIG,
-    document: { attachToEmail: true, maxAttachmentBytes: 1 },
-  } as unknown as AppConfig;
-  const service = new NotificationService({ mailer, config });
-  const task = baseTask({
-    requirements: [REQUESTER_EMAIL_REQUIREMENT],
-    values: { requester_email: "student@example.com" },
-  });
-  const document = fakeRenderedDocument({ byteSize: 1000 });
-
-  const result = await service.sendCompletionNotice(task, LEAVE_WORKFLOW, document);
-
-  assert.equal(result, true);
-  assert.equal(mailer.sent[0]!.attachments, undefined);
-  assert.match(mailer.sent[0]!.text, /Download it here/);
-});
-
-test("sendCompletionNotice omits the attachment when DOCUMENT_ATTACH_TO_EMAIL is disabled", async () => {
-  const mailer = new FakeMailer();
-  const config = {
-    ...FAKE_CONFIG,
-    document: { attachToEmail: false, maxAttachmentBytes: 5_000_000 },
-  } as unknown as AppConfig;
-  const service = new NotificationService({ mailer, config });
-  const task = baseTask({
-    requirements: [REQUESTER_EMAIL_REQUIREMENT],
-    values: { requester_email: "student@example.com" },
-  });
-  const document = fakeRenderedDocument();
-
-  const result = await service.sendCompletionNotice(task, LEAVE_WORKFLOW, document);
-
-  assert.equal(result, true);
-  assert.equal(mailer.sent[0]!.attachments, undefined);
-});
-
-test("requester-facing notices no-op when no email-typed requirement is filled", async () => {
-  const mailer = new FakeMailer();
-  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
-  const task = baseTask();
-
-  const rejected = await service.sendRejectionNotice(task, LEAVE_WORKFLOW, advisorStep({ outcome: "rejected" }));
-  const completed = await service.sendCompletionNotice(task, LEAVE_WORKFLOW);
-  const moreInfo = await service.sendMoreInfoNotice(task, LEAVE_WORKFLOW, advisorStep());
-
-  assert.equal(rejected, false);
-  assert.equal(completed, false);
-  assert.equal(moreInfo, false);
-  assert.equal(mailer.sent.length, 0);
-});
-
-test("a mailer that throws returns false and does not propagate", async () => {
-  const mailer = new FakeMailer({ shouldThrow: true });
-  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
-  const task = baseTask();
-  const step = advisorStep();
-
-  const result = await service.sendApprovalRequest(task, LEAVE_WORKFLOW, step);
-
-  assert.equal(result, false);
-});
-
-test("a mailer that resolves sent: false is reported as a failed send", async () => {
-  const mailer = new FakeMailer({ result: { sent: false, error: "rejected by relay" } });
-  const service = new NotificationService({ mailer, config: FAKE_CONFIG });
-  const task = baseTask();
-  const step = advisorStep();
-
-  const result = await service.sendApprovalRequest(task, LEAVE_WORKFLOW, step);
-
-  assert.equal(result, false);
+  assert.equal(await service(mailer).sendRequesterActionRequired(task, step(task, "entry_form")), false);
 });

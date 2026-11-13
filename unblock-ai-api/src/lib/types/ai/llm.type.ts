@@ -1,4 +1,4 @@
-import type { LlmFinishReason, LlmMessageRole } from "../../../data/constants/llm.constant.js";
+import type { LlmFinishReason, LlmMessageRole, LlmOperation } from "../../../data/constants/llm.constant.js";
 
 export type LlmConversationRole = Exclude<LlmMessageRole, LlmMessageRole.SYSTEM>;
 
@@ -13,6 +13,7 @@ export interface LlmResponseSchema {
 }
 
 export interface LlmCompletionRequest {
+  operation: LlmOperation;
   messages: LlmMessage[];
   responseSchema?: LlmResponseSchema;
 }

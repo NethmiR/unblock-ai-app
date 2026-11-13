@@ -1,5 +1,5 @@
-import type { CompletionDocument, RenderedDocument } from "../../lib/types/document/document.type.js";
+import type { RenderedDocument, TaskTranscript } from "../../lib/types/document/document.type.js";
 
 export interface IDocumentRenderer {
-  render(doc: CompletionDocument): Promise<RenderedDocument>;
+  render(transcript: TaskTranscript): Promise<RenderedDocument>;
 }

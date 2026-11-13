@@ -20,6 +20,13 @@ export function userDetailPath(userId: string): string {
   return `${RoutePath.USERS}/${encodeURIComponent(userId)}`;
 }
 
+export const TASK_STEP_QUERY_PARAMETER = "step";
+
+export function taskDetailPath(taskId: string, stepId?: string): string {
+  const path = `${RoutePath.TASKS}/${encodeURIComponent(taskId)}`;
+  return stepId === undefined ? path : `${path}?${new URLSearchParams({ [TASK_STEP_QUERY_PARAMETER]: stepId })}`;
+}
+
 export const WORKFLOW_TEMPLATE_VERSION_QUERY_PARAMETER = "version";
 
 export function workflowTemplateDetailPath(workflowTemplateId: string, version?: number): string {

@@ -3,30 +3,31 @@ import { WorkflowTemplateStatus, WorkflowTemplateVisibility } from "../../src/da
 import type { WorkflowTemplateModel } from "../../src/models/workflow-template.model.js";
 import type { WorkflowTemplateVersionModel } from "../../src/models/workflow-template-version.model.js";
 import type {
+  WorkflowTemplateCatalogueProjection,
   WorkflowTemplateDocument,
   WorkflowTemplateListOptions,
+  WorkflowTemplateVersionKey,
   WorkflowTemplateRetrieval,
   WorkflowTemplateRetrievalProjection,
   WorkflowTemplateVersionDocument,
   WorkflowTemplateVersionSummaryDocument,
 } from "../../src/lib/types/workflow-template/workflow-template.type.js";
-import type {
-  SelectionSessionDocument,
-  SessionOutcome,
-  SessionRound,
-} from "../../src/lib/types/selection/session.type.js";
-import type {
-  TaskAuditEntry,
-  TaskDocument,
-  TaskStatus,
-  TaskStepState,
-} from "../../src/lib/types/task/task.type.js";
-import type { RequirementValue, TaskRequirement } from "../../src/lib/types/task/requirement.type.js";
+import type { SelectionSessionDocument } from "../../src/lib/types/selection/session.type.js";
+import type { ISelectionSessionModel } from "../../src/models/selection-session.model.js";
+import type { WorkflowTemplateAudience } from "../../src/lib/types/selection/eligibility.type.js";
+import { taskRevisionConflict } from "../../src/errors/task.error.js";
+import type { ITaskModel } from "../../src/models/task.model.js";
+import type { TaskDocument } from "../../src/lib/types/task/task-document.type.js";
+import type { TaskListFilter, TaskListPage } from "../../src/lib/types/task/task-dto.type.js";
 import type { AuditLogDocument, AuditResource } from "../../src/lib/types/audit/audit.type.js";
-import type { CompletionDocumentRecord } from "../../src/lib/types/document/document.type.js";
+
+function cloneDocument<T extends { _id: ObjectId }>(document: T): T {
+  const { _id, ...rest } = document;
+  return { ...structuredClone(rest), _id } as T;
+}
 
 export class FakeWorkflowTemplateModel
-  implements Pick<WorkflowTemplateModel, "insert" | "findById" | "findAll" | "update" | "listForRetrieval">
+  implements Pick<WorkflowTemplateModel, "insert" | "findById" | "findAll" | "update" | "listForRetrieval" | "listPublishedForCatalogue">
 {
   readonly templates = new Map<string, WorkflowTemplateDocument>();
 
@@ -57,6 +58,16 @@ export class FakeWorkflowTemplateModel
     return Promise.resolve({ ...updated });
   }
 
+  listPublishedForCatalogue(): Promise<WorkflowTemplateCatalogueProjection[]> {
+    return Promise.resolve(
+      [...this.templates.values()]
+        .filter((template) => template.status === WorkflowTemplateStatus.PUBLISHED && template.archived_at === null)
+        .flatMap((template) =>
+          template.current_version === null ? [] : [{ _id: template._id, title: template.title, current_version: template.current_version }],
+        ),
+    );
+  }
+
   listForRetrieval(options: { institutionType?: string | null }): Promise<WorkflowTemplateRetrievalProjection[]> {
     const matches = [...this.templates.values()].filter(
       (template) =>
@@ -79,7 +90,7 @@ export class FakeWorkflowTemplateModel
 }
 
 export class FakeWorkflowTemplateVersionModel
-  implements Pick<WorkflowTemplateVersionModel, "insert" | "find" | "listSummaries">
+  implements Pick<WorkflowTemplateVersionModel, "insert" | "find" | "listSummaries" | "findAudiences">
 {
   readonly versions: WorkflowTemplateVersionDocument[] = [];
 
@@ -96,6 +107,17 @@ export class FakeWorkflowTemplateVersionModel
     return Promise.resolve(found ? { ...found } : null);
   }
 
+  findAudiences(keys: readonly WorkflowTemplateVersionKey[]): Promise<Map<string, WorkflowTemplateAudience>> {
+    const audiences = new Map<string, WorkflowTemplateAudience>();
+    for (const key of keys) {
+      const found = this.versions.find((candidate) => candidate.workflow_template_id === key.workflow_template_id && candidate.version === key.version);
+      if (!found) continue;
+      const appliesTo = found.definition.scope.applies_to;
+      audiences.set(key.workflow_template_id, { actorType: appliesTo.actor_type, organisationalUnitCodes: [...appliesTo.organisational_unit_codes] });
+    }
+    return Promise.resolve(audiences);
+  }
+
   listSummaries(workflowTemplateId: string): Promise<WorkflowTemplateVersionSummaryDocument[]> {
     const matches = this.versions
       .filter((candidate) => candidate.workflow_template_id === workflowTemplateId)
@@ -105,176 +127,85 @@ export class FakeWorkflowTemplateVersionModel
   }
 }
 
-export class FakeSelectionSessionModel {
+export class FakeSelectionSessionModel implements ISelectionSessionModel {
   readonly sessions = new Map<string, SelectionSessionDocument>();
+  now: () => Date = () => new Date();
 
   insert(doc: Omit<SelectionSessionDocument, "_id">): Promise<SelectionSessionDocument> {
-    const _id = new ObjectId();
-    const inserted: SelectionSessionDocument = { ...doc, _id };
-    this.sessions.set(_id.toString(), inserted);
-    return Promise.resolve(inserted);
+    const inserted: SelectionSessionDocument = cloneDocument({ ...doc, _id: new ObjectId() });
+    this.sessions.set(inserted._id.toString(), inserted);
+    return Promise.resolve(cloneDocument(inserted));
   }
 
-  findById(id: string | ObjectId): Promise<SelectionSessionDocument | null> {
-    return Promise.resolve(this.sessions.get(String(id)) ?? null);
+  findOwned(id: string, userId: string): Promise<SelectionSessionDocument | null> {
+    const found = this.sessions.get(id);
+    const live = found && found.created_by === userId && found.expires_at.getTime() > this.now().getTime();
+    return Promise.resolve(live ? cloneDocument(found) : null);
   }
 
-  pushRound(id: string | ObjectId, round: SessionRound): Promise<SelectionSessionDocument | null> {
-    const session = this.sessions.get(String(id));
-    if (!session) return Promise.resolve(null);
-    session.rounds.push(round);
-    session.updated_at = new Date();
-    return Promise.resolve(session);
+  replace(session: SelectionSessionDocument): Promise<void> {
+    this.sessions.set(session._id.toString(), cloneDocument(session));
+    return Promise.resolve();
   }
 
-  setRoundAnswer(id: string | ObjectId, index: number, answer: string): Promise<SelectionSessionDocument | null> {
-    const session = this.sessions.get(String(id));
-    if (!session) return Promise.resolve(null);
-    const round = session.rounds[index];
-    if (!round) return Promise.resolve(session);
-    round.answer = answer;
-    round.answered_at = new Date();
-    session.updated_at = new Date();
-    return Promise.resolve(session);
+  async deleteOwned(id: string, userId: string): Promise<boolean> {
+    if (!(await this.findOwned(id, userId))) return false;
+    this.sessions.delete(id);
+    return true;
   }
 
-  finalize(
-    id: string | ObjectId,
-    outcome: SessionOutcome,
-    selectedWorkflowTemplateId: string | null,
-  ): Promise<SelectionSessionDocument | null> {
-    const session = this.sessions.get(String(id));
-    if (!session) return Promise.resolve(null);
-    session.outcome = outcome;
-    session.selected_workflow_template_id = selectedWorkflowTemplateId;
-    session.updated_at = new Date();
-    return Promise.resolve(session);
+  deleteById(id: string): Promise<void> {
+    this.sessions.delete(id);
+    return Promise.resolve();
   }
 }
 
-export class FakeTaskModel {
+export class FakeTaskModel implements ITaskModel {
   readonly tasks = new Map<string, TaskDocument>();
   private seq = 0;
 
-  insert(doc: Omit<TaskDocument, "_id">): Promise<TaskDocument> {
-    const _id = new ObjectId();
-    const inserted: TaskDocument = { ...doc, _id };
-    this.tasks.set(_id.toString(), inserted);
-    return Promise.resolve(inserted);
+  insert(task: TaskDocument): Promise<TaskDocument> {
+    this.tasks.set(task._id.toString(), cloneDocument(task));
+    return Promise.resolve(cloneDocument(task));
   }
 
-  findById(id: string | ObjectId): Promise<TaskDocument | null> {
-    return Promise.resolve(this.tasks.get(String(id)) ?? null);
+  findById(id: string): Promise<TaskDocument | null> {
+    const found = this.tasks.get(id);
+    return Promise.resolve(found ? cloneDocument(found) : null);
   }
 
-  findCreatorById(id: string | ObjectId): Promise<string | null> {
-    return Promise.resolve(this.tasks.get(String(id))?.created_by ?? null);
-  }
-
-  findAll(filters: {
-    created_by?: string;
-    session_id?: string;
-    status?: TaskStatus;
-  }): Promise<TaskDocument[]> {
-    const matches = [...this.tasks.values()].filter((t) => {
-      if (filters.created_by && t.created_by !== filters.created_by) return false;
-      if (filters.session_id && t.session_id !== filters.session_id) return false;
-      if (filters.status && t.status !== filters.status) return false;
-      return true;
+  findOwnedSummaryPage(userId: string, filter: TaskListFilter): Promise<TaskListPage<TaskDocument>> {
+    const search = filter.search?.toLowerCase() ?? null;
+    const matches = [...this.tasks.values()]
+      .filter((task) => task.created_by === userId)
+      .filter((task) => filter.status === null || task.status === filter.status)
+      .filter((task) => search === null || task.reference.toLowerCase().includes(search) || task.title.toLowerCase().includes(search))
+      .sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime());
+    return Promise.resolve({
+      tasks: matches.slice(filter.offset, filter.offset + filter.limit).map((task) => cloneDocument(task)),
+      total: matches.length,
     });
-    matches.sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
-    return Promise.resolve(matches);
   }
 
-  setValue(
-    id: string | ObjectId,
-    key: string,
-    value: RequirementValue,
-    requirementIndex: number,
-  ): Promise<TaskDocument | null> {
-    const task = this.tasks.get(String(id));
-    if (!task) return Promise.resolve(null);
-    task.values[key] = value;
-    const requirement = task.requirements[requirementIndex];
-    if (requirement) requirement.status = "filled";
-    task.updated_at = new Date();
-    return Promise.resolve(task);
+  findCreatorById(id: string): Promise<string | null> {
+    return Promise.resolve(this.tasks.get(id)?.created_by ?? null);
   }
 
-  replaceSteps(id: string | ObjectId, steps: TaskStepState[]): Promise<TaskDocument | null> {
-    const task = this.tasks.get(String(id));
-    if (!task) return Promise.resolve(null);
-    task.steps = steps;
-    task.updated_at = new Date();
-    return Promise.resolve(task);
+  replaceWithRevision(task: TaskDocument, expectedRevision: number): Promise<TaskDocument> {
+    const existing = this.tasks.get(task._id.toString());
+    if (!existing || existing.revision !== expectedRevision) return Promise.reject(taskRevisionConflict());
+    const next = cloneDocument({ ...task, revision: expectedRevision + 1 });
+    this.tasks.set(task._id.toString(), next);
+    return Promise.resolve(cloneDocument(next));
   }
 
-  setStatus(id: string | ObjectId, status: TaskStatus): Promise<TaskDocument | null> {
-    const task = this.tasks.get(String(id));
-    if (!task) return Promise.resolve(null);
-    task.status = status;
-    task.updated_at = new Date();
-    return Promise.resolve(task);
+  findByApprovalTokenHash(tokenHash: string): Promise<TaskDocument | null> {
+    const found = [...this.tasks.values()].find((task) => task.steps.some((step) => step.approval?.token_hash === tokenHash));
+    return Promise.resolve(found ? cloneDocument(found) : null);
   }
 
-  setCompletionDocument(id: string | ObjectId, record: CompletionDocumentRecord): Promise<TaskDocument | null> {
-    const task = this.tasks.get(String(id));
-    if (!task) return Promise.resolve(null);
-    task.completion_document = record;
-    task.updated_at = new Date();
-    return Promise.resolve(task);
-  }
-
-  appendAudit(id: string | ObjectId, entry: TaskAuditEntry): Promise<TaskDocument | null> {
-    const task = this.tasks.get(String(id));
-    if (!task) return Promise.resolve(null);
-    task.audit.push(entry);
-    task.updated_at = new Date();
-    return Promise.resolve(task);
-  }
-
-  findByStepToken(token: string): Promise<TaskDocument | null> {
-    for (const task of this.tasks.values()) {
-      if (task.steps.some((s) => s.approval_token === token)) return Promise.resolve(task);
-    }
-    return Promise.resolve(null);
-  }
-
-  updateStepAndStatus(id: string | ObjectId, steps: TaskStepState[], status: TaskStatus): Promise<TaskDocument | null> {
-    const task = this.tasks.get(String(id));
-    if (!task) return Promise.resolve(null);
-    task.steps = steps;
-    task.status = status;
-    task.updated_at = new Date();
-    return Promise.resolve(task);
-  }
-
-  updateStepAndStatusIfUnused(
-    id: string | ObjectId,
-    stepId: string,
-    steps: TaskStepState[],
-    status: TaskStatus,
-  ): Promise<boolean> {
-    const task = this.tasks.get(String(id));
-    if (!task) return Promise.resolve(false);
-    const current = task.steps.find((s) => s.step_id === stepId);
-    if (!current || current.token_used_at !== null) return Promise.resolve(false);
-    task.steps = steps;
-    task.status = status;
-    task.updated_at = new Date();
-    return Promise.resolve(true);
-  }
-
-  appendRequirement(id: string | ObjectId, requirement: TaskRequirement): Promise<TaskDocument | null> {
-    const task = this.tasks.get(String(id));
-    if (!task) return Promise.resolve(null);
-    task.requirements.push(requirement);
-    task.updated_at = new Date();
-    return Promise.resolve(task);
-  }
-
-  deleteById(id: string | ObjectId): Promise<boolean> {
-    return Promise.resolve(this.tasks.delete(String(id)));
+  deleteById(id: string): Promise<boolean> {
+    return Promise.resolve(this.tasks.delete(id));
   }
 
   nextSequence(): Promise<number> {

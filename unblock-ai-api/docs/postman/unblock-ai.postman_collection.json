@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b6f0a1c2-3e6a-4b1a-9b7a-9f6d1c2a5e01",
     "name": "UNBLOCK-AI API",
-    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Auth, Users, Organisation, User affiliations, Workflow Templates, Selection, Tasks, Approvals, Error cases. Most requests need a bearer token - the collection-level auth reads it from {{authToken}}, captured by the 'Login' request in the Auth folder from {{loginEmail}} / {{loginPassword}}, so running Auth first is what makes everything after it authenticate automatically. Set loginEmail to the administrator seeded by 'npm run seed:pg:run' (SEED_ADMINISTRATOR_EMAIL) and loginPassword to the server's USER_DEFAULT_PASSWORD. The Approvals folder needs a token copied by hand out of the console mailer's stdout log after 'Start task (dispatch approval chain)' -- it cannot be fully automated by the Collection Runner.",
+    "description": "Endpoints exposed by the Express server (src/app.ts, src/routes/). Generated to match docs/api/api-documentation.md. Run the whole collection with the Collection Runner in folder order: Health, Auth, Users, Organisation, User affiliations, Workflow Templates, Task requests, Approvals, Transcript, Error cases. Most requests need a bearer token - the collection-level auth reads it from {{authToken}}, captured by the 'Login' request in the Auth folder from {{loginEmail}} / {{loginPassword}}. Set loginEmail to the administrator seeded by 'npm run seed:pg:run' (SEED_ADMINISTRATOR_EMAIL) and loginPassword to the server's USER_DEFAULT_PASSWORD. The Task requests, Approvals and Transcript folders run as {{requesterEmail}} (a seeded sample user, SEED_SAMPLE_USERS=true) through {{requesterToken}}. The Approvals folder needs the approval URL pasted by hand from the console mailer's stdout into {{approvalUrl}} after 'Submit form' -- it cannot be fully automated by the Collection Runner.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -27,31 +27,11 @@
       "value": ""
     },
     {
-      "key": "selectionDecision",
-      "value": ""
-    },
-    {
       "key": "taskId",
       "value": ""
     },
     {
-      "key": "requirementKey",
-      "value": ""
-    },
-    {
       "key": "approvalToken",
-      "value": ""
-    },
-    {
-      "key": "requirementType",
-      "value": ""
-    },
-    {
-      "key": "requirementLabel",
-      "value": ""
-    },
-    {
-      "key": "requirementValue",
       "value": ""
     },
     {
@@ -92,6 +72,38 @@
     },
     {
       "key": "designationId",
+      "value": ""
+    },
+    {
+      "key": "requesterEmail",
+      "value": "u17@u.c"
+    },
+    {
+      "key": "requesterToken",
+      "value": ""
+    },
+    {
+      "key": "selectionMessage",
+      "value": "I want to take 1 month overseas leave for a research visit. Guide me through the process."
+    },
+    {
+      "key": "formId",
+      "value": ""
+    },
+    {
+      "key": "formFields",
+      "value": "[]"
+    },
+    {
+      "key": "draftValues",
+      "value": "{}"
+    },
+    {
+      "key": "formValues",
+      "value": "{}"
+    },
+    {
+      "key": "approvalUrl",
       "value": ""
     }
   ],
@@ -1700,11 +1712,100 @@
       ]
     },
     {
-      "name": "Selection",
-      "description": "Start a session, then conditionally answer or manually choose depending on the decision from round 1, then fetch the matched workflow template's published definition. Requires at least one published, non-archived workflow template (run the Workflow Templates folder first).",
+      "name": "Task requests",
+      "description": "The requester journey: assistant conversation, task creation, form draft and submit. Runs as {{requesterEmail}} (default u17@u.c, Kavindu, a student in the Department of Information Technology seeded with SEED_SAMPLE_USERS=true), because selection depends on the caller's affiliations and tasks are visible only to their creator. Publish an IT overseas-leave template first (src/data/samples/demo-drafts/).",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{requesterToken}}",
+            "type": "string"
+          }
+        ]
+      },
       "item": [
         {
-          "name": "Start session (round 1)",
+          "name": "Login as requester",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Logs in as {{requesterEmail}} with USER_DEFAULT_PASSWORD and stores the token in {{requesterToken}}.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{requesterEmail}}\",\n  \"password\": \"{{loginPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set(\"requesterToken\", pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get catalogue",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/selection/catalogue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "selection",
+                "catalogue"
+              ]
+            },
+            "header": [],
+            "description": "Published templates the requester is eligible for. No embedding and no LLM call."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"has workflow_templates\", function () { pm.expect(pm.response.json().workflow_templates).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start selection session",
           "request": {
             "method": "POST",
             "url": {
@@ -1723,16 +1824,16 @@
                 "value": "application/json"
               }
             ],
+            "description": "First message. Reads the profile, embeds once, filters by eligibility and consults the selector (one LLM call when a candidate survives). Stores the session id in {{sessionId}}.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"query\": \"I want to book a hall for a workshop next month\",\n  \"institution_type\": \"university\",\n  \"requester_context\": {\n    \"actor_type\": \"staff\",\n    \"department\": \"Information Technology\"\n  }\n}",
+              "raw": "{\n  \"message\": \"{{selectionMessage}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "description": "The only retrieval call in the whole conversation. Only published, non-archived workflow templates are candidates."
+            }
           },
           "response": [],
           "event": [
@@ -1743,151 +1844,32 @@
                 "exec": [
                   "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
                   "var json = pm.response.json();",
-                  "pm.test(\"response has session_id\", function () { pm.expect(json).to.have.property(\"session_id\"); });",
-                  "pm.collectionVariables.set(\"sessionId\", json.session_id);",
-                  "pm.collectionVariables.set(\"selectionDecision\", json.decision);",
-                  "if (json.decision !== \"ambiguous\") { postman.setNextRequest(\"Choose workflow template manually\"); }"
+                  "pm.collectionVariables.set(\"sessionId\", json.id);",
+                  "var last = json.messages[json.messages.length - 1];",
+                  "pm.test(\"ends with an assistant message\", function () { pm.expect(last.role).to.eql(\"assistant\"); });",
+                  "pm.test(\"assistant matched a template\", function () { pm.expect([\"matched\", \"start_requested\"]).to.include(last.decision); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Answer clarifying question (round 2+)",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}/answer",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "selection",
-                "sessions",
-                "{{sessionId}}",
-                "answer"
-              ]
-            },
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"answer\": \"It's a departmental workshop for our students\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "Only runs when the previous decision was 'ambiguous' (see the pre-request script on 'Start session')."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.collectionVariables.get(\"selectionDecision\") !== \"ambiguous\") {",
-                  "    postman.setNextRequest(\"Choose workflow template manually\");",
-                  "}"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "var json = pm.response.json();",
-                  "pm.test(\"response has decision\", function () { pm.expect(json).to.have.property(\"decision\"); });",
-                  "pm.collectionVariables.set(\"selectionDecision\", json.decision);",
-                  "if (json.decision !== \"manual_choice\") { postman.setNextRequest(\"Get matched workflow template\"); }"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Choose workflow template manually",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}/choose",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "selection",
-                "sessions",
-                "{{sessionId}}",
-                "choose"
-              ]
-            },
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"workflow_template_id\": \"{{workflowTemplateId}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "Only meaningful if the decision was 'manual_choice'. workflow_template_id must be a UUID and one of the session's candidates."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.collectionVariables.get(\"selectionDecision\") === \"matched\") {",
-                  "    postman.setNextRequest(\"Get matched workflow template\");",
-                  "}"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"response has decision and workflow_template_id\", function () { var json = pm.response.json(); pm.expect(json).to.have.property(\"decision\"); pm.expect(json).to.have.property(\"workflow_template_id\"); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Get matched workflow template",
+          "name": "Get selection session",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}/workflow-template",
+              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "selection",
                 "sessions",
-                "{{sessionId}}",
-                "workflow-template"
+                "{{sessionId}}"
               ]
             },
-            "description": "Returns { workflow_template_version, definition } for the matched template's current version, with the template title in definition.title. 409 CONFLICT if the session hasn't matched yet; 409 WORKFLOW_TEMPLATE_NOT_PUBLISHED if the template was archived after the match."
+            "header": [],
+            "description": "Restores the conversation, as the web app does after a refresh."
           },
           "response": [],
           "event": [
@@ -1897,18 +1879,12 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"response has workflow_template_version and definition\", function () { var json = pm.response.json(); pm.expect(json).to.have.property(\"workflow_template_version\"); pm.expect(json).to.have.property(\"definition\"); });"
+                  "pm.test(\"same session\", function () { pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"sessionId\")); });"
                 ]
               }
             }
           ]
-        }
-      ]
-    },
-    {
-      "name": "Tasks",
-      "description": "Create a task from a matched selection session, collect requirement values one at a time via GET .../next, finalize, list, and cancel. Chains sessionId (from Selection) -> taskId.",
-      "item": [
+        },
         {
           "name": "Create task from session",
           "request": {
@@ -1928,16 +1904,16 @@
                 "value": "application/json"
               }
             ],
+            "description": "Compiles and starts the task, and deletes the selection session. Stores {{taskId}}, the submittable form's id in {{formId}} and its fields in {{formFields}}.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"session_id\": \"{{sessionId}}\"\n}",
+              "raw": "{\n  \"source\": \"selection_session\",\n  \"selection_session_id\": \"{{sessionId}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "description": "session_id must belong to a session with decision: matched (409 CONFLICT otherwise). The task pins the matched template's current version as workflow_template_id + workflow_template_version. 409 WORKFLOW_TEMPLATE_NOT_PUBLISHED if the template was archived after the match."
+            }
           },
           "response": [],
           "event": [
@@ -1948,17 +1924,24 @@
                 "exec": [
                   "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
                   "var json = pm.response.json();",
-                  "pm.test(\"response has id and reference\", function () { pm.expect(json).to.have.property(\"id\"); pm.expect(json).to.have.property(\"reference\"); });",
-                  "pm.test(\"status is collecting\", function () { pm.expect(json).to.have.property(\"status\", \"collecting\"); });",
-                  "pm.test(\"task pins a workflow template version\", function () { pm.expect(json).to.have.property(\"workflow_template_id\"); pm.expect(json).to.have.property(\"workflow_template_version\"); });",
-                  "pm.collectionVariables.set(\"taskId\", json.id);"
+                  "pm.collectionVariables.set(\"taskId\", json.id);",
+                  "pm.test(\"task is in progress\", function () { pm.expect(json.status).to.eql(\"in_progress\"); });",
+                  "pm.test(\"no approval token is exposed\", function () { pm.expect(JSON.stringify(json)).to.not.include(\"token\"); });",
+                  "var json = pm.response.json();",
+                  "var form = json.forms.find(function (f) { return f.submittable; }) || json.forms.find(function (f) { return f.editable; });",
+                  "if (form) {",
+                  "  pm.collectionVariables.set(\"formId\", form.id);",
+                  "  var fields = [];",
+                  "  form.sections.forEach(function (s) { s.fields.forEach(function (f) { fields.push({ id: f.id, control: f.control, locked: f.locked, validation: f.validation, options: f.options }); }); });",
+                  "  pm.collectionVariables.set(\"formFields\", JSON.stringify(fields));",
+                  "}"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Get task by id",
+          "name": "Get task",
           "request": {
             "method": "GET",
             "url": {
@@ -1970,7 +1953,8 @@
                 "tasks",
                 "{{taskId}}"
               ]
-            }
+            },
+            "header": []
           },
           "response": [],
           "event": [
@@ -1980,276 +1964,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"response has requirements array\", function () { pm.expect(pm.response.json()).to.have.property(\"requirements\"); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Get next requirement",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/tasks/{{taskId}}/next",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "tasks",
-                "{{taskId}}",
-                "next"
-              ]
-            },
-            "description": "Returns the next pending required requirement, then pending optional ones, then { requirement: null, complete: true }. Run this + 'Submit next requirement value' in a loop (Collection Runner) until complete is true. The test script stores the requirement's key AND type into {{requirementKey}} / {{requirementType}}, so the next request can build a value the validator will accept."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "var json = pm.response.json();",
-                  "pm.test(\"response has complete flag\", function () { pm.expect(json).to.have.property(\"complete\"); });",
-                  "if (json.requirement) {",
-                  "    pm.collectionVariables.set(\"requirementKey\", json.requirement.key);",
-                  "    pm.collectionVariables.set(\"requirementType\", json.requirement.type);",
-                  "    pm.collectionVariables.set(\"requirementLabel\", json.requirement.label);",
-                  "} else {",
-                  "    pm.collectionVariables.set(\"requirementKey\", \"\");",
-                  "    pm.collectionVariables.set(\"requirementType\", \"\");",
-                  "    pm.collectionVariables.set(\"requirementLabel\", \"\");",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Submit next requirement value",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{baseUrl}}/tasks/{{taskId}}/values",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "tasks",
-                "{{taskId}}",
-                "values"
-              ]
-            },
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"key\": \"{{requirementKey}}\",\n  \"value\": {{requirementValue}}\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "value is polymorphic — its shape depends on the requirement's type, and the API coerces strictly (src/utils/task/value-validator.util.ts):\n\n| type | accepted value |\n| --- | --- |\n| string / text / phone / enum / file | any string |\n| email | a string matching user@host.tld — e.g. requester_email |\n| number | a finite number (numeric strings are coerced) |\n| boolean | true / false, not \"true\" |\n| date / datetime | \"YYYY-MM-DD\" |\n| person | { \"name\": ..., \"email\": ... } — the actor:* requirements |\n\nThe pre-request script reads {{requirementType}} (set by 'Get next requirement') and builds a matching sample into {{requirementValue}}, so a Collection Runner loop of next -> values fills every requirement — including the email-typed requester_email — without hand-editing the body. Override {{requirementValue}} manually (as raw JSON) to send a specific value."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "// Build a value matching the requirement type captured by \"Get next requirement\".",
-                  "// Keeps the next -> values Collection Runner loop green for every type,",
-                  "// including the email-typed requester_email input.",
-                  "var type = pm.collectionVariables.get(\"requirementType\") || \"string\";",
-                  "var key = pm.collectionVariables.get(\"requirementKey\") || \"\";",
-                  "var value;",
-                  "",
-                  "switch (type) {",
-                  "    case \"email\":",
-                  "        value = \"jane.doe@example.com\";",
-                  "        break;",
-                  "    case \"person\":",
-                  "        value = { name: \"Dr. Perera\", email: \"perera@university.edu\" };",
-                  "        break;",
-                  "    case \"number\":",
-                  "        value = 42;",
-                  "        break;",
-                  "    case \"boolean\":",
-                  "        value = true;",
-                  "        break;",
-                  "    case \"date\":",
-                  "    case \"datetime\":",
-                  "        // 30 days out, so it satisfies not_before: \"today\" style rules.",
-                  "        value = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);",
-                  "        break;",
-                  "    default:",
-                  "        value = \"example value\";",
-                  "}",
-                  "",
-                  "pm.collectionVariables.set(\"requirementValue\", JSON.stringify(value));",
-                  "console.log(\"Submitting \" + key + \" (\" + type + \"): \" + JSON.stringify(value));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200 or 400\", function () { pm.expect([200, 400]).to.include(pm.response.code); });",
-                  "if (pm.response.code === 200) {",
-                  "    var json = pm.response.json();",
-                  "    pm.test(\"response has requirements array\", function () { pm.expect(json).to.have.property(\"requirements\"); });",
-                  "    pm.test(\"submitted requirement is now filled\", function () {",
-                  "        var key = pm.collectionVariables.get(\"requirementKey\");",
-                  "        var req = json.requirements.filter(function (r) { return r.key === key; })[0];",
-                  "        pm.expect(req).to.be.an(\"object\");",
-                  "        pm.expect(req.status).to.eql(\"filled\");",
-                  "    });",
-                  "} else {",
-                  "    console.log(\"400 from /values — body: \" + pm.response.text());",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Finalize task",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{baseUrl}}/tasks/{{taskId}}/finalize",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "tasks",
-                "{{taskId}}",
-                "finalize"
-              ]
-            },
-            "description": "400 VALIDATION_ERROR if any required requirement is still unfilled — run 'Get next requirement' / 'Submit next requirement value' in a loop first."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200 or 400\", function () { pm.expect([200, 400]).to.include(pm.response.code); });",
-                  "if (pm.response.code === 200) { pm.test(\"status is ready\", function () { pm.expect(pm.response.json()).to.have.property(\"status\", \"ready\"); }); }"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Start task (dispatch approval chain)",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{baseUrl}}/tasks/{{taskId}}/start",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "tasks",
-                "{{taskId}}",
-                "start"
-              ]
-            },
-            "description": "Requires status: ready (run Finalize task first). Dispatches the entry step(s), issues each an approval token, and emails the assignee. With MAIL_TRANSPORT=console (default) the email is logged to the server's stdout — copy the token out of that log line into {{approvalToken}} to drive the Approvals folder."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200 or 409\", function () { pm.expect([200, 409]).to.include(pm.response.code); });",
-                  "if (pm.response.code === 200) { pm.test(\"status is in_progress\", function () { pm.expect(pm.response.json()).to.have.property(\"status\", \"in_progress\"); }); }"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Get task status (requester timeline)",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/tasks/{{taskId}}/status",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "tasks",
-                "{{taskId}}",
-                "status"
-              ]
-            },
-            "description": "Requester-facing view distinct from 'Get task by id' — status, current_steps, timeline, and (once rejected) who rejected it and why."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"response has timeline array\", function () { pm.expect(pm.response.json()).to.have.property(\"timeline\"); });",
-                  "pm.test(\"response has workflow_template_title\", function () { pm.expect(pm.response.json()).to.have.property(\"workflow_template_title\"); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Get task document (PDF record)",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/tasks/{{taskId}}/document",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "tasks",
-                "{{taskId}}",
-                "document"
-              ]
-            },
-            "description": "Downloads the completion-document PDF record — a re-render of every value the requester supplied plus the approval trail, regenerated on each call rather than stored. Only available once the task status is completed; run this after the approval loop below has driven the task to completed: true, or expect a 409."
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200 or 409\", function () { pm.expect([200, 409]).to.include(pm.response.code); });",
-                  "if (pm.response.code === 200) {",
-                  "    var contentType = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "    pm.test(\"content-type is a document type\", function () { pm.expect(contentType.indexOf(\"application/pdf\") === 0 || contentType.indexOf(\"text/plain\") === 0).to.be.true; });",
-                  "    pm.test(\"content-disposition names an attachment\", function () { pm.expect(pm.response.headers.get(\"Content-Disposition\")).to.include(\"attachment\"); });",
-                  "} else {",
-                  "    var json = pm.response.json();",
-                  "    pm.test(\"409 body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json.code).to.eql(\"CONFLICT\"); });",
-                  "}"
+                  "pm.test(\"has steps and forms\", function () { var j = pm.response.json(); pm.expect(j.steps).to.be.an(\"array\").that.is.not.empty; pm.expect(j.forms).to.be.an(\"array\"); });"
                 ]
               }
             }
@@ -2260,7 +1975,7 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/tasks?session_id={{sessionId}}",
+              "raw": "{{baseUrl}}/tasks?limit=20&offset=0",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2269,16 +1984,16 @@
               ],
               "query": [
                 {
-                  "key": "session_id",
-                  "value": "{{sessionId}}"
+                  "key": "limit",
+                  "value": "20"
                 },
                 {
-                  "key": "status",
-                  "value": "",
-                  "disabled": true
+                  "key": "offset",
+                  "value": "0"
                 }
               ]
-            }
+            },
+            "header": []
           },
           "response": [],
           "event": [
@@ -2288,25 +2003,214 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"response is an array\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                  "pm.test(\"contains the task\", function () { var id = pm.collectionVariables.get(\"taskId\"); pm.expect(pm.response.json().tasks.map(function (t) { return t.id; })).to.include(id); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Cancel task",
+          "name": "Get pinned workflow definition",
           "request": {
-            "method": "PATCH",
+            "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/tasks/{{taskId}}/status",
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/workflow-definition",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "tasks",
                 "{{taskId}}",
-                "status"
+                "workflow-definition"
+              ]
+            },
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"has definition\", function () { pm.expect(pm.response.json().definition.steps).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Save form draft",
+          "request": {
+            "method": "PUT",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/forms/{{formId}}/draft",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "forms",
+                "{{formId}}",
+                "draft"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Saves the first editable field only. A draft ignores required. The pre-request script builds {{draftValues}} from {{formFields}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"values\": {{draftValues}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var fields = JSON.parse(pm.collectionVariables.get(\"formFields\") || \"[]\");",
+                  "function isoDate(offsetDays) { var d = new Date(Date.now() + offsetDays * 86400000); return d.toISOString().slice(0, 10); }",
+                  "function sample(field, index) {",
+                  "  var v = field.validation || {};",
+                  "  switch (field.control) {",
+                  "    case \"textarea\": return \"Sample details entered from Postman.\";",
+                  "    case \"number\": { var n = 40; if (typeof v.min === \"number\" && n < v.min) n = v.min; if (typeof v.max === \"number\" && n > v.max) n = v.max; return n; }",
+                  "    case \"date\": return isoDate(30 + index * 40);",
+                  "    case \"datetime\": return isoDate(30 + index * 40) + \"T09:00\";",
+                  "    case \"email\": return \"advisor@example.edu\";",
+                  "    case \"phone\": return \"+94 77 123 4567\";",
+                  "    case \"switch\": return true;",
+                  "    case \"select\": return field.options.length ? field.options[0].value : null;",
+                  "    case \"person\": return { name: \"Dr. Sample Advisor\", email: \"advisor@example.edu\" };",
+                  "    default: return \"Sample text\";",
+                  "  }",
+                  "}",
+                  "var values = {};",
+                  "fields.filter(function (f) { return !f.locked; }).forEach(function (f, i) { values[f.id] = sample(f, i); });",
+                  "var first = Object.keys(values)[0];",
+                  "var draft = {}; if (first) draft[first] = values[first];",
+                  "pm.collectionVariables.set(\"draftValues\", JSON.stringify(draft));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var form = pm.response.json().forms.find(function (f) { return f.id === pm.collectionVariables.get(\"formId\"); });",
+                  "pm.test(\"draft saved\", function () { pm.expect(form.status).to.eql(\"draft\"); pm.expect(form.saved_at).to.be.a(\"string\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit form",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/forms/{{formId}}/submit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "forms",
+                "{{formId}}",
+                "submit"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Fills every editable field with a sample value for its control (override {{formValues}} by hand as raw JSON for specific answers), submits and advances the task. The next approval's email, with its approval URL, is printed by the console mailer.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"values\": {{formValues}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var fields = JSON.parse(pm.collectionVariables.get(\"formFields\") || \"[]\");",
+                  "function isoDate(offsetDays) { var d = new Date(Date.now() + offsetDays * 86400000); return d.toISOString().slice(0, 10); }",
+                  "function sample(field, index) {",
+                  "  var v = field.validation || {};",
+                  "  switch (field.control) {",
+                  "    case \"textarea\": return \"Sample details entered from Postman.\";",
+                  "    case \"number\": { var n = 40; if (typeof v.min === \"number\" && n < v.min) n = v.min; if (typeof v.max === \"number\" && n > v.max) n = v.max; return n; }",
+                  "    case \"date\": return isoDate(30 + index * 40);",
+                  "    case \"datetime\": return isoDate(30 + index * 40) + \"T09:00\";",
+                  "    case \"email\": return \"advisor@example.edu\";",
+                  "    case \"phone\": return \"+94 77 123 4567\";",
+                  "    case \"switch\": return true;",
+                  "    case \"select\": return field.options.length ? field.options[0].value : null;",
+                  "    case \"person\": return { name: \"Dr. Sample Advisor\", email: \"advisor@example.edu\" };",
+                  "    default: return \"Sample text\";",
+                  "  }",
+                  "}",
+                  "var values = {};",
+                  "fields.filter(function (f) { return !f.locked; }).forEach(function (f, i) { values[f.id] = sample(f, i); });",
+                  "pm.collectionVariables.set(\"formValues\", JSON.stringify(values));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var form = pm.response.json().forms.find(function (f) { return f.id === pm.collectionVariables.get(\"formId\"); });",
+                  "pm.test(\"form submitted\", function () { pm.expect(form.status).to.eql(\"submitted\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit form again (409)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/forms/{{formId}}/submit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "forms",
+                "{{formId}}",
+                "submit"
               ]
             },
             "header": [
@@ -2317,14 +2221,13 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"status\": \"cancelled\"\n}",
+              "raw": "{\n  \"values\": {}\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "description": "Terminal — only run this against a scratch task you are done with, since it 409s on later re-use of {{taskId}} elsewhere in this folder."
+            }
           },
           "response": [],
           "event": [
@@ -2333,8 +2236,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"status is cancelled\", function () { pm.expect(pm.response.json()).to.have.property(\"status\", \"cancelled\"); });"
+                  "pm.test(\"status is 409\", function () { pm.response.to.have.status(409); });",
+                  "pm.test(\"code is TASK_FORM_ALREADY_SUBMITTED\", function () { pm.expect(pm.response.json().code).to.eql(\"TASK_FORM_ALREADY_SUBMITTED\"); });"
                 ]
               }
             }
@@ -2344,7 +2247,23 @@
     },
     {
       "name": "Approvals",
-      "description": "Token-authenticated, not session-authenticated. Copy the token out of the console mailer's stdout log (from 'Start task (dispatch approval chain)' in the Tasks folder) into {{approvalToken}} before running these. Re-run 'Start task' -> copy token -> Get approver view -> Submit decision for each subsequent step until the task completes or rejects.",
+      "description": "Approver path, no session. Paste the approval URL printed by the console mailer (MAIL_TRANSPORT=console) into the {{approvalUrl}} collection variable (a bare token also works). The folder's pre-request script extracts {{approvalToken}}. Repeat paste, view and approve for each approval step.",
+      "auth": {
+        "type": "noauth"
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var pasted = (pm.collectionVariables.get(\"approvalUrl\") || \"\").trim();",
+              "var token = pasted.indexOf(\"/approvals/\") >= 0 ? pasted.split(\"/approvals/\").pop() : pasted;",
+              "pm.collectionVariables.set(\"approvalToken\", decodeURIComponent(token.split(/[?#]/)[0]));"
+            ]
+          }
+        }
+      ],
       "item": [
         {
           "name": "Get approver view",
@@ -2360,7 +2279,7 @@
                 "{{approvalToken}}"
               ]
             },
-            "description": "404 if the token is malformed or unrecognized (deliberately not 401 — does not confirm or deny a token's existence). A re-fetched, already-decided token still returns 200 with already_decided: true rather than erroring."
+            "header": []
           },
           "response": [],
           "event": [
@@ -2371,14 +2290,108 @@
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
                   "var json = pm.response.json();",
-                  "pm.test(\"response has allowed_outcomes\", function () { pm.expect(json).to.have.property(\"allowed_outcomes\"); });"
+                  "pm.test(\"has allowed decisions\", function () { pm.expect(json.allowed_decisions).to.be.an(\"array\"); });",
+                  "pm.test(\"not decided yet\", function () { pm.expect(json.decided).to.eql(null); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Submit decision (approve)",
+          "name": "Request more information without comment (400)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/approvals/{{approvalToken}}/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approvals",
+                "{{approvalToken}}",
+                "decision"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "A comment is required for rejected and request_more_info.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"request_more_info\",\n  \"comment\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", function () { pm.response.to.have.status(400); });",
+                  "pm.test(\"code is APPROVAL_COMMENT_REQUIRED\", function () { pm.expect(pm.response.json().code).to.eql(\"APPROVAL_COMMENT_REQUIRED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/approvals/{{approvalToken}}/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approvals",
+                "{{approvalToken}}",
+                "decision"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "To try the information request loop instead, send {\"decision\": \"request_more_info\", \"comment\": \"…\"}; the task gains an information_request step whose form the requester submits (Task requests → Submit form after re-running Get task), and a new link is emailed to the same approver.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approved\",\n  \"comment\": \"Approved from Postman.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test(\"decision recorded\", function () { pm.expect(json.decision).to.eql(\"approved\"); pm.expect(json).to.have.property(\"task_status\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve again (409)",
           "request": {
             "method": "POST",
             "url": {
@@ -2400,14 +2413,43 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"outcome\": \"approved\"\n}",
+              "raw": "{\n  \"decision\": \"approved\",\n  \"comment\": null\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", function () { pm.response.to.have.status(409); });",
+                  "pm.test(\"code is APPROVAL_ALREADY_DECIDED\", function () { pm.expect(pm.response.json().code).to.eql(\"APPROVAL_ALREADY_DECIDED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get approver view after deciding",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approvals/{{approvalToken}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "approvals",
+                "{{approvalToken}}"
+              ]
             },
-            "description": "Edit the body to { \"outcome\": \"rejected\", \"reason\": \"...\" } or { \"outcome\": \"request_more_info\", \"reason\": \"...\" } to exercise the other branches — a reason is required whenever the step's outcome config sets include_reason: true. A used token 409s on replay."
+            "header": []
           },
           "response": [],
           "event": [
@@ -2417,8 +2459,116 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
-                  "var json = pm.response.json();",
-                  "pm.test(\"response has outcome and status\", function () { pm.expect(json).to.have.property(\"outcome\"); pm.expect(json).to.have.property(\"status\"); });"
+                  "pm.test(\"shows the decision\", function () { pm.expect(pm.response.json().decided.decision).to.eql(\"approved\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Transcript",
+      "description": "Rendered on demand for a completed task, never stored. Runs as the requester. Cancel and delete clean up the task afterwards.",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{requesterToken}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Download transcript",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/transcript",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "transcript"
+              ]
+            },
+            "header": [],
+            "description": "200 application/pdf once every approval is done; 409 TASK_TRANSCRIPT_UNAVAILABLE before that."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 409\", function () { pm.expect([200, 409]).to.include(pm.response.code); });",
+                  "if (pm.response.code === 200) { pm.test(\"is a PDF\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/pdf\"); }); }",
+                  "else { pm.test(\"code is TASK_TRANSCRIPT_UNAVAILABLE\", function () { pm.expect(pm.response.json().code).to.eql(\"TASK_TRANSCRIPT_UNAVAILABLE\"); }); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel task",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "cancel"
+              ]
+            },
+            "header": [],
+            "description": "Cancels open steps and revokes approval links. 409 TASK_NOT_ACTIVE once the task has finished."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 409\", function () { pm.expect([200, 409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete task",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}"
+              ]
+            },
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", function () { pm.response.to.have.status(204); });"
                 ]
               }
             }
@@ -2651,22 +2801,32 @@
           ]
         },
         {
-          "name": "Get matched workflow template — unmatched session (409)",
+          "name": "Get selection session — used by a task (404)",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}/workflow-template",
+              "raw": "{{baseUrl}}/selection/sessions/{{sessionId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "selection",
                 "sessions",
-                "{{sessionId}}",
-                "workflow-template"
+                "{{sessionId}}"
               ]
             },
-            "description": "Run this against a freshly started session (before it has matched) to see the 409. Against the shared {{sessionId}} after the Selection folder has run, it may already be matched — start a new session first if needed."
+            "header": [],
+            "description": "Starting a task deletes its selection session.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{requesterToken}}",
+                  "type": "string"
+                }
+              ]
+            }
           },
           "response": [],
           "event": [
@@ -2675,19 +2835,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 409 or 200\", function () { pm.expect([409, 200]).to.include(pm.response.code); });",
-                  "if (pm.response.code === 409) {",
-                  "    var json = pm.response.json();",
-                  "    pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
-                  "    pm.test(\"code is CONFLICT\", function () { pm.expect(json.code).to.eql(\"CONFLICT\"); });",
-                  "}"
+                  "pm.test(\"status is 404\", function () { pm.response.to.have.status(404); });",
+                  "pm.test(\"code is SELECTION_SESSION_NOT_FOUND\", function () { pm.expect(pm.response.json().code).to.eql(\"SELECTION_SESSION_NOT_FOUND\"); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Create task — missing session_id (400)",
+          "name": "Create task — missing selection_session_id (400)",
           "request": {
             "method": "POST",
             "url": {
@@ -2707,7 +2863,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{}",
+              "raw": "{\n  \"source\": \"selection_session\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2723,30 +2879,37 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 400\", function () { pm.response.to.have.status(400); });",
-                  "var json = pm.response.json();",
-                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
-                  "pm.test(\"code is VALIDATION_ERROR\", function () { pm.expect(json.code).to.eql(\"VALIDATION_ERROR\"); });"
+                  "pm.test(\"code is VALIDATION_ERROR\", function () { pm.expect(pm.response.json().code).to.eql(\"VALIDATION_ERROR\"); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Finalize task — already finalized (409)",
+          "name": "Get task — deleted (404)",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/tasks/{{taskId}}/finalize",
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "tasks",
-                "{{taskId}}",
-                "finalize"
+                "{{taskId}}"
               ]
             },
-            "description": "Run this after the Tasks folder has already finalized {{taskId}} once. If {{taskId}} is still collecting, this will 400 instead — that is also a valid client-visible failure, just not the one this request targets."
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{requesterToken}}",
+                  "type": "string"
+                }
+              ]
+            }
           },
           "response": [],
           "event": [
@@ -2755,10 +2918,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 409 or 400\", function () { pm.expect([409, 400]).to.include(pm.response.code); });",
-                  "var json = pm.response.json();",
-                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
-                  "if (pm.response.code === 409) { pm.test(\"code is CONFLICT\", function () { pm.expect(json.code).to.eql(\"CONFLICT\"); }); }"
+                  "pm.test(\"status is 404\", function () { pm.response.to.have.status(404); });",
+                  "pm.test(\"code is TASK_NOT_FOUND\", function () { pm.expect(pm.response.json().code).to.eql(\"TASK_NOT_FOUND\"); });"
                 ]
               }
             }
@@ -2778,7 +2939,11 @@
                 "not-a-real-token"
               ]
             },
-            "description": "Deliberately 404, not 401 or 500 — a malformed or unrecognized token does not confirm or deny that a token of that shape ever existed."
+            "header": [],
+            "description": "Deliberately 404, not 401 or 500 — a malformed or unrecognised token does not confirm or deny that a token of that shape ever existed.",
+            "auth": {
+              "type": "noauth"
+            }
           },
           "response": [],
           "event": [
@@ -2788,16 +2953,14 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 404\", function () { pm.response.to.have.status(404); });",
-                  "var json = pm.response.json();",
-                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
-                  "pm.test(\"code is NOT_FOUND\", function () { pm.expect(json.code).to.eql(\"NOT_FOUND\"); });"
+                  "pm.test(\"code is APPROVAL_LINK_INVALID\", function () { pm.expect(pm.response.json().code).to.eql(\"APPROVAL_LINK_INVALID\"); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Submit decision — bad outcome (400)",
+          "name": "Submit decision — unknown decision (400)",
           "request": {
             "method": "POST",
             "url": {
@@ -2817,16 +2980,18 @@
                 "value": "application/json"
               }
             ],
+            "auth": {
+              "type": "noauth"
+            },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"outcome\": \"not_a_real_outcome\"\n}",
+              "raw": "{\n  \"decision\": \"maybe\",\n  \"comment\": null\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "description": "The controller only checks that outcome is one of the three known literals — whether *this step* declares that outcome is a service-layer check (409/400 depending on the case), not exercised here."
+            }
           },
           "response": [],
           "event": [
@@ -2836,9 +3001,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 400\", function () { pm.response.to.have.status(400); });",
-                  "var json = pm.response.json();",
-                  "pm.test(\"body has error and code\", function () { pm.expect(json).to.have.property(\"error\"); pm.expect(json).to.have.property(\"code\"); });",
-                  "pm.test(\"code is VALIDATION_ERROR\", function () { pm.expect(json.code).to.eql(\"VALIDATION_ERROR\"); });"
+                  "pm.test(\"code is VALIDATION_ERROR\", function () { pm.expect(pm.response.json().code).to.eql(\"VALIDATION_ERROR\"); });"
                 ]
               }
             }

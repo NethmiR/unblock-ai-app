@@ -1,70 +1,40 @@
-import type { ResponseField } from "../workflow/step.type.js";
-import type { StepOutcomeResult } from "../task/task.type.js";
-
-export type ApproverStatus =
-  | "approved"
-  | "rejected"
-  | "request_more_info"
-  | "awaiting"
-  | "not_yet_reached";
+import type { ApprovalDecision, TaskStatus, TaskStepKind, TaskStepOutcome, TaskStepStatus } from "../../../data/constants/task.constant.js";
+import type { RequesterSnapshotDto, TaskAssigneeDto } from "../task/task-dto.type.js";
+import type { TaskDocument, TaskStepRecord } from "../task/task-document.type.js";
 
 export interface ApproverViewDto {
-  task_reference: string;
-  workflow_template_title: string;
-  step: {
-    step_id: string;
-    name: string;
-    instructions_to_approver: string | null;
-    response_fields: ResponseField[];
-  };
-  approver: { name: string; email: string } | null;
-  requester_answers: Array<{ label: string; value: string }>;
+  task: { reference: string; title: string; submitted_at: string; requester: RequesterSnapshotDto };
+  step: { id: string; name: string; description: string | null; instructions_to_approver: string | null; is_repeat: boolean };
+  approver: TaskAssigneeDto;
+  sections: Array<{ title: string; fields: Array<{ label: string; value: string }> }>;
   computed: Array<{ label: string; value: string }>;
-  prior_decisions: Array<{ step: string; outcome: string; reason: string | null; at: Date }>;
-  approvers: Array<{
-    step_id: string;
-    designation: string;
-    name: string | null;
-    email: string | null;
-    status: ApproverStatus;
-    is_current: boolean;
-    decided_at: Date | null;
-  }>;
-  allowed_outcomes: StepOutcomeResult[];
-  outcomes: Array<{ outcome: StepOutcomeResult; include_reason: boolean }>;
-  already_decided: boolean;
-  decided_outcome: StepOutcomeResult | null;
-  decided_at: Date | null;
+  information_exchanges: Array<{ asked_by: string; question: string; answer: string | null; asked_at: string; answered_at: string | null }>;
+  history: Array<{ step_name: string; actor_name: string | null; decision: ApprovalDecision | null; outcome: TaskStepOutcome; comment: string | null; at: string }>;
+  plan: Array<{ name: string; kind: TaskStepKind; status: TaskStepStatus; assignee: TaskAssigneeDto | null; is_current: boolean }>;
+  allowed_decisions: ApprovalDecision[];
+  comment_required_decisions: ApprovalDecision[];
+  decided: { decision: ApprovalDecision; comment: string | null; decided_at: string } | null;
 }
 
-export interface DecisionInput {
-  outcome: StepOutcomeResult;
-  reason: string | null;
+export interface ApprovalDecisionInputDto {
+  decision: ApprovalDecision;
+  comment: string | null;
 }
 
-export interface DecisionResultDto {
-  task_id: string;
-  step_id: string;
-  outcome: StepOutcomeResult;
-  status: string;
-  completed: boolean;
-  terminated: boolean;
+export interface ApprovalDecisionResultDto {
+  decision: ApprovalDecision;
+  task_status: TaskStatus;
+  next_step_name: string | null;
 }
 
-export interface TaskTimelineEntry {
-  step: string;
-  outcome: string | null;
-  reason: string | null;
-  at: Date;
+export interface ApprovalContext {
+  task: TaskDocument;
+  step: TaskStepRecord;
+  live: boolean;
 }
 
-export interface TaskStatusDto {
-  status: string;
-  reference: string;
-  workflow_template_title: string;
-  current_steps: string[];
-  rejected_at_step: string | null;
-  rejected_by: string | null;
-  reason: string | null;
-  timeline: TaskTimelineEntry[];
+export interface ApproverView {
+  context: ApprovalContext;
+  allowedDecisions: ApprovalDecision[];
+  computed: Array<{ label: string; value: string }>;
 }

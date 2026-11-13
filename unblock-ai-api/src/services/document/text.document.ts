@@ -1,52 +1,63 @@
-import { formatDocumentDate } from "../../utils/document/document-format.util.js";
+import { TRANSCRIPT_COPY } from "../../data/constants/transcript.constant.js";
+import { formatDocumentDate, transcriptFileName } from "../../utils/document/document-format.util.js";
 import { sha256Buffer } from "../../utils/shared/hash.util.js";
 import type { IDocumentRenderer } from "./document.interface.js";
-import type { CompletionDocument, RenderedDocument } from "../../lib/types/document/document.type.js";
+import type { DocumentField, RenderedDocument, TaskTranscript } from "../../lib/types/document/document.type.js";
 
-// Plain-text mirror of PdfDocumentRenderer, same section order and content. Exists so
-// document content (ordering, labels, the approver block) can be asserted on in tests
-// without parsing a PDF, exactly as ConsoleMailer lets the approval chain be tested
-// without SMTP.
+const TEXT_EXTENSION = "txt";
+const TEXT_CONTENT_TYPE = "text/plain";
+const INDENT = "  ";
+
+function fieldLines(fields: readonly DocumentField[]): string[] {
+  return fields.map((field) => `${INDENT}${field.label}: ${field.value || TRANSCRIPT_COPY.EMPTY}`);
+}
+
+function section(title: string, lines: readonly string[]): string[] {
+  return lines.length === 0 ? [] : ["", title.toUpperCase(), ...lines];
+}
+
+// Plain-text mirror of PdfDocumentRenderer with the same sections and content, so transcript
+// content can be asserted on in tests without parsing a PDF.
 export class TextDocumentRenderer implements IDocumentRenderer {
-  render(doc: CompletionDocument): Promise<RenderedDocument> {
-    const lines: string[] = [];
-
-    lines.push(doc.workflow_template_title);
-    lines.push(`Task reference: ${doc.reference}`);
-    lines.push(`Status: Approved`);
-    lines.push(`Submitted: ${formatDocumentDate(doc.submitted_at)}`);
-    lines.push(`Completed: ${formatDocumentDate(doc.completed_at)}`);
-
-    for (const section of doc.sections) {
-      lines.push("");
-      lines.push(section.title.toUpperCase());
-      for (const field of section.fields) {
-        lines.push(`  ${field.label}: ${field.value}`);
-      }
-    }
-
-    lines.push("");
-    lines.push("APPROVALS");
-    for (const row of doc.approvals) {
-      lines.push(`  ${row.step_name}`);
-      lines.push(`    Designation: ${row.designation}`);
-      lines.push(`    Name: ${row.name ?? "—"}`);
-      lines.push(`    Email address: ${row.email ?? "—"}`);
-      lines.push(
-        `    Decision: ${row.outcome}${row.decided_at ? ` (${formatDocumentDate(row.decided_at)})` : ""}`,
-      );
-      if (row.reason) lines.push(`    Note: ${row.reason}`);
-    }
-
-    lines.push("");
-    lines.push(`${doc.reference} — System-generated record — ${doc.institution_name}`);
+  render(transcript: TaskTranscript): Promise<RenderedDocument> {
+    const lines: string[] = [
+      transcript.title,
+      `${TRANSCRIPT_COPY.REFERENCE}: ${transcript.reference}`,
+      `${TRANSCRIPT_COPY.STATUS}: ${TRANSCRIPT_COPY.STATUS_COMPLETED}`,
+      `${TRANSCRIPT_COPY.SUBMITTED}: ${formatDocumentDate(transcript.submitted_at)}`,
+      `${TRANSCRIPT_COPY.COMPLETED}: ${formatDocumentDate(transcript.completed_at)}`,
+      ...section(TRANSCRIPT_COPY.REQUESTER, fieldLines(transcript.requester)),
+      ...section(TRANSCRIPT_COPY.CONVERSATION, transcript.conversation.map((text) => `${INDENT}${text}`)),
+      ...transcript.sections.flatMap((entry) => section(entry.title, fieldLines(entry.fields))),
+      ...section(
+        TRANSCRIPT_COPY.INFORMATION_REQUESTS,
+        transcript.information_exchanges.flatMap((exchange) => [
+          `${INDENT}${TRANSCRIPT_COPY.ASKED_BY}: ${exchange.asked_by ?? TRANSCRIPT_COPY.EMPTY}`,
+          `${INDENT}${TRANSCRIPT_COPY.QUESTION}: ${exchange.question}`,
+          `${INDENT}${TRANSCRIPT_COPY.ANSWER}: ${exchange.answer ?? TRANSCRIPT_COPY.EMPTY}`,
+        ]),
+      ),
+      ...section(
+        TRANSCRIPT_COPY.APPROVALS,
+        transcript.approvals.flatMap((row) => [
+          `${INDENT}${row.step_name}`,
+          `${INDENT}${INDENT}${TRANSCRIPT_COPY.APPROVER}: ${row.approver_name ?? TRANSCRIPT_COPY.EMPTY}`,
+          `${INDENT}${INDENT}${TRANSCRIPT_COPY.DESIGNATION}: ${row.designation ?? TRANSCRIPT_COPY.EMPTY}`,
+          `${INDENT}${INDENT}${TRANSCRIPT_COPY.DECISION}: ${row.decision}${row.decided_at ? ` (${formatDocumentDate(row.decided_at)})` : ""}`,
+          ...(row.comment ? [`${INDENT}${INDENT}${TRANSCRIPT_COPY.COMMENT}: ${row.comment}`] : []),
+        ]),
+      ),
+      ...section(TRANSCRIPT_COPY.SKIPPED_STEPS, transcript.skipped_steps.map((name) => `${INDENT}${name}: ${TRANSCRIPT_COPY.NOT_REQUIRED}`)),
+      ...section(TRANSCRIPT_COPY.COMPUTED, fieldLines(transcript.computed)),
+      "",
+      `${transcript.reference}${TRANSCRIPT_COPY.SECTION_SEPARATOR}${TRANSCRIPT_COPY.FOOTER}${TRANSCRIPT_COPY.SECTION_SEPARATOR}${transcript.institution_name}`,
+    ];
 
     const buffer = Buffer.from(lines.join("\n"), "utf8");
-
     return Promise.resolve({
       buffer,
-      filename: `${doc.reference}-record.txt`,
-      contentType: "text/plain",
+      filename: transcriptFileName(transcript.reference, TEXT_EXTENSION),
+      contentType: TEXT_CONTENT_TYPE,
       byteSize: buffer.byteLength,
       sha256: sha256Buffer(buffer),
     });

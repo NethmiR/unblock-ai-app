@@ -15,6 +15,7 @@ import type { HealthController } from "../controllers/health.controller.js";
 import type { WorkflowTemplateController } from "../controllers/workflow-template.controller.js";
 import type { SelectionController } from "../controllers/selection.controller.js";
 import type { TaskController } from "../controllers/task.controller.js";
+import type { TaskFormController } from "../controllers/task-form.controller.js";
 import type { ApprovalController } from "../controllers/approval.controller.js";
 import type { AuthController } from "../controllers/auth.controller.js";
 import type { UserSessionController } from "../controllers/user-session.controller.js";
@@ -28,6 +29,7 @@ export interface ApiControllers {
   workflowTemplateController: WorkflowTemplateController;
   selectionController: SelectionController;
   taskController: TaskController;
+  taskFormController: TaskFormController;
   approvalController: ApprovalController;
   authController: AuthController;
   userSessionController: UserSessionController;
@@ -53,7 +55,7 @@ export function createApiRouter(controllers: ApiControllers, guards: ApiRouteGua
   router.use(createDesignationRouter(controllers.designationController));
   router.use(createWorkflowTemplateRouter(controllers.workflowTemplateController));
   router.use(createSelectionRouter(controllers.selectionController));
-  router.use(createTaskRouter(controllers.taskController, guards.requireTaskOwnership));
+  router.use(createTaskRouter(controllers.taskController, controllers.taskFormController, guards.requireTaskOwnership));
   router.use(createApprovalRouter(controllers.approvalController));
   // TEMPORARY - see debug.route.ts. Remove this line and the file once the mail deploy issue is resolved.
   router.use(createDebugRouter());

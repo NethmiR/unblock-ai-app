@@ -1,4 +1,8 @@
 import { SUGGESTED_ROLES } from "../vocabulary/role.vocabulary.js";
+import { REQUESTER_ATTRIBUTES } from "../constants/requester.constant.js";
+import type { OrganisationCatalogue } from "../../lib/types/organisation/organisation-catalogue.type.js";
+
+const NO_PARENT = "-";
 
 function formatRoleVocabulary(): string {
   return Object.entries(SUGGESTED_ROLES)
@@ -6,7 +10,25 @@ function formatRoleVocabulary(): string {
     .join("\n");
 }
 
-export const WORKFLOW_TEMPLATE_GENERATION_SYSTEM_PROMPT = `You convert institutional workflow descriptions written in plain English into a strict JSON structure describing an approval/process workflow definition.
+function formatRequesterAttributes(): string {
+  return REQUESTER_ATTRIBUTES.map((attribute) => `requester.${attribute}`).join(", ");
+}
+
+function formatUnitCatalogue(catalogue: OrganisationCatalogue): string {
+  return catalogue.units
+    .filter((unit) => !unit.isArchived)
+    .map((unit) => `  - ${unit.code} — ${unit.name} — ${unit.unitType} — ${unit.parent?.code ?? NO_PARENT}`)
+    .join("\n");
+}
+
+function formatDesignationCatalogue(catalogue: OrganisationCatalogue): string {
+  return catalogue.designations
+    .filter((designation) => !designation.isArchived)
+    .map((designation) => `  - ${designation.code} — ${designation.title} — ${designation.applicableUnitTypes.join(", ")}`)
+    .join("\n");
+}
+
+const WORKFLOW_TEMPLATE_GENERATION_RULES = `You convert institutional workflow descriptions written in plain English into a strict JSON structure describing an approval/process workflow definition.
 
 ## What you are producing
 
@@ -36,24 +58,31 @@ Every assignee, collected_from, and notification target is an "actor" object, on
 
 Never write a real person's name into the JSON. Always normalise the role to snake_case. Fields not used by the chosen resolution are set to null (the schema requires every actor key to be present; unused ones are null, not omitted).
 
-## Requester contact input — always required
+## The requester is already known
 
-Every workflow must declare an input collecting the requester's own email address, so the system can notify them of the outcome. This is required even when the source text does not explicitly ask for an email address. It must satisfy every one of these, exactly:
-- id: "requester_email"
-- type: "email"
-- required: true — not false. This input is never optional, regardless of what the source text implies about other inputs.
-- collected_from: { "resolution": "requester", ... } (other collected_from keys null)
-- position: last entry in the inputs array
+The system already knows who the requester is from their account and the institution's directory. Never create inputs for the requester's name, email address, faculty, department, division or designations. When a condition, computed value or instruction needs one of them, reference it as a requester path instead: ${formatRequesterAttributes()}. Anything else about the requester (an index number, a phone number, a batch or a degree programme) is still an input.
+
+## Audience
+
+Fill scope.applies_to.organisational_unit_codes with codes from the organisational unit catalogue at the end of this prompt whenever the text restricts the workflow to particular faculties, departments or divisions, and set it to [] when it does not. Never invent a code that is not in the catalogue. scope.applies_to.constraints keeps only non-unit attributes such as level or programme; never express a faculty, department or division restriction as a constraint.
 
 ## Suggested role vocabulary
 
-Prefer one of these snake_case keys when it fits. If the text describes a role none of these cover, coin a new, clearly-named snake_case role rather than forcing a poor fit — unmapped roles are recorded in metadata.unmapped_roles for admin review, not treated as an error.
+Approvers are resolved against the institution's directory. When the approver is a designation holder (a dean, a head of department, a registrar and so on), set the actor's role to the matching code from the designation catalogue at the end of this prompt. Use the designation code exactly; never paraphrase it.
+
+When the directory does not model the role, prefer one of these snake_case keys when it fits:
 
 ${formatRoleVocabulary()}
 
+If the text describes a role none of these cover, coin a new, clearly-named snake_case role rather than forcing a poor fit — unmapped roles are recorded in metadata.unmapped_roles for admin review, not treated as an error. A role that is not a designation code is supplied by the requester (a name and an email address) at run time, when they start the workflow.
+
+## Information collected later
+
+Inputs not listed in any step's collects_inputs are collected from the requester automatically, up front, before the workflow starts. When the text says some information is gathered later in the process, model it as a data_collection step assigned to the requester ({ "resolution": "requester" }) whose collects_inputs lists those input ids, with depends_on placing it where the text says. Every step has collects_inputs; set it to [] unless it is such a step. Each input appears in at most one step's collects_inputs.
+
 ## Data namespace
 
-There is one flat namespace per workflow run, referenced by dotted paths: inputs.<id>, computed.<id>, steps.<step_id>.outcome, steps.<step_id>.response.<field_id>, requester.<attribute>, system.today. Use these paths (never invented ones) in condition.left/right, computed.arguments, and context_from_steps.field/as.
+There is one flat namespace per workflow run, referenced by dotted paths: inputs.<id>, computed.<id>, steps.<step_id>.outcome, steps.<step_id>.response.<field_id>, ${formatRequesterAttributes()}, system.today. Use these paths (never invented ones) in condition.left/right, computed.arguments, and context_from_steps.field/as.
 
 computed values must use one of the fixed operations (date_diff_days, sum, difference, multiply, count, lookup, constant) with explicit arguments — never emit a free-text formula or expression string. The arguments object has a fixed key set: from, to, inclusive (for date_diff_days), values (an array of namespace paths or numbers, for sum/difference/multiply/count), source and key (for lookup), value (for constant). Set every unused string/boolean/number key to null; set the unused values array to an empty array [].
 
@@ -101,3 +130,15 @@ A workflow does not require an approval step — a purely informational submissi
 If the source text does not specify what happens in some situation (for example, a rejection path it never mentions, or a fallback approver it never names), choose the single most reasonable default consistent with how the rest of the workflow behaves, apply it, and record a plain-English sentence describing the assumption in metadata.ambiguities. Never silently invent a rule without recording it. Set metadata.confidence to "low" if the source text is very sparse, "medium" if you had to fill non-trivial gaps, or "high" if the text was fully explicit.
 
 Produce only the JSON object. No prose, no markdown fences, no commentary.`;
+
+export function buildWorkflowTemplateGenerationSystemPrompt(catalogue: OrganisationCatalogue): string {
+  return `${WORKFLOW_TEMPLATE_GENERATION_RULES}
+
+## Organisational unit catalogue (code — name — unit type — parent code)
+
+${formatUnitCatalogue(catalogue)}
+
+## Designation catalogue (code — title — applicable unit types)
+
+${formatDesignationCatalogue(catalogue)}`;
+}

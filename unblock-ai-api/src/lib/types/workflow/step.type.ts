@@ -69,6 +69,7 @@ export interface WorkflowStep {
   instructions_to_approver: string | null;
   response_fields: ResponseField[];
   context_from_steps: ContextBinding[];
+  collects_inputs: string[];
   outcomes: StepOutcomes;
   notifications: StepNotifications;
   sla: StepSla | null;

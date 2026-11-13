@@ -30,7 +30,7 @@ test("a BaseError subclass responds with its own statusCode and toJSON body", as
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({ query: "anything" }),
+      body: JSON.stringify({ message: "anything" }),
     });
     assert.equal(res.status, 400);
     const body = (await res.json()) as { error: string; code: string; details: unknown };
@@ -53,7 +53,7 @@ test("an unknown error responds 500 with a generic body and does not leak the or
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({ query: "anything" }),
+      body: JSON.stringify({ message: "anything" }),
     });
     assert.equal(res.status, 500);
     const body = (await res.json()) as { error: string; code: string; details: unknown };
@@ -80,7 +80,7 @@ test("a BaseError with a cause logs the cause chain without exposing it in the r
     const res = await fetch(`${server.baseUrl}/api/selection/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({ query: "anything" }),
+      body: JSON.stringify({ message: "anything" }),
     });
     assert.equal(res.status, 500);
     const body = (await res.json()) as { error: string; code: string; details: unknown };

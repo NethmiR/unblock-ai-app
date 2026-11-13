@@ -3,17 +3,23 @@ import { WorkflowTemplateModel } from "../../../src/models/workflow-template.mod
 import { createVectorStore } from "../../../src/services/vector-store/index.vector-store.js";
 import { RetrievalService } from "../../../src/services/retrieval.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
-import { createLlmAdapter } from "../../../src/services/llm-adapter/index.llm-adapter.js";
+import { createLlmAdapters } from "../../../src/services/llm-adapter/index.llm-adapter.js";
 import { buildSelectorMessages, type SelectorTranscriptTurn } from "../../../src/data/prompts/selector.prompt.js";
-import { decisionResponseSchema } from "../../../src/data/schemas/decision.schema.js";
-import { LlmMessageRole } from "../../../src/data/constants/llm.constant.js";
+import { selectionDecisionResponseSchema } from "../../../src/data/schemas/selection-decision.schema.js";
+import { WorkflowTemplateVersionModel } from "../../../src/models/workflow-template-version.model.js";
+import { buildOrganisationCatalogue, sampleRequesterProfile } from "../../helpers/organisation-catalogue.helper.js";
+import type { SelectorCandidate } from "../../../src/lib/types/selection/candidate.type.js";
+import { LlmMessageRole, LlmOperation } from "../../../src/data/constants/llm.constant.js";
 import { config } from "../../../src/config/index.config.js";
 import { closeDb } from "../../../src/db/mongo.client.js";
 import type { PerfCase, PerfOperation, PerfUsage } from "../../../src/lib/types/perf/perf.type.js";
 
 const CASES_PATH = "src/data/samples/perf/task-request.cases.json";
 
-const llmAdapter = createLlmAdapter(config.llm);
+const llmAdapter = createLlmAdapters(config.llm)[LlmOperation.WORKFLOW_SELECTION];
+const catalogue = buildOrganisationCatalogue();
+const profile = sampleRequesterProfile("Kavindu Jayawardena", catalogue);
+const versionModel = new WorkflowTemplateVersionModel();
 
 let retrievalService: RetrievalService;
 
@@ -21,7 +27,7 @@ let retrievalService: RetrievalService;
  * Mirrors `SelectionService.start()` - the first thing that happens when a
  * normal user types what they want: retrieval finds candidate workflow templates,
  * then the selector model decides matched/ambiguous/no_match. Clarifying
- * follow-up turns (`SelectionService.answer`) are out of scope on purpose;
+ * follow-up turns (`SelectionService.postMessage`) are out of scope on purpose;
  * this measures only that first decision.
  *
  * Retrieval runs for real (embeddings + vector search against whatever
@@ -56,10 +62,28 @@ export const taskRequestOperation: PerfOperation = {
       return { inputTokens: null, outputTokens: null, totalTokens: null, finishReason: null };
     }
 
+    const audiences = await versionModel.findAudiences(
+      candidates.map((candidate) => ({ workflow_template_id: candidate.workflow_template_id, version: candidate.workflow_template_version })),
+    );
+    const selectorCandidates: SelectorCandidate[] = candidates.flatMap((candidate) =>
+      candidate.retrieval_summary === null
+        ? []
+        : [
+            {
+              workflow_template_id: candidate.workflow_template_id,
+              title: candidate.title,
+              retrieval_summary: candidate.retrieval_summary,
+              audience_unit_names: (audiences.get(candidate.workflow_template_id)?.organisationalUnitCodes ?? []).map(
+                (code) => catalogue.unitsByCode.get(code)?.name ?? code,
+              ),
+            },
+          ],
+    );
     const transcript: SelectorTranscriptTurn[] = [{ role: LlmMessageRole.USER, text: testCase.input }];
     const completion = await llmAdapter.generateCompletion({
-      messages: buildSelectorMessages({ candidates, transcript }),
-      responseSchema: decisionResponseSchema,
+      operation: LlmOperation.WORKFLOW_SELECTION,
+      messages: buildSelectorMessages({ candidates: selectorCandidates, transcript, facts: profile.facts, matchedCandidate: null }),
+      responseSchema: selectionDecisionResponseSchema,
     });
 
     JSON.parse(completion.content);

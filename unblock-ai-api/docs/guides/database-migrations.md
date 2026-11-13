@@ -179,11 +179,18 @@ MongoDB holds no user data; `tasks.created_by` and `workflow_templates.created_b
 |---|---|
 | `20261111000000_initial-schema` | Creates `drafts`, `templates`, `selection_sessions`, `tasks`, `counters` and `audit_logs` with their indexes |
 | `20261111101053_workflow-templates` | Drops `templates` and `drafts`, creates `workflow_templates` and `workflow_template_versions`, and replaces the `tasks` index on `workflow_id` with one on `workflow_template_id` |
+| `20261113084701_ephemeral-selection-sessions` | Drops `selection_sessions` and recreates it with `selection_session_expiry` (TTL on `expires_at`, `expireAfterSeconds: 0`) and `selection_session_owner` (`created_by`, `created_at`). `down` recreates it without indexes |
+| `20261113090856_task-request-revamp` | Renames `tasks` to `legacy_tasks` (kept for reference, never read) and creates a fresh `tasks` collection with its indexes. `down` drops the new `tasks` and renames `legacy_tasks` back |
 
 > **`20261111101053_workflow-templates` does not migrate data.** It drops the `templates` and `drafts` collections outright; nothing is copied into the new collections. Existing tasks and selection sessions keep their old `workflow_id` / `version` / `selected_workflow_id` fields, which the code no longer reads, so they stop resolving. Recreate templates through `/api/workflow-templates` after applying it, and treat old tasks and sessions as unusable. `down` recreates `templates` and `drafts` empty; it does not bring their data back.
+
+> **The two task request migrations do not migrate data either.** Old selection sessions are dropped, and old tasks move to `legacy_tasks`, because the old shape cannot express forms, inserted steps or resolved assignees. Nothing reads `legacy_tasks`; drop it once you no longer need it for reference.
 
 After these migrations the collections are:
 
 - `workflow_templates` — one document per template, keyed by a string UUID `_id`: `title`, `description`, `status` (`draft` \| `unpublished` \| `published`), `draft_prompt`, `current_version`, `archived_at`, `created_by`, `updated_by`, timestamps, and `retrieval` — the current version's embedded text, vector, aliases, `retrieval_summary` and `institution_type`. Indexes: `workflow_template_archived_updated` (`archived_at`, `updated_at`) and `workflow_template_retrieval_filter` (`status`, `archived_at`, `retrieval.institution_type`).
 - `workflow_template_versions` — one immutable document per generated version: `workflow_template_id`, `version`, `prompt`, `definition`, `generation_attempts`, `created_by`, `created_at`. Unique index `workflow_template_version_unique` on (`workflow_template_id`, `version`).
-- `selection_sessions`, `tasks`, `counters` and `audit_logs` — as created by the initial schema; `tasks` is indexed on (`workflow_template_id`, `status`) as `task_workflow_template_status`.
+- `selection_sessions` — ephemeral assistant conversations: `created_by`, `status`, `messages`, frozen `candidates`, `rounds_used`, `selected_workflow_template_id`, `expires_at`, timestamps. Indexes: `selection_session_expiry` (TTL on `expires_at`) and `selection_session_owner` (`created_by`, `created_at`).
+- `tasks` — one document per task: `reference`, `revision`, `created_by`, the `requester` snapshot, `workflow_template_id` + `workflow_template_version`, `status`, `creation_source`, `conversation`, ordered `steps`, `forms`, `values`, `unsupported_inputs`, `audit`, timestamps. Indexes: `task_reference_unique`, `task_created_by_updated`, `task_created_by_status`, `task_workflow_template_status` and `task_approval_token_hash` (partial, where `steps.approval.token_hash` is a string).
+- `legacy_tasks` — pre-revamp tasks, never read.
+- `counters` and `audit_logs` — as created by the initial schema.

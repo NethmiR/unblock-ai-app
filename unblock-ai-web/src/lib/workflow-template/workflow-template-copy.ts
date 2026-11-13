@@ -99,6 +99,25 @@ export const WORKFLOW_TEMPLATE_COPY = {
     emptyWithPrompt: "Nothing generated yet. Generate the workflow template to see how the prompt was understood.",
     emptyWithoutPrompt: "The generated flowchart appears here once you describe the workflow and generate it.",
     stale: "The flowchart shows the last generated version. Regenerate to apply your prompt changes.",
+    assigneeSource: {
+      directory: "Directory",
+      requesterProvides: "Requester provides",
+      directoryTitle: "The approver is looked up in the university directory.",
+      requesterProvidesTitle: "The directory doesn't list this approver, so the requester enters their name and email.",
+    },
+  },
+
+  audience: {
+    label: "Applies to",
+    everyone: "Everyone",
+    requesterType: {
+      any: "Any requester",
+      student: "Students",
+      staff: "Staff",
+      faculty: "Academic staff",
+      external: "External requesters",
+    },
+    unknownUnit: (code: string) => code,
   },
 
   notes: {

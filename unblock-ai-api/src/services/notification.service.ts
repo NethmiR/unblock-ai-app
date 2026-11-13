@@ -1,133 +1,126 @@
-import { logger } from "../utils/shared/logger.util.js";
+import { TaskStepOrigin } from "../data/constants/task.constant.js";
+import { approvalRequestEmail, type RenderedEmail } from "../data/templates/approval-email.template.js";
 import {
-  approvalRequestEmail,
-  completionNoticeEmail,
-  moreInfoNoticeEmail,
-  rejectionNoticeEmail,
-} from "../data/templates/approval-email.template.js";
+  actionRequiredEmail,
+  approvalUrl,
+  informationRequestedEmail,
+  stepNotificationEmail,
+  taskCompletedEmail,
+  taskDetailUrl,
+  taskRejectedEmail,
+  type RequesterNotificationContext,
+} from "../data/templates/requester-notification.template.js";
+import { describeRequesterUnit } from "../utils/task/task-view.util.js";
+import { describeError } from "../utils/shared/error-description.util.js";
+import { logger } from "../utils/shared/logger.util.js";
 import type { IMailer } from "./mailer/mailer.interface.js";
-import type { AppConfig } from "../lib/types/config/config.type.js";
-import type { TaskDocument, TaskStepState } from "../lib/types/task/task.type.js";
-import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
+import type { DocumentConfig, MailConfig } from "../lib/types/config/config.type.js";
 import type { MailAttachment } from "../lib/types/approval/mail.type.js";
 import type { RenderedDocument } from "../lib/types/document/document.type.js";
+import type { TaskDocument, TaskStepRecord } from "../lib/types/task/task-document.type.js";
+import type { ITaskNotifier } from "../lib/types/task/task-notification.type.js";
 
 export interface NotificationServiceOptions {
   mailer: IMailer;
-  config: AppConfig;
+  mailConfig: Pick<MailConfig, "appPublicUrl">;
+  documentConfig: Pick<DocumentConfig, "attachToEmail" | "maxAttachmentBytes">;
 }
 
-function workflowStepName(workflow: WorkflowDefinition, stepId: string): string {
-  return workflow.steps.find((step) => step.id === stepId)?.name ?? stepId;
-}
-
-export class NotificationService {
+export class NotificationService implements ITaskNotifier {
   private readonly mailer: IMailer;
-  private readonly config: AppConfig;
+  private readonly mailConfig: Pick<MailConfig, "appPublicUrl">;
+  private readonly documentConfig: Pick<DocumentConfig, "attachToEmail" | "maxAttachmentBytes">;
 
-  constructor({ mailer, config }: NotificationServiceOptions) {
+  constructor({ mailer, mailConfig, documentConfig }: NotificationServiceOptions) {
     this.mailer = mailer;
-    this.config = config;
+    this.mailConfig = mailConfig;
+    this.documentConfig = documentConfig;
   }
 
-  async sendApprovalRequest(task: TaskDocument, workflow: WorkflowDefinition, step: TaskStepState): Promise<boolean> {
-    if (!step.assignee || !step.approval_token) return false;
+  sendApprovalRequest(task: TaskDocument, step: TaskStepRecord, token: string): Promise<boolean> {
+    const recipient = step.assignee?.email ?? null;
+    if (recipient === null) return this.skip(task, step, "approval request");
+    return this.dispatch(
+      recipient,
+      approvalRequestEmail({
+        taskReference: task.reference,
+        workflowTemplateTitle: task.title,
+        stepName: step.name,
+        approverName: step.assignee?.full_name ?? null,
+        requesterName: task.requester.full_name,
+        requesterUnits: task.requester.units.map(describeRequesterUnit),
+        isRepeatReview: step.origin === TaskStepOrigin.APPROVAL_REPEAT,
+        approvalUrl: approvalUrl(this.mailConfig.appPublicUrl, token),
+      }),
+    );
+  }
 
-    const email = approvalRequestEmail({
+  sendRequesterActionRequired(task: TaskDocument, step: TaskStepRecord): Promise<boolean> {
+    return this.dispatch(task.requester.email, actionRequiredEmail({ ...this.context(task), stepName: step.name }));
+  }
+
+  sendInformationRequested(task: TaskDocument, step: TaskStepRecord): Promise<boolean> {
+    if (step.information_request === null) return this.skip(task, step, "information request");
+    const asker = task.steps.find((candidate) => candidate.id === step.information_request?.requested_by_step_id);
+    return this.dispatch(
+      task.requester.email,
+      informationRequestedEmail({ ...this.context(task), askedBy: asker?.assignee?.full_name ?? null, question: step.information_request.question }),
+    );
+  }
+
+  sendTaskRejected(task: TaskDocument, step: TaskStepRecord): Promise<boolean> {
+    return this.dispatch(
+      task.requester.email,
+      taskRejectedEmail({
+        ...this.context(task),
+        stepName: step.name,
+        rejectedBy: step.assignee?.full_name ?? null,
+        comment: step.approval?.comment ?? null,
+      }),
+    );
+  }
+
+  sendTaskCompleted(task: TaskDocument, transcript: RenderedDocument | null): Promise<boolean> {
+    const attachment = this.attachmentFor(transcript);
+    return this.dispatch(
+      task.requester.email,
+      taskCompletedEmail({ ...this.context(task), hasAttachment: attachment !== null }),
+      attachment === null ? undefined : [attachment],
+    );
+  }
+
+  sendStepNotification(task: TaskDocument, step: TaskStepRecord): Promise<boolean> {
+    const recipient = step.assignee?.email ?? task.requester.email;
+    return this.dispatch(recipient, stepNotificationEmail({ ...this.context(task), stepName: step.name, description: step.description }));
+  }
+
+  private context(task: TaskDocument): RequesterNotificationContext {
+    return {
+      requesterName: task.requester.full_name,
       taskReference: task.reference,
-      workflowTemplateTitle: workflow.title,
-      stepName: step.name,
-      approverName: step.assignee.name,
-      approvalUrl: `${this.config.mail.appPublicUrl}/approvals/${step.approval_token}`,
-    });
-
-    return this.dispatch(step.assignee.email, email);
+      workflowTemplateTitle: task.title,
+      taskUrl: taskDetailUrl(this.mailConfig.appPublicUrl, String(task._id)),
+    };
   }
 
-  async sendRejectionNotice(task: TaskDocument, workflow: WorkflowDefinition, step: TaskStepState): Promise<boolean> {
-    const requesterEmail = this.requesterEmailOf(task);
-    if (!requesterEmail) return false;
-
-    const email = rejectionNoticeEmail({
-      taskReference: task.reference,
-      workflowTemplateTitle: workflow.title,
-      stepName: workflowStepName(workflow, step.step_id),
-      reason: step.reason ?? "",
-    });
-
-    return this.dispatch(requesterEmail, email);
+  private attachmentFor(transcript: RenderedDocument | null): MailAttachment | null {
+    if (transcript === null || !this.documentConfig.attachToEmail) return null;
+    if (transcript.byteSize > this.documentConfig.maxAttachmentBytes) return null;
+    return { filename: transcript.filename, content: transcript.buffer, contentType: transcript.contentType };
   }
 
-  async sendCompletionNotice(
-    task: TaskDocument,
-    workflow: WorkflowDefinition,
-    document: RenderedDocument | null = null,
-  ): Promise<boolean> {
-    const requesterEmail = this.requesterEmailOf(task);
-    if (!requesterEmail) return false;
-
-    const attach =
-      document !== null &&
-      this.config.document.attachToEmail &&
-      document.byteSize <= this.config.document.maxAttachmentBytes;
-
-    const email = completionNoticeEmail({
-      taskReference: task.reference,
-      workflowTemplateTitle: workflow.title,
-      documentUrl: `${this.config.mail.appPublicUrl}/portal/jobs/${task._id}`,
-      hasAttachment: attach,
-    });
-
-    const attachments: MailAttachment[] | undefined = attach
-      ? [{ filename: document.filename, content: document.buffer, contentType: document.contentType }]
-      : undefined;
-
-    return this.dispatch(requesterEmail, email, attachments);
+  private skip(task: TaskDocument, step: TaskStepRecord, kind: string): Promise<boolean> {
+    logger.warn("notification skipped; no recipient", { taskId: String(task._id), stepId: step.id, kind });
+    return Promise.resolve(false);
   }
 
-  async sendMoreInfoNotice(task: TaskDocument, workflow: WorkflowDefinition, step: TaskStepState): Promise<boolean> {
-    const requesterEmail = this.requesterEmailOf(task);
-    if (!requesterEmail) return false;
-
-    const email = moreInfoNoticeEmail({
-      taskReference: task.reference,
-      workflowTemplateTitle: workflow.title,
-      stepName: workflowStepName(workflow, step.step_id),
-      question: step.reason ?? "",
-    });
-
-    return this.dispatch(requesterEmail, email);
-  }
-
-  // No workflow currently declares an `email`-typed requester input (see
-  // approval-execution-implementation-plan.md Phase 3 notes) — requester-facing sends
-  // no-op via dispatch()'s caller checking this return value, same as any failed send.
-  requesterEmailOf(task: TaskDocument): string | null {
-    for (const requirement of task.requirements) {
-      if (requirement.source !== "input" || requirement.type !== "email") continue;
-      const value = task.values[requirement.key];
-      if (typeof value === "string" && value.length > 0) return value;
-    }
-    return null;
-  }
-
-  private async dispatch(
-    to: string,
-    email: { subject: string; text: string; html: string },
-    attachments?: MailAttachment[],
-  ): Promise<boolean> {
+  private async dispatch(to: string, email: RenderedEmail, attachments?: MailAttachment[]): Promise<boolean> {
     try {
       const result = await this.mailer.send({ to, ...email, attachments });
-      if (!result.sent) {
-        logger.error("mail send returned unsent", { to, subject: email.subject, error: result.error });
-      }
+      if (!result.sent) logger.error("mail send returned unsent", { to, subject: email.subject, error: result.error });
       return result.sent;
-    } catch (error) {
-      logger.error("mail send threw", {
-        to,
-        subject: email.subject,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    } catch (err) {
+      logger.error("mail send failed", { to, subject: email.subject, error: describeError(err) });
       return false;
     }
   }

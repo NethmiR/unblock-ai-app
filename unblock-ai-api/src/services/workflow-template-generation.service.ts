@@ -1,8 +1,8 @@
-import { createLlmAdapter, type ILlmAdapter } from "./llm-adapter/index.llm-adapter.js";
-import { ValidationService } from "./validation.service.js";
-import { config } from "../config/index.config.js";
+import type { ILlmAdapter } from "./llm-adapter/index.llm-adapter.js";
+import type { ValidationService } from "./validation.service.js";
+import type { OrganisationCatalogueService } from "./organisation-catalogue.service.js";
 import { workflowResponseSchema } from "../data/schemas/workflow-schema.data.js";
-import { LlmMessageRole } from "../data/constants/llm.constant.js";
+import { LlmMessageRole, LlmOperation } from "../data/constants/llm.constant.js";
 import { buildWorkflowTemplateGenerationMessages } from "../utils/workflow/build-workflow-template-generation-messages.util.js";
 import { WorkflowTemplateGenerationError } from "../errors/workflow-template-generation.error.js";
 import { workflowTemplatePromptRejected } from "../errors/workflow-template.error.js";
@@ -12,9 +12,10 @@ import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js"
 import type { GeneratedWorkflowTemplate } from "../lib/types/workflow-template/workflow-template.type.js";
 
 export interface WorkflowTemplateGenerationServiceOptions {
-  llmAdapter?: ILlmAdapter;
+  llmAdapter: ILlmAdapter;
   validationService: ValidationService;
-  generationConfig?: WorkflowTemplateGenerationConfig;
+  organisationCatalogueService: Pick<OrganisationCatalogueService, "getCatalogue">;
+  generationConfig: WorkflowTemplateGenerationConfig;
 }
 
 function buildRepairPrompt(errors: readonly string[]): string {
@@ -29,26 +30,25 @@ function toGeneratedTemplate(workflow: WorkflowDefinition, attempts: number): Ge
 export class WorkflowTemplateGenerationService {
   private readonly llmAdapter: ILlmAdapter;
   private readonly validationService: ValidationService;
+  private readonly organisationCatalogueService: Pick<OrganisationCatalogueService, "getCatalogue">;
   private readonly generationConfig: WorkflowTemplateGenerationConfig;
 
-  constructor({
-    llmAdapter = createLlmAdapter(config.llm),
-    validationService,
-    generationConfig = config.workflowTemplateGeneration,
-  }: WorkflowTemplateGenerationServiceOptions) {
+  constructor({ llmAdapter, validationService, organisationCatalogueService, generationConfig }: WorkflowTemplateGenerationServiceOptions) {
     this.llmAdapter = llmAdapter;
     this.validationService = validationService;
+    this.organisationCatalogueService = organisationCatalogueService;
     this.generationConfig = generationConfig;
   }
 
   async generate(prompt: string): Promise<GeneratedWorkflowTemplate> {
     const { maxAttempts } = this.generationConfig;
-    const messages = buildWorkflowTemplateGenerationMessages(prompt);
+    const catalogue = await this.organisationCatalogueService.getCatalogue();
+    const messages = buildWorkflowTemplateGenerationMessages(prompt, catalogue);
     let errors: string[] = [];
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const candidate = await this.requestCandidate(messages);
-      errors = this.validationService.validate(candidate);
+      errors = this.validationService.validate(candidate, catalogue);
 
       if (errors.length === 0) {
         const workflow = candidate as WorkflowDefinition;
@@ -68,7 +68,11 @@ export class WorkflowTemplateGenerationService {
   }
 
   private async requestCandidate(messages: LlmMessage[]): Promise<unknown> {
-    const completion = await this.llmAdapter.generateCompletion({ messages, responseSchema: workflowResponseSchema });
+    const completion = await this.llmAdapter.generateCompletion({
+      operation: LlmOperation.WORKFLOW_TEMPLATE_GENERATION,
+      messages,
+      responseSchema: workflowResponseSchema,
+    });
     try {
       return JSON.parse(completion.content);
     } catch (err) {

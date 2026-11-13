@@ -1,10 +1,13 @@
 import dagre from "dagre";
 import type { Node, Edge } from "@xyflow/react";
+import { assigneeSourceHint, assigneeSourceHintBadge } from "@/lib/workflow-template/assignee-source-hint";
+import type { AssigneeSource } from "@/types/task";
 import type { WorkflowStep } from "@/types/workflow";
 import type { WorkflowTemplateDefinition } from "@/types/workflow-template";
 
 const NODE_WIDTH = 340;
 const NODE_HEIGHT = 92;
+const ASSIGNEE_BADGE_HEIGHT = 26;
 const TERMINAL_HEIGHT = 40;
 const INPUT_HEADER_HEIGHT = 56;
 const INPUT_BULLET_ROW_HEIGHT = 27;
@@ -23,7 +26,8 @@ function estimateNodeHeight(data: FlowNodeData): number {
   if (data.kind === "input") {
     return INPUT_HEADER_HEIGHT + INPUT_BASE_PADDING + data.bullets.length * INPUT_BULLET_ROW_HEIGHT;
   }
-  return NODE_HEIGHT;
+  const hasBadge = assigneeSourceHintBadge(data.assigneeSource) !== null;
+  return NODE_HEIGHT + (hasBadge ? ASSIGNEE_BADGE_HEIGHT : 0);
 }
 
 export type FlowNodeKind = "terminal" | "input" | "step" | "condition";
@@ -36,6 +40,7 @@ export interface FlowNodeData extends Record<string, unknown> {
   bullets: string[];
   isConditional: boolean;
   isBlocked: boolean;
+  assigneeSource: AssigneeSource | null;
 }
 
 /**
@@ -48,14 +53,17 @@ export interface FlowNodeData extends Record<string, unknown> {
  *
  * PURE: no React, no DOM, no I/O. Unit-test it against both gold fixtures.
  */
-export function toFlowGraph(workflow: WorkflowTemplateDefinition): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
+export function toFlowGraph(
+  workflow: WorkflowTemplateDefinition,
+  designationCodes: ReadonlySet<string> | null = null,
+): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
   const nodes: Node<FlowNodeData>[] = [];
   const edges: Edge[] = [];
 
   // 1. Start terminal.
   nodes.push(makeNode("__start", {
     kind: "terminal", label: "Request submitted", eyebrow: "", detail: null,
-    bullets: [], isConditional: false, isBlocked: false,
+    bullets: [], isConditional: false, isBlocked: false, assigneeSource: null,
   }));
 
   // 2. Requester-collected inputs as one grouped node (matches the mockup's
@@ -70,6 +78,7 @@ export function toFlowGraph(workflow: WorkflowTemplateDefinition): { nodes: Node
       bullets: requesterInputs.map((i) => i.label),
       isConditional: false,
       isBlocked: false,
+      assigneeSource: null,
     }));
     edges.push(makeEdge("__start", "__inputs"));
   }
@@ -86,6 +95,7 @@ export function toFlowGraph(workflow: WorkflowTemplateDefinition): { nodes: Node
       bullets: step.response_fields.map((f) => f.label),
       isConditional: Boolean(step.condition),
       isBlocked: step.initial_state === "blocked",
+      assigneeSource: designationCodes ? assigneeSourceHint(step.assignee, designationCodes) : null,
     }));
   });
 
@@ -105,7 +115,7 @@ export function toFlowGraph(workflow: WorkflowTemplateDefinition): { nodes: Node
   const leaves = workflow.steps.filter((s) => !hasDependents.has(s.id));
   nodes.push(makeNode("__end", {
     kind: "terminal", label: "Completed", eyebrow: "", detail: null,
-    bullets: [], isConditional: false, isBlocked: false,
+    bullets: [], isConditional: false, isBlocked: false, assigneeSource: null,
   }));
   for (const leaf of leaves) edges.push(makeEdge(leaf.id, "__end"));
 

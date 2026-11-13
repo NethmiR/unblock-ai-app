@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { ApprovalController } from "../controllers/approval.controller.js";
 import { asyncHandler } from "../middlewares/async-handler.middleware.js";
+import type { ApprovalController } from "../controllers/approval.controller.js";
 
 export function createApprovalRouter(controller: ApprovalController): Router {
   const router = Router();

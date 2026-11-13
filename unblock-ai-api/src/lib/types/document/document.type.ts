@@ -8,25 +8,37 @@ export interface DocumentSection {
   fields: DocumentField[];
 }
 
-export interface ApprovalRow {
+export interface TranscriptApprovalRow {
   step_name: string;
-  designation: string;
-  name: string | null;
-  email: string | null;
-  outcome: string;
+  approver_name: string | null;
+  designation: string | null;
+  decision: string;
+  comment: string | null;
   decided_at: Date | null;
-  reason: string | null;
 }
 
-export interface CompletionDocument {
+export interface TranscriptInformationExchange {
+  asked_by: string | null;
+  question: string;
+  answer: string | null;
+  asked_at: Date | null;
+  answered_at: Date | null;
+}
+
+export interface TaskTranscript {
   reference: string;
-  workflow_template_title: string;
-  workflow_template_description: string;
+  title: string;
+  description: string;
   institution_name: string;
   submitted_at: Date;
   completed_at: Date;
+  requester: DocumentField[];
+  conversation: string[];
   sections: DocumentSection[];
-  approvals: ApprovalRow[];
+  information_exchanges: TranscriptInformationExchange[];
+  approvals: TranscriptApprovalRow[];
+  skipped_steps: string[];
+  computed: DocumentField[];
 }
 
 export interface RenderedDocument {
@@ -35,18 +47,4 @@ export interface RenderedDocument {
   contentType: string;
   byteSize: number;
   sha256: string;
-}
-
-/**
- * Persisted on the task, not the bytes - a completed task is immutable and its
- * workflow is version-pinned, so the document can be regenerated deterministically
- * from `generated_at` on demand instead of stored in full.
- */
-export interface CompletionDocumentRecord {
-  generated_at: Date;
-  filename: string;
-  byte_size: number;
-  sha256: string;
-  emailed_to: string | null;
-  emailed_at: Date | null;
 }

@@ -31,6 +31,7 @@ configs into a single frozen `config` object that every other module imports.
 | `AZURE_OPENAI_CHAT_DEPLOYMENT` | \*\* | — | `src/config/llm.config.ts` | `config.llm.azureOpenAI.deployment` — **required when `LLM_PROVIDER=azure-openai`** |
 | `GEMINI_API_KEY` | \*\* | — | `src/config/llm.config.ts`, `src/config/embedding.config.ts` | `config.llm.gemini.apiKey` / `config.embedding.gemini.apiKey` — Google AI Studio key; **required when `LLM_PROVIDER` or `EMBEDDING_PROVIDER` is `gemini`** |
 | `GEMINI_CHAT_MODEL` | \*\* | — | `src/config/llm.config.ts` | `config.llm.gemini.model` — **required when `LLM_PROVIDER=gemini`** |
+| `LLM_SELECTION_MODEL` | no | unset (the main chat model) | `src/config/llm.config.ts` | `config.llm.operationModels.workflow_selection` — overrides the Azure deployment or Gemini model used for workflow selection only, so selection can run on a smaller model than template generation |
 | `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` | no | `3` | `src/config/workflow-template-generation.config.ts` | `config.workflowTemplateGeneration.maxAttempts` — model calls (first attempt + repairs) allowed when generating a workflow template from a prompt |
 | `EMBEDDING_PROVIDER` | no | `azure-openai` | `src/config/embedding.config.ts` | `config.embedding.provider` — `azure-openai` \| `gemini` \| `voyage-ai`, selects the `IEmbeddingAdapter`. Changing it (or the embedding model) requires re-embedding every stored template |
 | `AZURE_OPENAI_EMBEDDING_ENDPOINT` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.endpoint` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
@@ -44,7 +45,10 @@ configs into a single frozen `config` object that every other module imports.
 | `EMBEDDING_DIMENSIONS` | no | `1536` | `src/config/embedding.config.ts` | `config.embedding.dimensions` — requested from the provider and validated against the returned vector length; must match the vector index; `voyage-ai` accepts only `256` \| `512` \| `1024` \| `2048` |
 | `RETRIEVAL_TOP_K` | no | `5` | `src/config/retrieval.config.ts` | `config.retrieval.topK` — max candidates returned by retrieval |
 | `RETRIEVAL_ALIAS_BOOST` | no | `0.15` | `src/config/retrieval.config.ts` | `config.retrieval.aliasBoost` — additive score boost for exact alias matches |
-| `SELECTION_MAX_ROUNDS` | no | `2` | `src/config/retrieval.config.ts` | `config.retrieval.maxSelectionRounds` — clarifying-question round cap |
+| `RETRIEVAL_MIN_SCORE` | no | `0` | `src/config/retrieval.config.ts` | `config.retrieval.minScore` — candidates scoring below this are dropped; `0` disables the cut. Calibrate per embedding provider with `npm run evaluate:selection` |
+| `SELECTION_MAX_ROUNDS` | no | `2` | `src/config/selection.config.ts` | `config.selection.maxRounds` — clarifying-question round cap before the manual choice list |
+| `SELECTION_SESSION_TTL_HOURS` | no | `24` | `src/config/selection.config.ts` | `config.selection.sessionTtlHours` — lifetime of an unfinished selection conversation; a Mongo TTL index removes expired sessions |
+| `TASK_MAX_INFORMATION_REQUESTS_PER_STEP` | no | `3` | `src/config/task.config.ts` | `config.task.maxInformationRequestsPerStep` — how many times an approver may request more information on one approval step |
 | `VECTOR_BACKEND` | no | `memory` | `src/config/retrieval.config.ts` | `config.retrieval.vectorBackend` — selects `InMemoryVectorStore` or `AtlasVectorStore` at composition root |
 | `ATLAS_VECTOR_INDEX` | no | `template_vector_index` | `src/config/retrieval.config.ts` | `config.retrieval.atlasIndexName` — only used when `VECTOR_BACKEND=atlas` |
 | `MAIL_TRANSPORT` | no | `console` | `src/config/mail.config.ts` | `config.mail.transport` — `console` \| `brevo`, selects `IMailer` at composition root |
@@ -53,11 +57,11 @@ configs into a single frozen `config` object that every other module imports.
 | `APP_PUBLIC_URL` | no | `http://localhost:3001` | `src/config/mail.config.ts` | `config.mail.appPublicUrl` — base URL used to build `/approvals/:token` links in emails |
 | `APPROVAL_TOKEN_SECRET` | \*\* | `""` | `src/config/mail.config.ts` | `config.mail.tokenSecret` — HMAC-SHA256 signing key for approval tokens (`token.util.ts`); **required when `MAIL_TRANSPORT=brevo`**, throwing `ConfigurationError` at startup — an empty dev default is otherwise tolerated |
 | `APPROVAL_TOKEN_TTL_DAYS` | no | `14` | `src/config/mail.config.ts` | `config.mail.tokenTtlDays` — approval token lifetime, in days |
-| `DOCUMENT_ENABLED` | no | `true` | `src/config/document.config.ts` | `config.document.enabled` — generate a completion-document record at all; `false` reproduces pre-feature behaviour exactly |
-| `DOCUMENT_ATTACH_TO_EMAIL` | no | `true` | `src/config/document.config.ts` | `config.document.attachToEmail` — attach the rendered record to the completion email, in addition to the portal download |
+| `DOCUMENT_ENABLED` | no | `true` | `src/config/document.config.ts` | `config.document.enabled` — render transcripts at all; when `false`, `GET /tasks/:id/transcript` answers `409 TASK_TRANSCRIPT_UNAVAILABLE` and the completion email has no attachment |
+| `DOCUMENT_ATTACH_TO_EMAIL` | no | `true` | `src/config/document.config.ts` | `config.document.attachToEmail` — attach the transcript PDF to the completion email, in addition to the download |
 | `DOCUMENT_FORMAT` | no | `pdf` | `src/config/document.config.ts` | `config.document.format` — `pdf` \| `text`, selects `IDocumentRenderer` at composition root |
-| `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | `src/config/document.config.ts` | `config.document.institutionName` — printed in the record's footer |
-| `DOCUMENT_MAX_ATTACHMENT_BYTES` | no | `5000000` | `src/config/document.config.ts` | `config.document.maxAttachmentBytes` — above this size the record is download-only, dropped from the email attachment |
+| `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | `src/config/document.config.ts` | `config.document.institutionName` — printed in the transcript's footer |
+| `DOCUMENT_MAX_ATTACHMENT_BYTES` | no | `5000000` | `src/config/document.config.ts` | `config.document.maxAttachmentBytes` — above this size the transcript is download-only, dropped from the email attachment |
 
 49 variables total (\* = required, throws at startup if missing/empty; \*\* =
 conditionally required: `POSTGRES_URL` only when `POSTGRES_REPOSITORY_BACKEND=postgres`;

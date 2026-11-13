@@ -1,5 +1,7 @@
 # Web Task & Approval — Phase-by-Phase Implementation Plan
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 Execution plan for the gap analysed in
 [web-task-approval-implementation-plan.md](web-task-approval-implementation-plan.md): the
 API's task-planning (§7) and approval-execution (§8) surfaces have **no frontend at all**.

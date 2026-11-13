@@ -79,6 +79,7 @@ export interface WorkflowStep {
   instructions_to_approver: string | null;
   response_fields: ResponseField[];
   context_from_steps: ContextBinding[];
+  collects_inputs: string[];
   outcomes: {
     approved: OutcomeEffect | null;
     rejected: OutcomeEffect | null;
@@ -190,7 +191,7 @@ export interface Workflow {
   retrieval_summary: RetrievalSummary;
   scope: {
     institution_type: InstitutionType;
-    applies_to: { actor_type: ActorType; constraints: WorkflowConstraint[] };
+    applies_to: { actor_type: ActorType; organisational_unit_codes: string[]; constraints: WorkflowConstraint[] };
   };
   requester: { actor_type: ActorType; identifier_field: string };
   inputs: WorkflowInput[];

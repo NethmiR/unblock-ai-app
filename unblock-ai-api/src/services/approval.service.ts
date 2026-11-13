@@ -1,261 +1,89 @@
-import { TaskModel } from "../models/task.model.js";
-import { WorkflowTemplateService } from "./workflow-template.service.js";
-import { ExecutionService } from "./execution.service.js";
-import { NotificationService } from "./notification.service.js";
-import { TaskService } from "./task.service.js";
-import { CompletionDocumentService } from "./completion-document.service.js";
-import { issueTokensForDispatched, verifyToken } from "../utils/approval/token.util.js";
-import { allowedOutcomes, resolveOutcomeAction } from "../utils/approval/outcome-resolver.util.js";
-import { formatRequirementValue } from "../utils/approval/answer-format.util.js";
-import { evaluateComputed } from "../utils/workflow/computed-evaluator.util.js";
-import { NotFoundError } from "../errors/not-found.error.js";
-import { ConflictError } from "../errors/conflict.error.js";
+import { ACTIVE_TASK_STEP_STATUSES, COMMENT_REQUIRED_DECISIONS, TASK_FIELD_LIMIT, TaskStepStatus } from "../data/constants/task.constant.js";
+import {
+  approvalAlreadyDecided,
+  approvalCommentRequired,
+  approvalLinkExpired,
+  approvalLinkInvalid,
+} from "../errors/approval.error.js";
 import { ValidationError } from "../errors/validation.error.js";
-import { STEP_STATE, TASK_AUDIT_TYPE } from "../data/constants/status.constant.js";
-import type { AppConfig } from "../lib/types/config/config.type.js";
-import type { TaskDocument, TaskStepState, StepOutcomeResult } from "../lib/types/task/task.type.js";
-import type { WorkflowDefinition } from "../lib/types/workflow/workflow.type.js";
-import type { ApproverViewDto, ApproverStatus, DecisionResultDto } from "../lib/types/approval/approval.type.js";
+import { hashApprovalToken, verifyToken } from "../utils/approval/token.util.js";
+import { computedFields } from "../utils/task/task-view.util.js";
+import { normalizeOptionalText } from "../utils/shared/text.util.js";
+import type { ITaskModel } from "../models/task.model.js";
+import type { TaskEngineService } from "./task-engine.service.js";
+import type { TaskTransitionService } from "./task-transition.service.js";
+import type { MailConfig } from "../lib/types/config/config.type.js";
+import type {
+  ApprovalContext,
+  ApprovalDecisionInputDto,
+  ApprovalDecisionResultDto,
+  ApproverView,
+} from "../lib/types/approval/approval.type.js";
 
 export interface ApprovalServiceOptions {
-  taskModel: TaskModel;
-  workflowTemplateService: WorkflowTemplateService;
-  executionService: ExecutionService;
-  notificationService: NotificationService;
-  taskService: TaskService;
-  completionDocumentService: CompletionDocumentService;
-  config: AppConfig;
-}
-
-interface TokenContext {
-  task: TaskDocument;
-  workflow: WorkflowDefinition;
-  step: TaskStepState;
+  taskModel: Pick<ITaskModel, "findById" | "findByApprovalTokenHash">;
+  taskEngine: Pick<TaskEngineService, "recordDecision" | "allowedDecisions">;
+  transitions: Pick<TaskTransitionService, "context" | "commit" | "now">;
+  mailConfig: Pick<MailConfig, "tokenSecret">;
 }
 
 export class ApprovalService {
-  private readonly taskModel: TaskModel;
-  private readonly workflowTemplateService: WorkflowTemplateService;
-  private readonly executionService: ExecutionService;
-  private readonly notificationService: NotificationService;
-  private readonly taskService: TaskService;
-  private readonly completionDocumentService: CompletionDocumentService;
-  private readonly config: AppConfig;
+  private readonly taskModel: ApprovalServiceOptions["taskModel"];
+  private readonly taskEngine: ApprovalServiceOptions["taskEngine"];
+  private readonly transitions: ApprovalServiceOptions["transitions"];
+  private readonly mailConfig: ApprovalServiceOptions["mailConfig"];
 
-  constructor({
-    taskModel,
-    workflowTemplateService,
-    executionService,
-    notificationService,
-    taskService,
-    completionDocumentService,
-    config,
-  }: ApprovalServiceOptions) {
-    this.taskModel = taskModel;
-    this.workflowTemplateService = workflowTemplateService;
-    this.executionService = executionService;
-    this.notificationService = notificationService;
-    this.taskService = taskService;
-    this.completionDocumentService = completionDocumentService;
-    this.config = config;
+  constructor(options: ApprovalServiceOptions) {
+    this.taskModel = options.taskModel;
+    this.taskEngine = options.taskEngine;
+    this.transitions = options.transitions;
+    this.mailConfig = options.mailConfig;
   }
 
-  async getApproverView(token: string): Promise<ApproverViewDto> {
-    const { task, workflow, step } = await this.resolveToken(token);
-    const workflowStep = workflow.steps.find((s) => s.id === step.step_id);
-    if (!workflowStep) throw NotFoundError.of("Step", step.step_id);
-
-    const requesterAnswers = task.requirements
-      .filter((r) => r.source === "input")
-      .map((r) => ({ label: r.label, value: formatRequirementValue(task.values[r.key] ?? null) }));
-
-    const priorDecisions = task.steps
-      .filter((s) => s.outcome !== null)
-      .sort((a, b) => (a.responded_at?.getTime() ?? 0) - (b.responded_at?.getTime() ?? 0))
-      .map((s) => ({
-        step: workflow.steps.find((ws) => ws.id === s.step_id)?.name ?? s.step_id,
-        outcome: s.outcome as string,
-        reason: s.reason,
-        at: s.responded_at as Date,
-      }));
-
-    const stepOrder = new Map(workflow.steps.map((ws, i) => [ws.id, i]));
-
-    const approvers = task.requirements
-      .filter((r) => r.source === "actor")
-      .map((r) => {
-        const taskStep = task.steps.find((s) => s.step_id === r.ref);
-        const status: ApproverStatus =
-          taskStep?.outcome ??
-          (taskStep?.state === STEP_STATE.PENDING_APPROVAL ? "awaiting" : "not_yet_reached");
-
-        return {
-          step_id: r.ref,
-          designation: r.label,
-          name: taskStep?.assignee?.name ?? null,
-          email: taskStep?.assignee?.email ?? null,
-          status,
-          is_current: r.ref === step.step_id,
-          decided_at: taskStep?.responded_at ?? null,
-        };
-      })
-      .sort((a, b) => (stepOrder.get(a.step_id) ?? 0) - (stepOrder.get(b.step_id) ?? 0));
-
-    const outcomes = (Object.entries(workflowStep.outcomes) as Array<[StepOutcomeResult, (typeof workflowStep.outcomes)[StepOutcomeResult]]>)
-      .filter(([, declared]) => declared !== null)
-      .map(([outcome, declared]) => ({ outcome, include_reason: declared?.include_reason ?? false }));
-
+  async getView(token: string): Promise<ApproverView> {
+    const context = await this.resolveToken(token);
+    const engineContext = await this.transitions.context(context.task);
     return {
-      task_reference: task.reference,
-      workflow_template_title: workflow.title,
-      step: {
-        step_id: workflowStep.id,
-        name: workflowStep.name,
-        instructions_to_approver: workflowStep.instructions_to_approver,
-        response_fields: workflowStep.response_fields,
-      },
-      approver: step.assignee,
-      requester_answers: requesterAnswers,
-      computed: evaluateComputed(workflow, task.values),
-      prior_decisions: priorDecisions,
-      approvers,
-      allowed_outcomes: allowedOutcomes(workflowStep),
-      outcomes,
-      already_decided: step.token_used_at !== null,
-      decided_outcome: step.outcome,
-      decided_at: step.responded_at,
+      context,
+      allowedDecisions: context.live ? this.taskEngine.allowedDecisions(context.task, context.step.id, engineContext) : [],
+      computed: computedFields(context.task, engineContext.definition),
     };
   }
 
-  async submitDecision(token: string, outcome: StepOutcomeResult, reason: string | null): Promise<DecisionResultDto> {
-    const { task, workflow, step } = await this.resolveToken(token);
+  async decide(token: string, input: ApprovalDecisionInputDto): Promise<ApprovalDecisionResultDto> {
+    const { task, step, live } = await this.resolveToken(token);
+    if (!live) throw approvalAlreadyDecided();
 
-    if (step.token_used_at !== null) {
-      throw new ConflictError(`Approval token has already been used for step '${step.step_id}'`);
+    const comment = normalizeOptionalText(input.comment);
+    if (comment !== null && comment.length > TASK_FIELD_LIMIT.COMMENT_MAX_LENGTH) {
+      throw new ValidationError(`comment must be at most ${TASK_FIELD_LIMIT.COMMENT_MAX_LENGTH} characters`);
     }
+    if (comment === null && COMMENT_REQUIRED_DECISIONS.includes(input.decision)) throw approvalCommentRequired(input.decision);
 
-    if (step.token_expires_at !== null && step.token_expires_at.getTime() < Date.now()) {
-      throw new ConflictError(
-        `Approval link for step '${step.step_id}' expired on ${step.token_expires_at.toISOString()}. ` +
-          `Ask the requester to have it reissued.`,
-      );
-    }
-
-    if (step.state !== STEP_STATE.PENDING_APPROVAL) {
-      throw new ConflictError(
-        `Step '${step.step_id}' is no longer awaiting approval (current state: '${step.state}')`,
-      );
-    }
-
-    const workflowStep = workflow.steps.find((s) => s.id === step.step_id);
-    if (!workflowStep) throw NotFoundError.of("Step", step.step_id);
-
-    const stepOutcome = resolveOutcomeAction(workflowStep, outcome);
-    if (stepOutcome.include_reason && (!reason || reason.trim().length === 0)) {
-      throw new ValidationError(`A reason is required for outcome '${outcome}' on step '${step.step_id}'`);
-    }
-
-    const result = this.executionService.applyDecision(task, workflow, step.step_id, outcome, reason);
-    const stepsWithTokens = issueTokensForDispatched(
-      String(task._id),
-      result.steps,
-      result.dispatched,
-      this.config.mail.tokenSecret,
-      this.config.mail.tokenTtlDays,
-    );
-
-    const wrote = await this.taskModel.updateStepAndStatusIfUnused(
-      task._id,
-      step.step_id,
-      stepsWithTokens,
-      result.status,
-    );
-    if (!wrote) {
-      throw new ConflictError(`Approval token has already been used for step '${step.step_id}'`);
-    }
-
-    const updated = await this.taskModel.findById(task._id);
-    if (!updated) throw NotFoundError.of("Task", String(task._id));
-
-    await this.taskModel.appendAudit(updated._id, {
-      type: "decision_recorded",
-      detail: `${step.step_id}:${outcome}`,
-      created_at: new Date(),
-    });
-
-    const decidedStep = updated.steps.find((s) => s.step_id === step.step_id) ?? null;
-    await this.sendDecisionNotifications(updated, workflow, result, decidedStep);
-
-    if (stepOutcome.action === "reopen_input") {
-      await this.taskService.reopenForMoreInfo(updated._id, step.step_id, reason ?? "");
-    }
-
-    return {
-      task_id: String(updated._id),
-      step_id: step.step_id,
-      outcome,
-      status: result.status,
-      completed: result.completed,
-      terminated: result.terminated,
-    };
+    const result = this.taskEngine.recordDecision(task, step.id, input.decision, comment, await this.transitions.context(task));
+    const saved = await this.transitions.commit(result, task.revision);
+    const next = saved.steps.find((candidate) => ACTIVE_TASK_STEP_STATUSES.includes(candidate.status));
+    return { decision: input.decision, task_status: saved.status, next_step_name: next?.name ?? null };
   }
 
-  private async sendDecisionNotifications(
-    task: TaskDocument,
-    workflow: WorkflowDefinition,
-    result: { dispatched: string[]; terminated: boolean; completed: boolean },
-    decidedStep: TaskStepState | null,
-  ): Promise<void> {
-    for (const stepId of result.dispatched) {
-      const step = task.steps.find((s) => s.step_id === stepId);
-      if (!step) continue;
-      const sent = await this.notificationService.sendApprovalRequest(task, workflow, step);
-      if (sent) await this.taskModel.replaceSteps(task._id, this.stampNotified(task.steps, stepId));
-    }
+  private async resolveToken(token: string): Promise<ApprovalContext> {
+    const payload = verifyToken(token, this.mailConfig.tokenSecret);
+    if (payload === null) throw approvalLinkInvalid();
+    const tokenHash = hashApprovalToken(token);
 
-    if (result.terminated && decidedStep) {
-      await this.notificationService.sendRejectionNotice(task, workflow, decidedStep);
-    }
-
-    if (result.completed) {
-      const completedAt = new Date();
-      const document = await this.completionDocumentService.generate(task, workflow, completedAt);
-      const sent = await this.notificationService.sendCompletionNotice(task, workflow, document);
-
-      if (document) {
-        await this.taskModel.setCompletionDocument(task._id, {
-          generated_at: completedAt,
-          filename: document.filename,
-          byte_size: document.byteSize,
-          sha256: document.sha256,
-          emailed_to: sent ? this.notificationService.requesterEmailOf(task) : null,
-          emailed_at: sent ? new Date() : null,
-        });
-        await this.taskModel.appendAudit(task._id, {
-          type: TASK_AUDIT_TYPE.DOCUMENT_GENERATED,
-          detail: document.sha256,
-          created_at: completedAt,
-        });
+    const live = await this.taskModel.findByApprovalTokenHash(tokenHash);
+    const liveStep = live?.steps.find((candidate) => candidate.id === payload.step_id && candidate.approval?.token_hash === tokenHash);
+    if (live && liveStep?.approval) {
+      if (liveStep.approval.token_expires_at !== null && liveStep.approval.token_expires_at.getTime() < this.transitions.now().getTime()) {
+        throw approvalLinkExpired();
       }
+      if (liveStep.status !== TaskStepStatus.AWAITING_APPROVER) throw approvalLinkInvalid();
+      return { task: live, step: liveStep, live: true };
     }
-  }
 
-  private stampNotified(steps: TaskStepState[], stepId: string): TaskStepState[] {
-    return steps.map((s) => (s.step_id === stepId ? { ...s, notified_at: new Date() } : s));
-  }
-
-  private async resolveToken(token: string): Promise<TokenContext> {
-    const payload = verifyToken(token, this.config.mail.tokenSecret);
-    if (!payload) throw NotFoundError.of("Approval token", token);
-
-    const task = await this.taskModel.findByStepToken(token);
-    if (!task) throw NotFoundError.of("Approval token", token);
-
-    const step = task.steps.find((s) => s.step_id === payload.step_id);
-    if (!step) throw NotFoundError.of("Approval token", token);
-
-    const workflow = await this.workflowTemplateService.getDefinition(task.workflow_template_id, task.workflow_template_version);
-
-    return { task, workflow, step };
+    const task = await this.taskModel.findById(payload.task_id);
+    const step = task?.steps.find((candidate) => candidate.id === payload.step_id);
+    if (!task || !step?.approval || step.approval.decision === null) throw approvalLinkInvalid();
+    return { task, step, live: false };
   }
 }

@@ -11,6 +11,7 @@ import {
   toGeneratedWorkflowTemplateTitle,
 } from "../utils/workflow-template/workflow-template-input.util.js";
 import { logger } from "../utils/shared/logger.util.js";
+import { normaliseWorkflowDefinition } from "../utils/workflow/definition-normaliser.util.js";
 import { ValidationError } from "../errors/validation.error.js";
 import {
   workflowTemplateAlreadyPublished,
@@ -307,7 +308,7 @@ export class WorkflowTemplateService {
   private async requireVersion(id: string, version: number): Promise<WorkflowTemplateVersionDocument> {
     const found = await this.workflowTemplateVersionModel.find(id, version);
     if (!found) throw workflowTemplateVersionNotFound(id, version);
-    return found;
+    return { ...found, definition: normaliseWorkflowDefinition(found.definition) };
   }
 
   private async toDetail(

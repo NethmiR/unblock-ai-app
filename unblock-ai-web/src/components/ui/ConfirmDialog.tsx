@@ -22,11 +22,10 @@ interface ConfirmDialogProps {
 /**
  * A centred modal for confirming one action.
  *
- * Built on the native `<dialog>` element for the same reasons ReasonDialog is:
- * `showModal()` gives focus trapping, the top layer, and Escape handling with
- * no library and no scroll-locking hacks. The `closingRef` dance is likewise
- * shared - unmounting fires a native `close` event that must not be read back
- * as a user cancel.
+ * Built on the native `<dialog>` element: `showModal()` gives focus trapping,
+ * the top layer, and Escape handling with no library and no scroll-locking
+ * hacks. The `closingRef` guard exists because unmounting fires a native
+ * `close` event that must not be read back as a user cancel.
  */
 export function ConfirmDialog({
   title,

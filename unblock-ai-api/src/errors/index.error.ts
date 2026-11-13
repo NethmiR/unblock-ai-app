@@ -12,3 +12,4 @@ export { ForbiddenError } from "./forbidden.error.js";
 export { MigrationError } from "./migration.error.js";
 export { SeedError } from "./seed.error.js";
 export { UserAffiliationValidationError } from "./user-affiliation.error.js";
+export { GoneError } from "./gone.error.js";

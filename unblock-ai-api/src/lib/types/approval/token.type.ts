@@ -8,3 +8,9 @@ export interface TokenVerifyResult {
   valid: boolean;
   payload: ApprovalTokenPayload | null;
 }
+
+export interface IssuedApprovalToken {
+  token: string;
+  tokenHash: string;
+  expiresAt: Date;
+}

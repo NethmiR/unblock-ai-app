@@ -1,35 +1,40 @@
 [
   {
     "query": "I want to apply for overseas leave",
-    "expect": "ambiguous",
-    "expect_in_candidates": ["it_faculty_overseas_leave"],
-    "note": "Bare request with no faculty - must ask, not guess."
-  },
-  {
-    "query": "I'm in the IT faculty and going abroad for 2 weeks",
+    "requester": "Kavindu Jayawardena",
     "expect": "matched",
     "expect_workflow": "it_faculty_overseas_leave",
-    "note": "Faculty stated up front - no question needed."
+    "note": "IT student with a bare request - the profile answers the faculty question, so no clarification."
   },
   {
-    "query": "need to book a hall for a workshop next month",
+    "query": "going abroad for 2 weeks for a conference",
+    "requester": "Kavindu Jayawardena",
     "expect": "matched",
-    "expect_workflow": "departmental_event_workshop",
+    "expect_workflow": "it_faculty_overseas_leave",
     "note": "Informal phrasing; tests the keywords field."
   },
   {
+    "query": "I want to apply for overseas leave",
+    "requester": "Hasitha Dissanayake",
+    "expect": "no_match",
+    "note": "CSE student - the IT-only template is excluded by audience before the selector."
+  },
+  {
+    "query": "need to book a hall for a workshop next month",
+    "requester": "Chamari Gunawardena",
+    "expect": "matched",
+    "expect_workflow": "departmental_event_workshop",
+    "note": "Staff member; informal phrasing."
+  },
+  {
     "query": "how do I reset my email password",
+    "requester": "Kavindu Jayawardena",
     "expect": "no_match",
     "note": "NEGATIVE CASE. A selector that answers this is broken."
   },
   {
-    "query": "I need to buy a new oscilloscope for the electronics lab",
-    "expect": "matched",
-    "expect_workflow": "lab_equipment_purchase_request",
-    "note": "Domain vocabulary the title does not contain."
-  },
-  {
     "query": "what's the weather like tomorrow",
+    "requester": "Chamari Gunawardena",
     "expect": "no_match",
     "note": "NEGATIVE CASE. Completely off-domain."
   }

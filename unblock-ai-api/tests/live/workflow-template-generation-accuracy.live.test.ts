@@ -6,7 +6,12 @@ import { generateDefinition } from "./workflow-template-generation.helper.js";
 test("IT Faculty Overseas Leave — structural generation", async () => {
   const workflow = await generateDefinition(readInputFixture("it_faculty_overseas_leave.txt"));
 
-  assert.equal(workflow.inputs.length, 8);
+  assert.equal(workflow.inputs.length, 6);
+  assert.deepEqual(workflow.scope.applies_to.organisational_unit_codes, ["FIT"]);
+  const inputIds = workflow.inputs.map((input) => input.id);
+  for (const forbidden of ["full_name", "requester_email", "email", "name"]) {
+    assert.ok(!inputIds.includes(forbidden), `the requester's ${forbidden} must come from the account, not an input`);
+  }
 
   const advisorReview = stepById(workflow, "advisor_review");
   const hodReview = stepById(workflow, "hod_review");
@@ -15,6 +20,12 @@ test("IT Faculty Overseas Leave — structural generation", async () => {
   assert.ok(advisorReview, "advisor_review step must exist");
   assert.ok(hodReview, "hod_review step must exist");
   assert.ok(deanReview, "dean_review step must exist");
+
+  assert.equal(hodReview?.assignee.resolution, "dynamic");
+  assert.equal(hodReview?.assignee.role, "head_of_department");
+  assert.equal(deanReview?.assignee.resolution, "dynamic");
+  assert.equal(deanReview?.assignee.role, "dean");
+  assert.ok(workflow.steps.every((step) => step.collects_inputs.length === 0));
 
   assert.equal(advisorReview?.depends_on.length, 0);
   assert.equal(hodReview?.depends_on[0]?.step_id, "advisor_review");

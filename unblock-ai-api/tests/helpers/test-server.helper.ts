@@ -169,6 +169,7 @@ export function createTestControllers(overrides: Partial<ApiControllers> = {}): 
     workflowTemplateController: unusedController(),
     selectionController: unusedController(),
     taskController: unusedController(),
+    taskFormController: unusedController(),
     approvalController: unusedController(),
     authController: unusedController(),
     userSessionController: unusedController(),

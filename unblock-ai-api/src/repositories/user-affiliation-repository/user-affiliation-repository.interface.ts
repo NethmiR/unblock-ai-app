@@ -14,5 +14,6 @@ export interface IUserAffiliationRepository {
   findUnitSummariesByUserIds(userIds: readonly string[]): Promise<Map<string, OrganisationalUnitReference[]>>;
   findMembersByUnitId(organisationalUnitId: string): Promise<OrganisationalUnitMemberRecord[]>;
   findSingleHolders(keys: readonly DesignationAssignmentKey[]): Promise<DesignationHolderRecord[]>;
+  findDesignationHolders(designationId: string, organisationalUnitIds: readonly string[] | null): Promise<DesignationHolderRecord[]>;
   replaceForUser(userId: string, memberships: readonly MembershipInput[], actorUserId: string | null): Promise<void>;
 }

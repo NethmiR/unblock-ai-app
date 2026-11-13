@@ -1,92 +1,99 @@
-import { createLlmAdapter, type ILlmAdapter } from "./llm-adapter/index.llm-adapter.js";
-import { config } from "../config/index.config.js";
-import { buildSelectorMessages, type SelectorTranscriptTurn } from "../data/prompts/selector.prompt.js";
-import { decisionResponseSchema, isSelectorDecision } from "../data/schemas/decision.schema.js";
-import { SELECTION_DECISION } from "../data/constants/status.constant.js";
+import { buildSelectorMessages, SELECTOR_FALLBACK_QUESTION, type SelectorTranscriptTurn } from "../data/prompts/selector.prompt.js";
+import { isSelectorDecision, selectionDecisionResponseSchema } from "../data/schemas/selection-decision.schema.js";
+import { LlmOperation } from "../data/constants/llm.constant.js";
+import { SelectionDecisionKind } from "../data/constants/selection.constant.js";
 import { logger } from "../utils/shared/logger.util.js";
-import { SelectionError } from "../errors/selection.error.js";
-import type { BoostedCandidate } from "../lib/types/selection/candidate.type.js";
+import { describeError } from "../utils/shared/error-description.util.js";
+import { selectionFailed } from "../errors/selection-session.error.js";
+import type { ILlmAdapter } from "./llm-adapter/index.llm-adapter.js";
+import type { RequesterProfileFact } from "../lib/types/requester/requester.type.js";
+import type { SelectorCandidate } from "../lib/types/selection/candidate.type.js";
 import type { SelectorDecision } from "../lib/types/selection/decision.type.js";
+import type { Confidence } from "../lib/types/workflow/workflow.type.js";
+
+const LOW_CONFIDENCE: Confidence = "low";
 
 export interface SelectorServiceOptions {
-  llmAdapter?: ILlmAdapter;
+  llmAdapter: ILlmAdapter;
+}
+
+export interface SelectorRequest {
+  candidates: readonly SelectorCandidate[];
+  transcript: readonly SelectorTranscriptTurn[];
+  facts: readonly RequesterProfileFact[];
+  matchedWorkflowTemplateId: string | null;
 }
 
 export class SelectorService {
   private readonly llmAdapter: ILlmAdapter;
 
-  constructor({ llmAdapter = createLlmAdapter(config.llm) }: SelectorServiceOptions = {}) {
+  constructor({ llmAdapter }: SelectorServiceOptions) {
     this.llmAdapter = llmAdapter;
   }
 
-  async decide(candidates: BoostedCandidate[], transcript: SelectorTranscriptTurn[]): Promise<SelectorDecision> {
-    if (candidates.length === 0) {
-      // No candidates means retrieval found nothing selectable. Do not spend a
-      // model call to be told the obvious.
-      return {
-        decision: SELECTION_DECISION.NO_MATCH,
-        workflow_template_id: null,
-        confidence: "high",
-        question: null,
-        options: [],
-        reasoning: "No published workflow templates were retrieved for this query.",
-      };
-    }
-
-    const messages = buildSelectorMessages({ candidates, transcript });
+  async decide(request: SelectorRequest): Promise<SelectorDecision> {
+    const matchedCandidate = request.candidates.find((candidate) => candidate.workflow_template_id === request.matchedWorkflowTemplateId) ?? null;
+    const messages = buildSelectorMessages({ ...request, matchedCandidate });
 
     let decision: unknown;
     try {
-      const completion = await this.llmAdapter.generateCompletion({ messages, responseSchema: decisionResponseSchema });
+      const completion = await this.llmAdapter.generateCompletion({
+        operation: LlmOperation.WORKFLOW_SELECTION,
+        messages,
+        responseSchema: selectionDecisionResponseSchema,
+      });
       decision = JSON.parse(completion.content);
     } catch (err) {
-      throw new SelectionError(`Selector call failed: ${(err as Error).message}`, { cause: err });
+      logger.error("selector call failed", { error: describeError(err) });
+      throw selectionFailed(err);
     }
 
-    if (!isSelectorDecision(decision)) {
-      throw new SelectionError("Selector returned a decision that does not match the decision schema");
-    }
-    return this.sanitize(decision, candidates);
+    if (!isSelectorDecision(decision)) throw selectionFailed(new Error("Selector returned an invalid decision shape"));
+    return this.sanitise(decision, request, matchedCandidate?.workflow_template_id ?? null);
   }
 
-  private sanitize(decision: SelectorDecision, candidates: BoostedCandidate[]): SelectorDecision {
-    const validIds = new Set(candidates.map((c) => c.workflow_template_id));
+  private sanitise(decision: SelectorDecision, request: SelectorRequest, matchedId: string | null): SelectorDecision {
+    const validIds = new Set(request.candidates.map((candidate) => candidate.workflow_template_id));
+    const validFactIds = new Set(request.facts.map((fact) => fact.id));
+    const facts = decision.matched_fact_ids.filter((id) => validFactIds.has(id));
+    const titles = request.candidates.map((candidate) => candidate.title);
+    const picksTemplate = decision.decision === SelectionDecisionKind.MATCHED || decision.decision === SelectionDecisionKind.START_REQUESTED;
 
-    if (decision.decision === SELECTION_DECISION.MATCHED && !validIds.has(decision.workflow_template_id ?? "")) {
-      logger.warn("selector hallucinated a workflow_template_id", {
+    if (picksTemplate && !validIds.has(decision.workflow_template_id ?? "")) {
+      logger.warn("selector returned a workflow template that was not offered", {
         returned: decision.workflow_template_id,
         offered: [...validIds],
       });
       return {
         ...decision,
-        decision: SELECTION_DECISION.AMBIGUOUS,
+        decision: SelectionDecisionKind.AMBIGUOUS,
         workflow_template_id: null,
-        question: decision.question ?? "Could you describe what you need in a bit more detail?",
+        question: decision.question ?? SELECTOR_FALLBACK_QUESTION.UNCLEAR,
         options: [],
+        matched_fact_ids: [],
       };
     }
 
-    if (decision.decision === SELECTION_DECISION.MATCHED && decision.confidence === "low") {
-      logger.info("downgrading low-confidence match to ambiguous", {
-        workflow_template_id: decision.workflow_template_id,
-      });
+    if (decision.decision === SelectionDecisionKind.START_REQUESTED && decision.workflow_template_id !== matchedId) {
+      return { ...decision, decision: SelectionDecisionKind.MATCHED, question: null, options: [], matched_fact_ids: facts };
+    }
+
+    if (decision.decision === SelectionDecisionKind.MATCHED && decision.confidence === LOW_CONFIDENCE) {
       return {
         ...decision,
-        decision: SELECTION_DECISION.AMBIGUOUS,
+        decision: SelectionDecisionKind.AMBIGUOUS,
         workflow_template_id: null,
-        question: decision.question ?? "Which of these best describes your situation?",
-        options: decision.options?.length ? decision.options : candidates.map((c) => c.title),
+        question: decision.question ?? SELECTOR_FALLBACK_QUESTION.WHICH_SITUATION,
+        options: decision.options.length > 0 ? decision.options : titles,
+        matched_fact_ids: [],
       };
     }
 
-    if (decision.decision === SELECTION_DECISION.AMBIGUOUS && !decision.question) {
-      return {
-        ...decision,
-        question: "Which of these best describes what you need?",
-        options: candidates.map((c) => c.title),
-      };
+    if (decision.decision === SelectionDecisionKind.AMBIGUOUS && !decision.question) {
+      return { ...decision, question: SELECTOR_FALLBACK_QUESTION.WHICH_NEED, options: titles, matched_fact_ids: [] };
     }
 
-    return decision;
+    if (picksTemplate) return { ...decision, question: null, options: [], matched_fact_ids: facts };
+    return { ...decision, workflow_template_id: null, matched_fact_ids: [] };
   }
 }

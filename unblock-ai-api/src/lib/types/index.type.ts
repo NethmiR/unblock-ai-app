@@ -17,3 +17,6 @@ export * from "./seed/index.type.js";
 export * from "./organisational-unit/index.type.js";
 export * from "./designation/index.type.js";
 export * from "./user-affiliation/index.type.js";
+export * from "./requester/index.type.js";
+export * from "./organisation/index.type.js";
+export * from "./assignee/index.type.js";

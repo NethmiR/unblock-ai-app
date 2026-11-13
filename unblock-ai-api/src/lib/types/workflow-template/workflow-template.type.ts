@@ -4,7 +4,8 @@ import type {
   WorkflowTemplateVisibility,
 } from "../../../data/constants/workflow-template.constant.js";
 import type { RetrievalSummary } from "../workflow/retrieval-summary.type.js";
-import type { WorkflowDefinition } from "../workflow/workflow.type.js";
+import type { WorkflowStep } from "../workflow/step.type.js";
+import type { WorkflowDefinition, WorkflowScope, WorkflowScopeAppliesTo } from "../workflow/workflow.type.js";
 import type { UserReference, UserReferenceDto } from "../user/user.type.js";
 
 export interface WorkflowTemplateListOptions {
@@ -13,6 +14,17 @@ export interface WorkflowTemplateListOptions {
 }
 
 export type StoredWorkflowDefinition = Omit<WorkflowDefinition, "title">;
+
+export type StoredWorkflowStepInput = Omit<WorkflowStep, "collects_inputs"> & { collects_inputs?: string[] };
+
+export type StoredWorkflowScopeInput = Omit<WorkflowScope, "applies_to"> & {
+  applies_to: Omit<WorkflowScopeAppliesTo, "organisational_unit_codes"> & { organisational_unit_codes?: string[] };
+};
+
+export type StoredWorkflowDefinitionInput = Omit<StoredWorkflowDefinition, "scope" | "steps"> & {
+  scope: StoredWorkflowScopeInput;
+  steps: StoredWorkflowStepInput[];
+};
 
 export interface WorkflowTemplateRetrieval {
   text: string;
@@ -51,6 +63,10 @@ export interface WorkflowTemplateVersionDocument {
   created_at: Date;
 }
 
+export interface StoredWorkflowTemplateVersionDocument extends Omit<WorkflowTemplateVersionDocument, "definition"> {
+  definition: StoredWorkflowDefinitionInput;
+}
+
 export type WorkflowTemplateVersionSummaryDocument = Omit<WorkflowTemplateVersionDocument, "prompt" | "definition">;
 
 export interface WorkflowTemplateRetrievalProjection {
@@ -59,6 +75,17 @@ export interface WorkflowTemplateRetrievalProjection {
   description: string | null;
   current_version: number;
   retrieval: WorkflowTemplateRetrieval;
+}
+
+export interface WorkflowTemplateCatalogueProjection {
+  _id: string;
+  title: string;
+  current_version: number;
+}
+
+export interface WorkflowTemplateVersionKey {
+  workflow_template_id: string;
+  version: number;
 }
 
 export interface WorkflowTemplateVectorSearchRow extends WorkflowTemplateRetrievalProjection {

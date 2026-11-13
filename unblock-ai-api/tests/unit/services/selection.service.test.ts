@@ -1,381 +1,209 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ObjectId } from "mongodb";
-import { SelectionService } from "../../../src/services/selection.service.js";
-import { ConflictError } from "../../../src/errors/conflict.error.js";
-import { LlmMessageRole } from "../../../src/data/constants/llm.constant.js";
-import { FakeSelectionSessionModel } from "../../helpers/fake-model.helper.js";
-import type { RetrievalService } from "../../../src/services/retrieval.service.js";
-import type { SelectorService } from "../../../src/services/selector.service.js";
-import type { WorkflowTemplateService } from "../../../src/services/workflow-template.service.js";
-import type { BoostedCandidate } from "../../../src/lib/types/selection/candidate.type.js";
-import type { SelectorDecision } from "../../../src/lib/types/selection/decision.type.js";
-import type { SelectorTranscriptTurn } from "../../../src/data/prompts/selector.prompt.js";
-import type { PublishedWorkflowDefinition } from "../../../src/lib/types/workflow-template/workflow-template.type.js";
+import {
+  SelectionDecisionKind,
+  SelectionMessageRole,
+  SelectionSessionStatus,
+  SelectionTraceStep,
+} from "../../../src/data/constants/selection.constant.js";
+import { SelectionErrorCode } from "../../../src/data/constants/selection-error.constant.js";
+import { withErrorCode } from "../../helpers/error-assertion.helper.js";
+import {
+  createSelectionTestbed,
+  ENG_LEAVE_ID,
+  IT_LEAVE_ID,
+  selectorDecision,
+  WORKSHOP_ID,
+} from "../../helpers/selection-testbed.helper.js";
+import type { AssistantSelectionMessage, SelectionMessage } from "../../../src/lib/types/selection/session.type.js";
 
-function candidate(overrides: Partial<BoostedCandidate>): BoostedCandidate {
-  return {
-    workflow_template_id: "x",
-    workflow_template_version: 1,
-    title: "X",
-    description: "",
-    score: 0,
-    aliases_lower: [],
-    retrieval_summary: null,
-    retrieval_text: "",
-    base_score: 0,
-    alias_hits: [],
-    ...overrides,
-  };
+const KAVINDU = "Kavindu Jayawardena";
+const HASITHA = "Hasitha Dissanayake";
+
+function lastAssistant(messages: readonly SelectionMessage[]): AssistantSelectionMessage {
+  const found = [...messages].reverse().find((message): message is AssistantSelectionMessage => message.role === SelectionMessageRole.ASSISTANT);
+  assert.ok(found);
+  return found;
 }
 
-const CANDIDATES: BoostedCandidate[] = [
-  candidate({
-    workflow_template_id: "it_leave",
-    workflow_template_version: 1,
-    title: "IT Overseas Leave",
-    score: 0.81,
-    base_score: 0.66,
-    alias_hits: ["overseas leave"],
-    retrieval_summary: { one_liner: "Travel overseas as an IT undergraduate." } as BoostedCandidate["retrieval_summary"],
-  }),
-  candidate({
-    workflow_template_id: "eng_leave",
-    workflow_template_version: 1,
-    title: "Eng Overseas Leave",
-    score: 0.79,
-    base_score: 0.79,
-    alias_hits: [],
-    retrieval_summary: {
-      one_liner: "Travel overseas as an Engineering undergraduate.",
-    } as BoostedCandidate["retrieval_summary"],
-  }),
-];
+test("zero eligible candidates means no selector call", async () => {
+  const bed = await createSelectionTestbed();
+  bed.retrieval.results = [IT_LEAVE_ID];
 
-interface FakeRetrieverCall {
-  query: string;
-  options: { institutionType?: string | null };
-}
+  const view = await bed.service.start(bed.userIdOf(HASITHA), "I want overseas leave");
 
-function fakeRetrievalService(candidates: BoostedCandidate[] = CANDIDATES): RetrievalService & { calls: FakeRetrieverCall[] } {
-  const calls: FakeRetrieverCall[] = [];
-  return {
-    calls,
-    retrieve(query: string, options: { institutionType?: string | null } = {}) {
-      calls.push({ query, options });
-      return Promise.resolve(candidates);
-    },
-  } as unknown as RetrievalService & { calls: FakeRetrieverCall[] };
-}
-
-interface FakeAgentCall {
-  candidates: BoostedCandidate[];
-  transcript: SelectorTranscriptTurn[];
-}
-
-function fakeSelectorService(...decisions: SelectorDecision[]): SelectorService & { calls: FakeAgentCall[] } {
-  const queue = [...decisions];
-  const calls: FakeAgentCall[] = [];
-  return {
-    calls,
-    decide(candidates: BoostedCandidate[], transcript: SelectorTranscriptTurn[]) {
-      calls.push({ candidates, transcript });
-      const next = queue.shift();
-      if (!next) throw new Error("fakeSelectorService ran out of queued decisions");
-      return Promise.resolve(next);
-    },
-  } as unknown as SelectorService & { calls: FakeAgentCall[] };
-}
-
-function fakeWorkflowTemplateService(published: Record<string, PublishedWorkflowDefinition> = {}): WorkflowTemplateService {
-  return {
-    getPublishedDefinition(workflowTemplateId: string) {
-      const found = published[workflowTemplateId];
-      if (!found) throw new Error(`no fake published definition for ${workflowTemplateId}`);
-      return Promise.resolve(found);
-    },
-  } as unknown as WorkflowTemplateService;
-}
-
-const MATCHED: SelectorDecision = {
-  decision: "matched",
-  workflow_template_id: "it_leave",
-  confidence: "high",
-  question: null,
-  options: [],
-  reasoning: "IT faculty stated",
-};
-
-const AMBIGUOUS: SelectorDecision = {
-  decision: "ambiguous",
-  workflow_template_id: null,
-  confidence: "medium",
-  question: "Which faculty are you attached to?",
-  options: ["Information Technology", "Engineering"],
-  reasoning: "candidates differ only by faculty",
-};
-
-const NO_MATCH: SelectorDecision = {
-  decision: "no_match",
-  workflow_template_id: null,
-  confidence: "high",
-  question: null,
-  options: [],
-  reasoning: "nothing relevant",
-};
-
-function build({
-  retrievalService,
-  selectorService,
-  sessionModel,
-  workflowTemplateService = fakeWorkflowTemplateService(),
-  maxRounds = 2,
-}: {
-  retrievalService: RetrievalService;
-  selectorService: SelectorService;
-  sessionModel: FakeSelectionSessionModel;
-  workflowTemplateService?: WorkflowTemplateService;
-  maxRounds?: number;
-}): SelectionService {
-  return new SelectionService({
-    retrievalService,
-    selectorService,
-    sessionModel: sessionModel as unknown as ConstructorParameters<typeof SelectionService>[0]["sessionModel"],
-    workflowTemplateService,
-    maxRounds,
-  });
-}
-
-test("matched on round 1 finalizes the session", async () => {
-  const retrievalService = fakeRetrievalService();
-  const sessionModel = new FakeSelectionSessionModel();
-  const service = build({ retrievalService, selectorService: fakeSelectorService(MATCHED), sessionModel });
-
-  const out = await service.start("I want IT overseas leave");
-
-  assert.equal(out.decision, "matched");
-  assert.equal(out.workflow_template_id, "it_leave");
-
-  const stored = await sessionModel.findById(out.session_id);
-  assert.equal(stored?.outcome, "matched");
-  assert.equal(stored?.selected_workflow_template_id, "it_leave");
-  assert.equal(stored?.rounds.length, 0, "a clean match asks nothing");
+  const reply = lastAssistant(view.session.messages);
+  assert.equal(bed.selector.requests.length, 0);
+  assert.equal(reply.decision, SelectionDecisionKind.NO_MATCH);
+  assert.ok(reply.trace.some((entry) => entry.step === SelectionTraceStep.SELECTOR_NOT_NEEDED));
+  assert.equal(view.session.status, SelectionSessionStatus.NO_MATCH);
 });
 
-test("no_match finalizes the session with the no_match outcome", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
-  const service = build({ retrievalService: fakeRetrievalService(), selectorService: fakeSelectorService(NO_MATCH), sessionModel });
+test("audience exclusions appear in the trace and never reach the selector", async () => {
+  const bed = await createSelectionTestbed();
 
-  const out = await service.start("I want to buy a boat");
+  const view = await bed.service.start(bed.userIdOf(KAVINDU), "I want overseas leave");
 
-  assert.equal(out.decision, "no_match");
-  assert.equal(out.workflow_template_id, null);
-  assert.equal((await sessionModel.findById(out.session_id))?.outcome, "no_match");
-});
-
-test("ambiguous appends a question and leaves the session open", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
-  const service = build({ retrievalService: fakeRetrievalService(), selectorService: fakeSelectorService(AMBIGUOUS), sessionModel });
-
-  const out = await service.start("I want overseas leave");
-
-  assert.equal(out.decision, "ambiguous");
-  assert.equal(out.question, "Which faculty are you attached to?");
-  assert.deepEqual(out.options, ["Information Technology", "Engineering"]);
-
-  const stored = await sessionModel.findById(out.session_id);
-  assert.equal(stored?.outcome, null, "an open session has no outcome yet");
-  assert.equal(stored?.rounds.length, 1);
-  assert.equal(stored?.rounds[0]?.answer, null);
-});
-
-test("answer() never re-runs retrieval", async () => {
-  const retrievalService = fakeRetrievalService();
-  const sessionModel = new FakeSelectionSessionModel();
-  const service = build({ retrievalService, selectorService: fakeSelectorService(AMBIGUOUS, MATCHED), sessionModel });
-
-  const started = await service.start("I want overseas leave");
-  assert.equal(retrievalService.calls.length, 1);
-
-  const out = await service.answer(started.session_id, "Information Technology");
-
-  assert.equal(retrievalService.calls.length, 1, "the candidate set is frozen at round 1");
-  assert.equal(out.decision, "matched");
-  assert.equal(out.workflow_template_id, "it_leave");
-});
-
-test("answer() replays the full transcript against the frozen candidates", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
-  const selectorService = fakeSelectorService(AMBIGUOUS, MATCHED);
-  const service = build({ retrievalService: fakeRetrievalService(), selectorService, sessionModel });
-
-  const started = await service.start("I want overseas leave");
-  await service.answer(started.session_id, "Information Technology");
-
-  const secondCall = selectorService.calls[1];
-  assert.deepEqual(secondCall?.transcript, [
-    { role: LlmMessageRole.USER, text: "I want overseas leave" },
-    { role: LlmMessageRole.ASSISTANT, text: "Which faculty are you attached to?" },
-    { role: LlmMessageRole.USER, text: "Information Technology" },
+  const trace = lastAssistant(view.session.messages).trace;
+  assert.deepEqual(trace.map((entry) => entry.step), [
+    SelectionTraceStep.PROFILE_READ,
+    SelectionTraceStep.CANDIDATES_RETRIEVED,
+    SelectionTraceStep.EXCLUDED_BY_AUDIENCE,
+    SelectionTraceStep.SELECTOR_CONSULTED,
   ]);
-  assert.deepEqual(
-    secondCall?.candidates.map((c) => c.workflow_template_id),
-    ["it_leave", "eng_leave"],
+  assert.deepEqual(trace[2]!.workflow_template_titles, ["Engineering Faculty Overseas Leave Approval"]);
+  assert.deepEqual(bed.selector.requests[0]!.candidates.map((candidate) => candidate.workflow_template_id), [IT_LEAVE_ID]);
+  assert.deepEqual(bed.selector.requests[0]!.candidates[0]!.audience_unit_names, ["Faculty of Information Technology"]);
+});
+
+test("requester-type exclusions appear in the trace", async () => {
+  const bed = await createSelectionTestbed();
+  bed.retrieval.results = [WORKSHOP_ID, IT_LEAVE_ID];
+
+  const view = await bed.service.start(bed.userIdOf(KAVINDU), "book a hall");
+
+  const excluded = lastAssistant(view.session.messages).trace.find((entry) => entry.step === SelectionTraceStep.EXCLUDED_BY_REQUESTER_TYPE);
+  assert.equal(excluded?.count, 1);
+});
+
+test("a match records the template, matched facts and an overview", async () => {
+  const bed = await createSelectionTestbed();
+  bed.selector.enqueue(selectorDecision({ matched_fact_ids: ["P2"] }));
+
+  const view = await bed.service.start(bed.userIdOf(KAVINDU), "I want overseas leave");
+
+  const reply = lastAssistant(view.session.messages);
+  assert.equal(view.session.status, SelectionSessionStatus.MATCHED);
+  assert.equal(view.session.selected_workflow_template_id, IT_LEAVE_ID);
+  assert.deepEqual(reply.matched_fact_ids, ["P2"]);
+  assert.equal(view.overviews.get(IT_LEAVE_ID)?.title, "IT Faculty Overseas Leave Approval");
+  assert.equal(view.session.created_by, bed.userIdOf(KAVINDU));
+  assert.ok(view.session.expires_at.getTime() > Date.now());
+});
+
+test("a clarification turn reuses the frozen candidates without retrieval", async () => {
+  const bed = await createSelectionTestbed();
+  bed.selector.enqueue(
+    selectorDecision({ decision: SelectionDecisionKind.AMBIGUOUS, workflow_template_id: null, question: "Leave or travel?", options: ["Leave", "Travel"] }),
+    selectorDecision(),
   );
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "overseas");
+  assert.equal(started.session.rounds_used, 1);
+  assert.deepEqual(lastAssistant(started.session.messages).options.map((option) => option.label), ["Leave", "Travel"]);
+
+  const answered = await bed.service.postMessage(String(started.session._id), bed.userIdOf(KAVINDU), "Leave");
+
+  assert.equal(bed.retrieval.queries.length, 1);
+  assert.equal(lastAssistant(answered.session.messages).trace[0]!.step, SelectionTraceStep.CANDIDATES_REUSED);
+  assert.equal(answered.session.status, SelectionSessionStatus.MATCHED);
+  assert.deepEqual(bed.selector.requests[1]!.transcript.map((turn) => turn.text), ["overseas", "Leave or travel?", "Leave"]);
 });
 
-test("two ambiguous rounds produce manual_choice with the candidate titles", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
-  const service = build({
-    retrievalService: fakeRetrievalService(),
-    selectorService: fakeSelectorService(AMBIGUOUS, AMBIGUOUS, AMBIGUOUS),
-    sessionModel,
-    maxRounds: 2,
-  });
+test("the round cap falls back to a manual choice without a selector call", async () => {
+  const bed = await createSelectionTestbed({ maxRounds: 1 });
+  bed.selector.enqueue(selectorDecision({ decision: SelectionDecisionKind.AMBIGUOUS, workflow_template_id: null, question: "Which?", options: [] }));
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "overseas");
 
-  const started = await service.start("I want overseas leave");
-  const second = await service.answer(started.session_id, "not sure");
-  assert.equal(second.decision, "ambiguous", "round 2 is still within budget");
+  const capped = await bed.service.postMessage(String(started.session._id), bed.userIdOf(KAVINDU), "not sure");
 
-  const third = await service.answer(started.session_id, "still not sure");
-  assert.equal(third.decision, "manual_choice");
-  assert.deepEqual(third.options, ["IT Overseas Leave", "Eng Overseas Leave"]);
-
-  const stored = await sessionModel.findById(started.session_id);
-  assert.equal(stored?.rounds.length, 2, "the cap stops a third question being asked");
+  const reply = lastAssistant(capped.session.messages);
+  assert.equal(bed.selector.requests.length, 1);
+  assert.equal(reply.decision, SelectionDecisionKind.MANUAL_CHOICE);
+  assert.deepEqual(reply.options.map((option) => option.workflow_template_id), [IT_LEAVE_ID]);
+  assert.ok(reply.trace.some((entry) => entry.step === SelectionTraceStep.ROUND_LIMIT_REACHED));
 });
 
-test("choose() finalizes on a candidate the session actually offered", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
-  const service = build({ retrievalService: fakeRetrievalService(), selectorService: fakeSelectorService(AMBIGUOUS), sessionModel });
+test("choose accepts only an eligible candidate and records a match without the selector", async () => {
+  const bed = await createSelectionTestbed({ maxRounds: 0 });
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "overseas");
+  const sessionId = String(started.session._id);
 
-  const started = await service.start("I want overseas leave");
-  const out = await service.choose(started.session_id, "eng_leave");
-
-  assert.equal(out.decision, "matched");
-  assert.equal(out.workflow_template_id, "eng_leave");
-
-  const stored = await sessionModel.findById(started.session_id);
-  assert.equal(stored?.outcome, "matched");
-  assert.equal(stored?.selected_workflow_template_id, "eng_leave");
-});
-
-test("choose() rejects a workflow_template_id that was never a candidate", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
-  const service = build({ retrievalService: fakeRetrievalService(), selectorService: fakeSelectorService(AMBIGUOUS), sessionModel });
-
-  const started = await service.start("I want overseas leave");
   await assert.rejects(
-    () => service.choose(started.session_id, "law_leave"),
-    /was not among this session's candidates/,
+    bed.service.choose(sessionId, bed.userIdOf(KAVINDU), ENG_LEAVE_ID),
+    withErrorCode(SelectionErrorCode.SELECTION_OPTION_NOT_OFFERED),
   );
+  const chosen = await bed.service.choose(sessionId, bed.userIdOf(KAVINDU), IT_LEAVE_ID);
+
+  assert.equal(bed.selector.requests.length, 0);
+  assert.equal(chosen.session.status, SelectionSessionStatus.MATCHED);
+  assert.equal(lastAssistant(chosen.session.messages).decision, SelectionDecisionKind.MATCHED);
 });
 
-test("the response never leaks the model's reasoning", async () => {
-  const service = build({
-    retrievalService: fakeRetrievalService(),
-    selectorService: fakeSelectorService(MATCHED),
-    sessionModel: new FakeSelectionSessionModel(),
-  });
+test("a message after a match reuses candidates and can request the start", async () => {
+  const bed = await createSelectionTestbed();
+  bed.selector.enqueue(selectorDecision(), selectorDecision({ decision: SelectionDecisionKind.START_REQUESTED }));
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "overseas leave");
 
-  const out = await service.start("I want IT overseas leave");
-  assert.equal("reasoning" in out, false);
-  assert.deepEqual(Object.keys(out).sort(), [
-    "candidates",
-    "confidence",
-    "decision",
-    "options",
-    "question",
-    "session_id",
-    "workflow_template_id",
+  const confirmed = await bed.service.postMessage(String(started.session._id), bed.userIdOf(KAVINDU), "Start the task");
+
+  assert.equal(bed.retrieval.queries.length, 1);
+  assert.equal(bed.selector.requests[1]!.matchedWorkflowTemplateId, IT_LEAVE_ID);
+  assert.equal(lastAssistant(confirmed.session.messages).decision, SelectionDecisionKind.START_REQUESTED);
+  assert.equal(confirmed.session.status, SelectionSessionStatus.MATCHED);
+});
+
+test("a message after no match re-retrieves on all requester messages", async () => {
+  const bed = await createSelectionTestbed();
+  bed.selector.enqueue(selectorDecision({ decision: SelectionDecisionKind.NO_MATCH, workflow_template_id: null }), selectorDecision());
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "travel");
+
+  const rephrased = await bed.service.postMessage(String(started.session._id), bed.userIdOf(KAVINDU), "overseas leave");
+
+  assert.deepEqual(bed.retrieval.queries, ["travel", "travel\noverseas leave"]);
+  assert.equal(lastAssistant(rephrased.session.messages).trace[0]!.step, SelectionTraceStep.CANDIDATES_RETRIEVED);
+});
+
+test("another requester cannot read or continue the session", async () => {
+  const bed = await createSelectionTestbed();
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "overseas leave");
+  const sessionId = String(started.session._id);
+
+  await assert.rejects(bed.service.get(sessionId, bed.userIdOf(HASITHA)), withErrorCode(SelectionErrorCode.SELECTION_SESSION_NOT_FOUND));
+  await assert.rejects(bed.service.postMessage(sessionId, bed.userIdOf(HASITHA), "hi"), withErrorCode(SelectionErrorCode.SELECTION_SESSION_NOT_FOUND));
+  await assert.rejects(bed.service.discard(sessionId, bed.userIdOf(HASITHA)), withErrorCode(SelectionErrorCode.SELECTION_SESSION_NOT_FOUND));
+});
+
+test("an expired session is not served", async () => {
+  const bed = await createSelectionTestbed();
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "overseas leave");
+  bed.sessionModel.now = () => new Date(Date.now() + 25 * 60 * 60 * 1000);
+
+  await assert.rejects(bed.service.get(String(started.session._id), bed.userIdOf(KAVINDU)), withErrorCode(SelectionErrorCode.SELECTION_SESSION_NOT_FOUND));
+});
+
+test("consumeMatch returns the conversation and requires a match", async () => {
+  const bed = await createSelectionTestbed();
+  bed.selector.enqueue(selectorDecision({ decision: SelectionDecisionKind.NO_MATCH, workflow_template_id: null }), selectorDecision());
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "travel");
+  const sessionId = String(started.session._id);
+
+  await assert.rejects(bed.service.consumeMatch(sessionId, bed.userIdOf(KAVINDU)), withErrorCode(SelectionErrorCode.SELECTION_SESSION_NOT_MATCHED));
+  await bed.service.postMessage(sessionId, bed.userIdOf(KAVINDU), "overseas leave");
+  const match = await bed.service.consumeMatch(sessionId, bed.userIdOf(KAVINDU));
+
+  assert.equal(match.workflowTemplateId, IT_LEAVE_ID);
+  assert.deepEqual(match.conversation.filter((message) => message.role === SelectionMessageRole.REQUESTER).map((message) => message.text), [
+    "travel",
+    "overseas leave",
   ]);
 });
 
-test("candidates are projected to the client shape with rounded scores", async () => {
-  const service = build({
-    retrievalService: fakeRetrievalService(),
-    selectorService: fakeSelectorService(AMBIGUOUS),
-    sessionModel: new FakeSelectionSessionModel(),
-  });
+test("the catalogue lists only eligible published templates", async () => {
+  const bed = await createSelectionTestbed();
 
-  const out = await service.start("I want overseas leave");
-  assert.deepEqual(out.candidates, [
-    {
-      workflow_template_id: "it_leave",
-      title: "IT Overseas Leave",
-      one_liner: "Travel overseas as an IT undergraduate.",
-      score: 0.81,
-    },
-    {
-      workflow_template_id: "eng_leave",
-      title: "Eng Overseas Leave",
-      one_liner: "Travel overseas as an Engineering undergraduate.",
-      score: 0.79,
-    },
-  ]);
+  const overviews = await bed.service.catalogue(bed.userIdOf(KAVINDU));
+
+  assert.deepEqual(overviews.map((overview) => overview.workflow_template_id), [IT_LEAVE_ID]);
+  assert.equal(bed.selector.requests.length, 0);
+  assert.equal(bed.retrieval.queries.length, 0);
 });
 
-test("an empty candidate list still creates a session and reports no_match", async () => {
-  const sessionModel = new FakeSelectionSessionModel();
-  const service = build({
-    retrievalService: fakeRetrievalService([]),
-    selectorService: fakeSelectorService(NO_MATCH),
-    sessionModel,
-  });
+test("the message limit is enforced", async () => {
+  const bed = await createSelectionTestbed({ maxRounds: 100 });
+  bed.selector.enqueue(...Array.from({ length: 20 }, () => selectorDecision({ decision: SelectionDecisionKind.AMBIGUOUS, workflow_template_id: null, question: "?" })));
+  const started = await bed.service.start(bed.userIdOf(KAVINDU), "a");
+  const sessionId = String(started.session._id);
+  for (let index = 0; index < 9; index++) await bed.service.postMessage(sessionId, bed.userIdOf(KAVINDU), "b");
 
-  const out = await service.start("something nobody has a process for");
-  assert.equal(out.decision, "no_match");
-  assert.deepEqual(out.candidates, []);
-  assert.equal((await sessionModel.findById(out.session_id))?.outcome, "no_match");
-});
-
-test("institutionType is passed through to the retriever", async () => {
-  const retrievalService = fakeRetrievalService();
-  const service = build({
-    retrievalService,
-    selectorService: fakeSelectorService(MATCHED),
-    sessionModel: new FakeSelectionSessionModel(),
-  });
-
-  await service.start("IT overseas leave", { institutionType: "university" });
-  assert.equal(retrievalService.calls[0]?.options.institutionType, "university");
-});
-
-test("getMatchedWorkflowTemplateId throws a ConflictError before a match exists", async () => {
-  const service = build({
-    retrievalService: fakeRetrievalService(),
-    selectorService: fakeSelectorService(AMBIGUOUS),
-    sessionModel: new FakeSelectionSessionModel(),
-  });
-
-  const started = await service.start("I want overseas leave");
-  await assert.rejects(() => service.getMatchedWorkflowTemplateId(started.session_id), ConflictError);
-  await assert.rejects(() => service.getMatchedWorkflowTemplate(started.session_id), ConflictError);
-});
-
-test("getMatchedWorkflowTemplateId returns the matched workflow template id after a match", async () => {
-  const service = build({
-    retrievalService: fakeRetrievalService(),
-    selectorService: fakeSelectorService(MATCHED),
-    sessionModel: new FakeSelectionSessionModel(),
-  });
-
-  const started = await service.start("I want IT overseas leave");
-  assert.equal(await service.getMatchedWorkflowTemplateId(started.session_id), "it_leave");
-});
-
-test("getMatchedWorkflowTemplate returns the published definition of the matched workflow template", async () => {
-  const published = {
-    version: 2,
-    definition: { title: "IT Overseas Leave" },
-  } as unknown as PublishedWorkflowDefinition;
-  const service = build({
-    retrievalService: fakeRetrievalService(),
-    selectorService: fakeSelectorService(MATCHED),
-    sessionModel: new FakeSelectionSessionModel(),
-    workflowTemplateService: fakeWorkflowTemplateService({ it_leave: published }),
-  });
-
-  const started = await service.start("I want IT overseas leave");
-  assert.deepEqual(await service.getMatchedWorkflowTemplate(started.session_id), published);
+  await assert.rejects(bed.service.postMessage(sessionId, bed.userIdOf(KAVINDU), "c"), withErrorCode(SelectionErrorCode.SELECTION_SESSION_LIMIT_REACHED));
 });

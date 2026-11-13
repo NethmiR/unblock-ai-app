@@ -12,7 +12,9 @@ unblock-ai-api/
 │  ├─ routes/
 │  │  ├─ index.route.ts               # mounts every route group under /api
 │  │  ├─ workflow-template.route.ts   # /workflow-templates: draft, generate, publish, archive, versions
-│  │  ├─ selection.route.ts
+│  │  ├─ selection.route.ts           # /selection: sessions, messages, choose, catalogue
+│  │  ├─ task.route.ts                # /tasks: create, list, get, forms, cancel, delete, transcript
+│  │  ├─ approval.route.ts            # /approvals/:token: approver view and decision (no session)
 │  │  ├─ auth.route.ts                # login, me, logout
 │  │  ├─ user-session.route.ts        # list / revoke own sessions under /auth/sessions
 │  │  ├─ user.route.ts                # user management (user:manage)
@@ -23,6 +25,9 @@ unblock-ai-api/
 │  ├─ controllers/
 │  │  ├─ workflow-template.controller.ts
 │  │  ├─ selection.controller.ts
+│  │  ├─ task.controller.ts
+│  │  ├─ task-form.controller.ts      # form draft and submit
+│  │  ├─ approval.controller.ts
 │  │  ├─ auth.controller.ts
 │  │  ├─ user-session.controller.ts
 │  │  ├─ user.controller.ts
@@ -36,7 +41,21 @@ unblock-ai-api/
 │  │  ├─ embedding.service.ts
 │  │  ├─ retrieval.service.ts
 │  │  ├─ selector.service.ts
-│  │  ├─ selection.service.ts
+│  │  ├─ selection.service.ts         # ephemeral owned sessions, eligibility, round budget, catalogue
+│  │  ├─ requester-profile.service.ts # memberships, designations, actor types, profile facts (no AI)
+│  │  ├─ organisation-catalogue.service.ts # active units and designations snapshot
+│  │  ├─ assignee-resolution.service.ts # resolves every step assignee through the registry
+│  │  ├─ assignee-resolution/         # IAssigneeResolver strategies: directory, requester, system + registry
+│  │  ├─ task.service.ts              # create, read, list, cancel, delete
+│  │  ├─ task-plan.service.ts         # pinned definition + resolutions -> pure compiler
+│  │  ├─ task-form.service.ts         # draft and submit
+│  │  ├─ task-engine.service.ts       # pure state machine, returns TaskEffect[]
+│  │  ├─ task-transition.service.ts   # engine context, revision-checked commit, then effects
+│  │  ├─ task-effect-executor.service.ts # approval tokens, emails, notified_at
+│  │  ├─ approval.service.ts          # token-based approver view and decisions
+│  │  ├─ notification.service.ts      # approval, requester and completion emails; never throws
+│  │  ├─ task-transcript.service.ts   # transcript PDF on demand
+│  │  ├─ audit.service.ts
 │  │  ├─ validation.service.ts
 │  │  ├─ authentication.service.ts    # login, token -> AuthContext, logout, lockout
 │  │  ├─ user-session.service.ts      # issue, list, revoke server-side sessions
@@ -48,12 +67,15 @@ unblock-ai-api/
 │  │  │  ├─ llm-adapter.interface.ts
 │  │  │  ├─ azure-openai.llm-adapter.ts
 │  │  │  ├─ gemini.llm-adapter.ts
+│  │  │  ├─ usage-logging.llm-adapter.ts # decorator: logs token usage per LlmOperation
 │  │  │  └─ index.llm-adapter.ts
 │  │  ├─ embedding-adapter/
 │  │  │  ├─ embedding-adapter.interface.ts
 │  │  │  ├─ azure-openai.embedding-adapter.ts
 │  │  │  ├─ gemini.embedding-adapter.ts
 │  │  │  └─ index.embedding-adapter.ts
+│  │  ├─ document/                    # IDocumentRenderer: pdf, text
+│  │  ├─ mailer/                      # IMailer: console, brevo
 │  │  └─ vector-store/
 │  │     ├─ vector-store.interface.ts
 │  │     ├─ in-memory.vector-store.ts
@@ -73,7 +95,9 @@ unblock-ai-api/
 │  ├─ models/
 │  │  ├─ workflow-template.model.ts   # workflow_templates: list, update, retrieval queries, vector search
 │  │  ├─ workflow-template-version.model.ts # workflow_template_versions: immutable versions
-│  │  ├─ selection-session.model.ts
+│  │  ├─ selection-session.model.ts   # selection_sessions: owned, TTL on expires_at
+│  │  ├─ task.model.ts                # tasks: optimistic revision, approval token hash lookup
+│  │  ├─ audit-log.model.ts
 │  │  └─ index.model.ts
 │  ├─ config/
 │  │  ├─ env.config.ts
@@ -82,6 +106,10 @@ unblock-ai-api/
 │  │  ├─ embedding.config.ts
 │  │  ├─ workflow-template-generation.config.ts # WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS
 │  │  ├─ retrieval.config.ts
+│  │  ├─ selection.config.ts          # SELECTION_SESSION_TTL_HOURS, SELECTION_MAX_ROUNDS
+│  │  ├─ task.config.ts               # TASK_MAX_INFORMATION_REQUESTS_PER_STEP
+│  │  ├─ mail.config.ts
+│  │  ├─ document.config.ts
 │  │  ├─ server.config.ts
 │  │  ├─ postgres.config.ts
 │  │  ├─ auth.config.ts               # session TTL, lockout
@@ -117,6 +145,11 @@ unblock-ai-api/
 │  │  │  └─ email.util.ts
 │  │  ├─ workflow/
 │  │  │  ├─ graph-validator.util.ts
+│  │  │  ├─ catalogue-validator.util.ts # audience unit codes against the live catalogue
+│  │  │  ├─ definition-normaliser.util.ts # fills fields missing from legacy versions
+│  │  │  ├─ condition-evaluator.util.ts
+│  │  │  ├─ computed-evaluator.util.ts
+│  │  │  ├─ workflow-overview.util.ts # deterministic "More information" overview
 │  │  │  ├─ schema-validator.util.ts
 │  │  │  ├─ namespace-path.util.ts
 │  │  │  └─ build-workflow-template-generation-messages.util.ts
@@ -127,11 +160,21 @@ unblock-ai-api/
 │  │  │  ├─ alias-boost.util.ts
 │  │  │  ├─ render-summary.util.ts
 │  │  │  └─ retrieval-candidate.util.ts  # template retrieval row -> RetrievalCandidate
+│  │  ├─ requester/                   # profile facts, requester attributes, legacy input aliases
+│  │  ├─ selection/                   # candidate-eligibility.util.ts
+│  │  ├─ assignee/                    # assignee-context-unit.util.ts
+│  │  ├─ task/                        # plan compiler, field and step ids, form layout, field validator,
+│  │  │                               #   information request insertion, condition namespace, reference
+│  │  ├─ approval/                    # token.util.ts (sign, verify, hash)
+│  │  ├─ document/                    # task-transcript.util.ts, pdf-layout, document-format
 │  │  └─ http/
 │  │     ├─ request-validator.util.ts
 │  │     ├─ bearer-token.util.ts
 │  │     ├─ serializer.util.ts
-│  │     └─ workflow-template-serializer.util.ts
+│  │     ├─ workflow-template-serializer.util.ts
+│  │     ├─ selection-request.util.ts / selection-serializer.util.ts
+│  │     ├─ task-request.util.ts / task-serializer.util.ts
+│  │     └─ approval-serializer.util.ts
 │  ├─ data/
 │  │  ├─ prompts/
 │  │  │  ├─ workflow-template-generation.prompt.ts
@@ -140,12 +183,20 @@ unblock-ai-api/
 │  │  ├─ schemas/
 │  │  │  ├─ workflow.schema.json
 │  │  │  ├─ workflow-schema.data.ts
-│  │  │  └─ decision.schema.ts
+│  │  │  └─ selection-decision.schema.ts # selector structured-output schema
+│  │  ├─ templates/
+│  │  │  ├─ approval-email.template.ts
+│  │  │  └─ requester-notification.template.ts
 │  │  ├─ vocabulary/
 │  │  │  └─ role.vocabulary.ts
 │  │  ├─ constants/
 │  │  │  ├─ collection.constant.ts
-│  │  │  ├─ status.constant.ts
+│  │  │  ├─ task.constant.ts          # task and step statuses, kinds, outcomes, decisions, limits
+│  │  │  ├─ task-form.constant.ts     # form controls, widths, issue codes, value patterns
+│  │  │  ├─ requester.constant.ts     # requester attributes, input aliases, actor types by category
+│  │  │  ├─ assignee.constant.ts
+│  │  │  ├─ selection.constant.ts
+│  │  │  ├─ task-error.constant.ts / selection-error.constant.ts / approval-error.constant.ts
 │  │  │  ├─ workflow-template.constant.ts # statuses, title / prompt limits
 │  │  │  ├─ workflow-template-error.constant.ts
 │  │  │  ├─ ai-provider.constant.ts
@@ -175,10 +226,13 @@ unblock-ai-api/
 │  │     │  ├─ condition.type.ts
 │  │     │  └─ retrieval-summary.type.ts
 │  │     ├─ workflow-template/workflow-template.type.ts
-│  │     ├─ selection/
-│  │     │  ├─ session.type.ts
-│  │     │  ├─ decision.type.ts
-│  │     │  └─ candidate.type.ts
+│  │     ├─ selection/                # session, decision, candidate, eligibility, overview, DTOs
+│  │     ├─ requester/requester.type.ts
+│  │     ├─ organisation/organisation-catalogue.type.ts
+│  │     ├─ assignee/assignee-resolver.type.ts
+│  │     ├─ task/                     # document, form, value, plan, engine, DTOs
+│  │     ├─ approval/                 # approver view, decision DTOs, token, mail
+│  │     ├─ document/document.type.ts # TaskTranscript
 │  │     ├─ retrieval/retrieval.type.ts
 │  │     ├─ ai/llm.type.ts
 │  │     ├─ config/config.type.ts
@@ -195,9 +249,13 @@ unblock-ai-api/
 │  │  ├─ forbidden.error.ts
 │  │  ├─ not-found.error.ts
 │  │  ├─ conflict.error.ts
+│  │  ├─ gone.error.ts               # 410, expired approval links
 │  │  ├─ workflow-template-generation.error.ts
 │  │  ├─ workflow-template.error.ts  # factories for WORKFLOW_TEMPLATE_* codes
 │  │  ├─ selection.error.ts
+│  │  ├─ selection-session.error.ts  # factories for SELECTION_* codes
+│  │  ├─ task.error.ts               # factories for TASK_* codes
+│  │  ├─ approval.error.ts           # factories for APPROVAL_* codes
 │  │  ├─ embedding.error.ts
 │  │  ├─ database.error.ts
 │  │  ├─ configuration.error.ts
@@ -252,7 +310,7 @@ unblock-ai-api/
 
 **`src/controllers/`** — Parses and validates the HTTP request (params, query, body), calls one or more services, maps the service result to an HTTP status code and response body, and returns. Controllers never touch MongoDB, never call an AI adapter or provider SDK, and never contain domain rules. A controller throws typed errors from `src/errors/`; it never formats an error response itself.
 
-**`src/services/`** — Owns all business logic. A service performs DB access through its model, calls utils for pure computation, and calls external AI providers only through `ILlmAdapter` and `IEmbeddingAdapter`, never through a provider SDK directly. Each provider lives in one adapter file under `llm-adapter/` or `embedding-adapter/`, and the matching `create*Adapter` factory picks one from config. Services receive their collaborators through constructor injection, never by importing a concrete singleton. `workflow-template-generation.service.ts` only turns a prompt into a validated definition, `workflow-template.service.ts` owns the template lifecycle and versions, `embedding.service.ts` only embeds, `retrieval.service.ts` only ranks, `selector.service.ts` only makes one model decision, `selection.service.ts` only orchestrates the multi-round loop.
+**`src/services/`** — Owns all business logic. A service performs DB access through its model, calls utils for pure computation, and calls external AI providers only through `ILlmAdapter` and `IEmbeddingAdapter`, never through a provider SDK directly. Each provider lives in one adapter file under `llm-adapter/` or `embedding-adapter/`, and the matching `create*Adapter` factory picks one from config. Services receive their collaborators through constructor injection, never by importing a concrete singleton. `workflow-template-generation.service.ts` only turns a prompt into a validated definition, `workflow-template.service.ts` owns the template lifecycle and versions, `embedding.service.ts` only embeds, `retrieval.service.ts` only ranks, `selector.service.ts` only makes one model decision, `selection.service.ts` only orchestrates the conversation. The task side keeps the same split: `task-engine.service.ts` is a pure state machine that returns effects, `task-effect-executor.service.ts` performs them after a successful write, and `task-plan.service.ts` gathers I/O for the pure compiler in `utils/task/`.
 
 **`src/repositories/`** — Data access for the PostgreSQL tables. One folder per aggregate (`user-repository/`, `user-session-repository/`, `organisational-unit-repository/`, `designation-repository/`, `user-affiliation-repository/`), each holding an interface, a Postgres implementation, an in-memory implementation and an `index` factory that picks one from `POSTGRES_REPOSITORY_BACKEND` (`postgres` | `memory`). Repositories contain no business rules — permission validation, password hashing, lockout policy and affiliation rules live in services. Repositories only map database constraint violations (the backstop for those rules) to the same typed errors. `repository-registry.factory.ts` builds every repository for one backend; on `memory` the organisation repositories and the user repository share one `InMemoryOrganisationStore`, so services under test see the same world the Postgres joins give them.
 

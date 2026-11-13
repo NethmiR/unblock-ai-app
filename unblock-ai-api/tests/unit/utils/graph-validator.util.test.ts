@@ -91,3 +91,62 @@ test("detects context_from_steps referencing an undeclared response field", () =
   const errors = validateGraph(workflow);
   assert(errors.some((e) => e.includes("unknown path 'steps.hall_booking.response.room_layout'")));
 });
+
+function addRequesterFormStep(workflow: ReturnType<typeof loadExpectedFixture>, collects: string[]): void {
+  const base = workflow.steps[0]!;
+  workflow.steps.push({
+    ...base,
+    id: "travel_documents",
+    type: "data_collection",
+    assignee: { resolution: "requester", role: null, relative_to: null, directory_query: null, fallback_role: null, display_name: null },
+    depends_on: [{ step_id: base.id, required_outcome: "approved" }],
+    collects_inputs: collects,
+  });
+}
+
+test("a requester data_collection step may collect requester inputs", () => {
+  const workflow = loadExpectedFixture("it_faculty_overseas_leave.json");
+  addRequesterFormStep(workflow, ["destination_city"]);
+
+  assert.deepEqual(validateGraph(workflow), []);
+});
+
+test("collects_inputs rejects unknown inputs and inputs listed twice", () => {
+  const workflow = loadExpectedFixture("it_faculty_overseas_leave.json");
+  addRequesterFormStep(workflow, ["passport_number", "destination_city", "destination_city"]);
+
+  const errors = validateGraph(workflow);
+  assert(errors.some((e) => e.includes("unknown input 'passport_number'")));
+  assert(errors.some((e) => e.includes("Input 'destination_city' is collected by both")));
+});
+
+test("collects_inputs rejects inputs not collected from the requester", () => {
+  const workflow = loadExpectedFixture("it_faculty_overseas_leave.json");
+  workflow.inputs[0]!.collected_from = { ...workflow.inputs[0]!.collected_from, resolution: "system" };
+  addRequesterFormStep(workflow, [workflow.inputs[0]!.id]);
+
+  assert(validateGraph(workflow).some((e) => e.includes("not collected from the requester")));
+});
+
+test("collects_inputs must be empty on steps that are not requester data_collection steps", () => {
+  const workflow = loadExpectedFixture("it_faculty_overseas_leave.json");
+  workflow.steps[0]!.collects_inputs = ["destination_city"];
+
+  assert(validateGraph(workflow).some((e) => e.includes("is not a data_collection step assigned to the requester")));
+});
+
+test("requester paths must name a requester attribute", () => {
+  const workflow = loadExpectedFixture("it_faculty_overseas_leave.json");
+  const condition = {
+    operator: "equals" as const,
+    left: "requester.faculty",
+    right: "Faculty of Information Technology",
+    clauses: [],
+    description: null,
+  };
+  workflow.steps[2]!.condition = condition;
+  assert.deepEqual(validateGraph(workflow), []);
+
+  workflow.steps[2]!.condition = { ...condition, left: "requester.index_number" };
+  assert(validateGraph(workflow).some((e) => e.includes("unknown path 'requester.index_number'")));
+});

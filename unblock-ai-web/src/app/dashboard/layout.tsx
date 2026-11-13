@@ -1,4 +1,5 @@
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
+import { PageHeadingProvider } from "@/components/providers/PageHeadingProvider";
 import { SessionProvider } from "@/components/providers/SessionProvider";
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { requireSession } from "@/lib/auth/session";
@@ -16,9 +17,11 @@ export default async function DashboardLayout({ children }: LayoutProps<"/dashbo
 
   return (
     <SessionProvider session={session}>
-      <ToastProvider>
-        <DashboardShell>{children}</DashboardShell>
-      </ToastProvider>
+      <PageHeadingProvider>
+        <ToastProvider>
+          <DashboardShell>{children}</DashboardShell>
+        </ToastProvider>
+      </PageHeadingProvider>
     </SessionProvider>
   );
 }

@@ -1,4 +1,5 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { AssigneeSourceBadge } from "./AssigneeSourceBadge";
 import type { FlowNodeData } from "@/lib/workflow/toFlowGraph";
 
 export function ConditionNode({ data }: NodeProps<Node<FlowNodeData, "condition">>) {
@@ -9,6 +10,7 @@ export function ConditionNode({ data }: NodeProps<Node<FlowNodeData, "condition"
         {data.eyebrow}
       </div>
       <div className="text-sm font-semibold text-ink">{data.label}</div>
+      <AssigneeSourceBadge source={data.assigneeSource} />
       <Handle type="source" position={Position.Bottom} className="!bg-transparent !border-0" />
     </div>
   );

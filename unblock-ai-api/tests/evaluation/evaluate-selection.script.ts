@@ -3,16 +3,13 @@ import { InMemoryVectorStore } from "../../src/services/vector-store/in-memory.v
 import { RetrievalService } from "../../src/services/retrieval.service.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { SelectorService } from "../../src/services/selector.service.js";
-import { LlmMessageRole } from "../../src/data/constants/llm.constant.js";
+import { createLlmAdapters } from "../../src/services/llm-adapter/index.llm-adapter.js";
+import { config } from "../../src/config/index.config.js";
+import { LlmMessageRole, LlmOperation } from "../../src/data/constants/llm.constant.js";
+import { SelectionDecisionKind } from "../../src/data/constants/selection.constant.js";
 import { buildFixtureRetrievalReader } from "../helpers/fixture-retrieval-corpus.helper.js";
-
-interface EvaluationCase {
-  query: string;
-  expect: string;
-  expect_workflow?: string;
-  expect_in_candidates?: string[];
-  note?: string;
-}
+import { buildOrganisationCatalogue, sampleRequesterProfile } from "../helpers/organisation-catalogue.helper.js";
+import { eligibleFixtureCandidates, type SelectionEvaluationCase } from "../helpers/selection-evaluation.helper.js";
 
 interface EvaluationRow {
   query: string;
@@ -29,12 +26,13 @@ function pct(n: number, d: number): string {
 
 const cases = JSON.parse(
   await readFile("src/data/samples/selection/queries.json", "utf8"),
-) as EvaluationCase[];
+) as SelectionEvaluationCase[];
 
 const embeddingService = new EmbeddingService();
 const vectorStore = new InMemoryVectorStore({ retrievalReader: await buildFixtureRetrievalReader(embeddingService) });
 const retrievalService = new RetrievalService({ vectorStore, embeddingService });
-const selectorService = new SelectorService();
+const selectorService = new SelectorService({ llmAdapter: createLlmAdapters(config.llm)[LlmOperation.WORKFLOW_SELECTION] });
+const catalogue = buildOrganisationCatalogue();
 
 let recallHits = 0;
 let recallTotal = 0;
@@ -54,7 +52,17 @@ for (const c of cases) {
     recall = hit ? "HIT" : "MISS";
   }
 
-  const decision = await selectorService.decide(candidates, [{ role: LlmMessageRole.USER, text: c.query }]);
+  const profile = sampleRequesterProfile(c.requester, catalogue);
+  const eligible = eligibleFixtureCandidates(candidates, profile, catalogue);
+  const decision =
+    eligible.length === 0
+      ? { decision: SelectionDecisionKind.NO_MATCH, workflow_template_id: null }
+      : await selectorService.decide({
+          candidates: eligible,
+          transcript: [{ role: LlmMessageRole.USER, text: c.query }],
+          facts: profile.facts,
+          matchedWorkflowTemplateId: null,
+        });
   const correct =
     decision.decision === c.expect && (!c.expect_workflow || decision.workflow_template_id === c.expect_workflow);
   if (correct) decisionHits++;

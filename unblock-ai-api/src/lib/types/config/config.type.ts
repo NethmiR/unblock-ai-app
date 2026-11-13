@@ -1,4 +1,5 @@
 import type { AiProvider } from "../../../data/constants/ai-provider.constant.js";
+import type { LlmOperation } from "../../../data/constants/llm.constant.js";
 import type { RepositoryBackend } from "../../../data/constants/repository.constant.js";
 
 export interface ServerConfig {
@@ -46,7 +47,9 @@ export type EmbeddingProviderConnectionConfig =
   | AiProviderConnectionConfig
   | { provider: AiProvider.VOYAGE_AI; voyageAI: VoyageAIConnectionConfig };
 
-export type LlmConfig = AiProviderConnectionConfig;
+export type LlmOperationModels = Partial<Record<LlmOperation, string>>;
+
+export type LlmConfig = AiProviderConnectionConfig & { operationModels: LlmOperationModels };
 
 export type EmbeddingConfig = { dimensions: number } & EmbeddingProviderConnectionConfig;
 
@@ -57,9 +60,18 @@ export interface WorkflowTemplateGenerationConfig {
 export interface RetrievalConfig {
   topK: number;
   aliasBoost: number;
-  maxSelectionRounds: number;
+  minScore: number;
   vectorBackend: "memory" | "atlas";
   atlasIndexName: string;
+}
+
+export interface SelectionConfig {
+  sessionTtlHours: number;
+  maxRounds: number;
+}
+
+export interface TaskConfig {
+  maxInformationRequestsPerStep: number;
 }
 
 export interface MailConfig {
@@ -103,6 +115,8 @@ export interface AppConfig {
   embedding: EmbeddingConfig;
   workflowTemplateGeneration: WorkflowTemplateGenerationConfig;
   retrieval: RetrievalConfig;
+  selection: SelectionConfig;
+  task: TaskConfig;
   mail: MailConfig;
   auth: AuthConfig;
   user: UserConfig;

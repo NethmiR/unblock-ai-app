@@ -1,313 +1,203 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { TaskController } from "../../src/controllers/task.controller.js";
-import { ConflictError } from "../../src/errors/conflict.error.js";
-import { ValidationError } from "../../src/errors/validation.error.js";
-import { NotFoundError } from "../../src/errors/not-found.error.js";
-import { TASK_STATUS, REQUIREMENT_STATUS } from "../../src/data/constants/status.constant.js";
-import {
-  authHeaderFor,
-  TestIdentity,
-  createTestControllers,
-  startTestServer,
-  TEST_USERS,
-  type TestServer,
-} from "../helpers/test-server.helper.js";
-import { AuthErrorCode } from "../../src/data/constants/auth.constant.js";
-import type { SelectionService } from "../../src/services/selection.service.js";
-import type { TaskService } from "../../src/services/task.service.js";
-import type { TaskDocument, NextRequirementDto } from "../../src/lib/types/task/task.type.js";
-import type { RenderedDocument } from "../../src/lib/types/document/document.type.js";
+import { TaskFormController } from "../../src/controllers/task-form.controller.js";
+import { createRequireTaskOwnership } from "../../src/middlewares/require-task-ownership.middleware.js";
+import { TaskService } from "../../src/services/task.service.js";
+import { FormFieldIssueCode, FormSectionKind, TaskFormStatus } from "../../src/data/constants/task-form.constant.js";
+import { TaskErrorCode } from "../../src/data/constants/task-error.constant.js";
+import { WorkflowTemplateErrorCode } from "../../src/data/constants/workflow-template-error.constant.js";
+import { TaskCreationSource, TaskStatus, TaskStepStatus } from "../../src/data/constants/task.constant.js";
+import { createTestAuthentication, createTestControllers, startTestServer, TEST_USERS, TestIdentity, type TestServer } from "../helpers/test-server.helper.js";
+import { HttpMethod, readJson, sendJson } from "../helpers/http-request.helper.js";
+import { ENG_LEAVE_ID, IT_LEAVE_ID } from "../helpers/selection-testbed.helper.js";
+import { createTaskTestbed, ENTRY_FORM_ID, leaveEntryValues, type TaskTestbed } from "../helpers/task-testbed.helper.js";
+import type { ErrorResponseBody } from "../../src/lib/types/http/http.type.js";
+import type { FormFieldIssueDto, TaskDto, TaskListResponseDto } from "../../src/lib/types/task/task-dto.type.js";
 
-function fakeTask(overrides: Partial<TaskDocument> = {}): TaskDocument {
-  return {
-    _id: "64b64b64b64b64b64b64b64" as unknown as TaskDocument["_id"],
-    reference: "TASK-2026-00001",
-    session_id: "s1",
-    created_by: "user-1",
-    workflow_template_id: "6a3d2c1b-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
-    workflow_template_version: 1,
-    status: TASK_STATUS.COLLECTING,
-    requirements: [],
-    values: {},
-    steps: [],
-    audit: [],
-    completion_document: null,
-    created_at: new Date(),
-    updated_at: new Date(),
-    ...overrides,
-  };
-}
+const KAVINDU = TestIdentity.TASK_CREATOR;
+const HASITHA = TestIdentity.ADMINISTRATOR;
 
-interface FakeTaskServiceOptions {
-  createResult?: TaskDocument;
-  createError?: Error;
-  nextResult?: NextRequirementDto;
-  setValueError?: Error;
-  finalizeError?: Error;
-  documentResult?: RenderedDocument;
-  documentError?: Error;
-  listResult?: TaskDocument[];
-  onList?: (filters: { created_by?: string; session_id?: string; status?: string }) => void;
-}
-
-function fakeTaskService(options: FakeTaskServiceOptions = {}): TaskService {
-  return {
-    create() {
-      if (options.createError) return Promise.reject(options.createError);
-      return Promise.resolve(options.createResult ?? fakeTask());
-    },
-    get() {
-      return Promise.resolve(fakeTask());
-    },
-    nextRequirement() {
-      return Promise.resolve(options.nextResult ?? { requirement: null, complete: true });
-    },
-    setValue() {
-      if (options.setValueError) return Promise.reject(options.setValueError);
-      return Promise.resolve(fakeTask());
-    },
-    finalize() {
-      if (options.finalizeError) return Promise.reject(options.finalizeError);
-      return Promise.resolve(fakeTask({ status: TASK_STATUS.READY }));
-    },
-    cancel() {
-      return Promise.resolve(fakeTask({ status: TASK_STATUS.CANCELLED }));
-    },
-    list(filters: { created_by?: string; session_id?: string; status?: string }) {
-      options.onList?.(filters);
-      return Promise.resolve(options.listResult ?? []);
-    },
-    getDocument() {
-      if (options.documentError) return Promise.reject(options.documentError);
-      return Promise.resolve(
-        options.documentResult ?? {
-          buffer: Buffer.from("%PDF-fake", "utf8"),
-          filename: "TASK-2026-00001-record.pdf",
-          contentType: "application/pdf",
-          byteSize: 9,
-          sha256: "fake-sha256",
-        },
-      );
-    },
-  } as unknown as TaskService;
-}
-
-async function buildServer(taskService: TaskService): Promise<TestServer> {
-  const controllers = createTestControllers({ taskController: new TaskController({ taskService }) });
-
-  return startTestServer(controllers);
-}
-
-test("POST /api/tasks rejects a missing session_id", async () => {
-  const server = await buildServer(fakeTaskService());
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({}),
-    });
-    assert.equal(res.status, 400);
-  } finally {
-    await server.close();
-  }
-});
-
-test("POST /api/tasks on an unmatched session returns 409", async () => {
-  const server = await buildServer(
-    fakeTaskService({ createError: new ConflictError("This session has not matched a workflow yet") }),
-  );
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({ session_id: "s1" }),
-    });
-    assert.equal(res.status, 409);
-  } finally {
-    await server.close();
-  }
-});
-
-test("POST /api/tasks happy path returns 201 with id, reference, and status", async () => {
-  const server = await buildServer(fakeTaskService({ createResult: fakeTask() }));
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({ session_id: "s1" }),
-    });
-    assert.equal(res.status, 201);
-    const body = (await res.json()) as { id: string; reference: string; status: string };
-    assert.ok(body.id);
-    assert.equal(body.reference, "TASK-2026-00001");
-    assert.equal(body.status, "collecting");
-  } finally {
-    await server.close();
-  }
-});
-
-test("GET /api/tasks forces created_by to the caller's own id, ignoring any client-supplied value", async () => {
-  let receivedFilters: { created_by?: string; session_id?: string; status?: string } | undefined;
-  const server = await buildServer(fakeTaskService({ onList: (filters) => (receivedFilters = filters) }));
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks?created_by=someone-else`, {
-      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
-    });
-    assert.equal(res.status, 200);
-    assert.equal(receivedFilters?.created_by, TEST_USERS[TestIdentity.TASK_CREATOR].id);
-  } finally {
-    await server.close();
-  }
-});
-
-test("GET /api/tasks for an administrator is still scoped to the caller", async () => {
-  let receivedFilters: { created_by?: string; session_id?: string; status?: string } | undefined;
-  const server = await buildServer(fakeTaskService({ onList: (filters) => (receivedFilters = filters) }));
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks`, { headers: authHeaderFor(TestIdentity.ADMINISTRATOR) });
-    assert.equal(res.status, 200);
-    assert.equal(receivedFilters?.created_by, TEST_USERS[TestIdentity.ADMINISTRATOR].id);
-  } finally {
-    await server.close();
-  }
-});
-
-test("GET /api/tasks without task:create returns 403 PERMISSION_DENIED", async () => {
-  const server = await buildServer(fakeTaskService({}));
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks`, { headers: authHeaderFor(TestIdentity.WORKFLOW_MANAGER) });
-    assert.equal(res.status, 403);
-    assert.equal(((await res.json()) as { code: string }).code, AuthErrorCode.PERMISSION_DENIED);
-  } finally {
-    await server.close();
-  }
-});
-
-test("GET /api/tasks/:id/next returns 200 with a requirement", async () => {
-  const requirement = {
-    key: "departure_date",
-    source: "input" as const,
-    ref: "departure_date",
-    label: "Departure Date",
-    description: null,
-    type: "date" as const,
-    required: true,
-    validation: null,
-    collection_hint: null,
-    status: REQUIREMENT_STATUS.PENDING,
-  };
-  const server = await buildServer(fakeTaskService({ nextResult: { requirement, complete: false } }));
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/next`, {
-      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
-    });
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as { requirement: { key: string } | null; complete: boolean };
-    assert.equal(body.requirement?.key, "departure_date");
-    assert.equal(body.complete, false);
-  } finally {
-    await server.close();
-  }
-});
-
-test("POST /api/tasks/:id/values rejects a missing key", async () => {
-  const server = await buildServer(fakeTaskService());
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/values`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({ value: "2026-09-01" }),
-    });
-    assert.equal(res.status, 400);
-  } finally {
-    await server.close();
-  }
-});
-
-test("POST /api/tasks/:id/finalize with unfilled requirements returns 400", async () => {
-  const server = await buildServer(
-    fakeTaskService({
-      finalizeError: new ValidationError("Task is missing required values: departure_date"),
+async function withServer(run: (server: TestServer, bed: TaskTestbed) => Promise<void>): Promise<void> {
+  const bed = await createTaskTestbed({
+    userNames: new Map([
+      [TEST_USERS[KAVINDU].id, "Kavindu Jayawardena"],
+      [TEST_USERS[HASITHA].id, "Hasitha Dissanayake"],
+    ]),
+  });
+  const serialization = { documentsEnabled: true, isDeletable: TaskService.isDeletable };
+  const server = await startTestServer(
+    createTestControllers({
+      taskController: new TaskController({ taskService: bed.taskService, serialization, transcriptService: { renderForTask: async () => null } }),
+      taskFormController: new TaskFormController({ taskFormService: bed.taskFormService, serialization }),
     }),
+    {
+      authenticationService: createTestAuthentication().authenticationService,
+      routeGuards: { requireTaskOwnership: createRequireTaskOwnership({ taskService: bed.taskService }) },
+    },
   );
   try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/finalize`, {
-      method: "POST",
-      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
-    });
-    assert.equal(res.status, 400);
+    await run(server, bed);
   } finally {
     await server.close();
   }
+}
+
+async function createFromCatalogue(server: TestServer, identity: TestIdentity = KAVINDU, workflowTemplateId = IT_LEAVE_ID): Promise<Response> {
+  return sendJson(server.baseUrl, HttpMethod.POST, "/tasks", identity, { source: TaskCreationSource.CATALOGUE, workflow_template_id: workflowTemplateId });
+}
+
+test("POST /tasks from a matched session returns the entry form with locked details and directory approvers", async () => {
+  await withServer(async (server, bed) => {
+    const sessionId = await bed.matchedSession(TEST_USERS[KAVINDU].id);
+
+    const response = await sendJson(server.baseUrl, HttpMethod.POST, "/tasks", KAVINDU, {
+      source: TaskCreationSource.SELECTION_SESSION,
+      selection_session_id: sessionId,
+    });
+
+    assert.equal(response.status, 201);
+    const task = await readJson<TaskDto>(response);
+    const entry = task.forms[0]!;
+    const details = entry.sections.find((section) => section.kind === FormSectionKind.REQUESTER_DETAILS)!.fields;
+    assert.deepEqual(details.slice(0, 2).map((field) => [field.id, field.locked, field.value]), [
+      ["requester.full_name", true, "Kavindu Jayawardena"],
+      ["requester.email", true, "u17@u.c"],
+    ]);
+    assert.ok(entry.sections.find((section) => section.kind === FormSectionKind.APPROVER_DETAILS)?.fields.some((field) => field.id === "assignees.advisor_review"));
+    assert.equal(task.steps.find((step) => step.id === "hod_review")?.assignee?.full_name, "Dinesh Wijesinghe");
+    assert.equal(task.steps.find((step) => step.id === "dean_review")?.assignee?.full_name, "Sunethra Ratnayake");
+    assert.equal(entry.editable, true);
+    assert.equal(entry.submittable, true);
+    assert.deepEqual(task.progress, { completed: 0, total: 4, current_step_ids: ["entry_form"] });
+  });
 });
 
-test("PATCH /api/tasks/:id/status rejects a bad status", async () => {
-  const server = await buildServer(fakeTaskService());
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/status`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", ...authHeaderFor(TestIdentity.TASK_CREATOR) },
-      body: JSON.stringify({ status: "completed" }),
-    });
-    assert.equal(res.status, 400);
-  } finally {
-    await server.close();
-  }
+test("POST /tasks from the catalogue rejects an ineligible template with 403", async () => {
+  await withServer(async (server) => {
+    assert.equal((await createFromCatalogue(server)).status, 201);
+
+    const response = await createFromCatalogue(server, KAVINDU, ENG_LEAVE_ID);
+
+    assert.equal(response.status, 403);
+    assert.equal((await readJson<ErrorResponseBody>(response)).code, WorkflowTemplateErrorCode.WORKFLOW_TEMPLATE_NOT_ELIGIBLE);
+  });
 });
 
-test("GET /api/tasks/:id/document returns the PDF with the right headers", async () => {
-  const server = await buildServer(fakeTaskService());
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
-      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
-    });
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get("content-type"), "application/pdf");
-    assert.match(res.headers.get("content-disposition") ?? "", /attachment; filename="TASK-2026-00001-record\.pdf"/);
-    const body = Buffer.from(await res.arrayBuffer());
-    assert.match(body.toString("latin1"), /^%PDF-/);
-  } finally {
-    await server.close();
-  }
+test("draft saves accept partial values and report field issues", async () => {
+  await withServer(async (server) => {
+    const task = await readJson<TaskDto>(await createFromCatalogue(server));
+    const path = `/tasks/${task.id}/forms/${ENTRY_FORM_ID}/draft`;
+
+    const partial = await sendJson(server.baseUrl, HttpMethod.PUT, path, KAVINDU, { values: { "inputs.destination_country": "Japan" } });
+    const invalid = await sendJson(server.baseUrl, HttpMethod.PUT, path, KAVINDU, { values: { "inputs.departure_date": "soon" } });
+
+    assert.equal(partial.status, 200);
+    const saved = await readJson<TaskDto>(partial);
+    assert.equal(saved.forms[0]!.sections.flatMap((section) => section.fields).find((field) => field.id === "inputs.destination_country")?.value, "Japan");
+    assert.equal(invalid.status, 400);
+    const body = await readJson<ErrorResponseBody>(invalid);
+    assert.equal(body.code, TaskErrorCode.TASK_FORM_INVALID);
+    assert.deepEqual((body.details as { issues: FormFieldIssueDto[] }).issues.map((issue) => issue.code), [FormFieldIssueCode.INVALID_DATE]);
+  });
 });
 
-test("GET /api/tasks/:id/document on a task not yet completed returns 409", async () => {
-  const server = await buildServer(
-    fakeTaskService({
-      documentError: new ConflictError("A record is only issued once every step is approved"),
-    }),
-  );
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
-      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
+test("a form whose step has not started accepts drafts but not submission", async () => {
+  await withServer(async (server, bed) => {
+    const created = await readJson<TaskDto>(await createFromCatalogue(server));
+    const stored = bed.taskModel.tasks.get(created.id)!;
+    bed.taskModel.tasks.set(created.id, {
+      ...stored,
+      forms: [...stored.forms, { ...stored.forms[0]!, id: "later__form", step_id: "hod_review", status: TaskFormStatus.DRAFT }],
     });
-    assert.equal(res.status, 409);
-  } finally {
-    await server.close();
-  }
+
+    const draft = await sendJson(server.baseUrl, HttpMethod.PUT, `/tasks/${created.id}/forms/later__form/draft`, KAVINDU, { values: {} });
+    const submit = await sendJson(server.baseUrl, HttpMethod.POST, `/tasks/${created.id}/forms/later__form/submit`, KAVINDU, { values: {} });
+
+    assert.equal(draft.status, 200);
+    assert.equal(submit.status, 409);
+    assert.equal((await readJson<ErrorResponseBody>(submit)).code, TaskErrorCode.TASK_FORM_NOT_AWAITING_INPUT);
+  });
 });
 
-test("GET /api/tasks/:id/document for an unknown task returns 404", async () => {
-  const server = await buildServer(
-    fakeTaskService({ documentError: NotFoundError.of("Task", "64b64b64b64b64b64b64b64") }),
-  );
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`, {
-      headers: authHeaderFor(TestIdentity.TASK_CREATOR),
-    });
-    assert.equal(res.status, 404);
-  } finally {
-    await server.close();
-  }
+test("submitting the entry form dispatches the advisor with a stored hash and no token in the response", async () => {
+  await withServer(async (server, bed) => {
+    const created = await readJson<TaskDto>(await createFromCatalogue(server));
+
+    const response = await sendJson(server.baseUrl, HttpMethod.POST, `/tasks/${created.id}/forms/${ENTRY_FORM_ID}/submit`, KAVINDU, { values: leaveEntryValues() });
+
+    assert.equal(response.status, 200);
+    const raw = await response.text();
+    const task = JSON.parse(raw) as TaskDto;
+    assert.equal(task.steps.find((step) => step.id === "advisor_review")?.status, TaskStepStatus.AWAITING_APPROVER);
+    assert.ok(!raw.includes("token"));
+    assert.match(bed.taskModel.tasks.get(created.id)!.steps.find((step) => step.id === "advisor_review")!.approval!.token_hash ?? "", /^[0-9a-f]{64}$/);
+    assert.equal(task.forms[0]!.editable, false);
+    assert.equal(task.available_actions.can_delete, false);
+  });
 });
 
-test("GET /api/tasks/:id/document with no token returns 401", async () => {
-  const server = await buildServer(fakeTaskService());
-  try {
-    const res = await fetch(`${server.baseUrl}/api/tasks/64b64b64b64b64b64b64b64/document`);
-    assert.equal(res.status, 401);
-  } finally {
-    await server.close();
-  }
+test("a lost optimistic-concurrency race returns 409", async () => {
+  await withServer(async (server, bed) => {
+    const created = await readJson<TaskDto>(await createFromCatalogue(server));
+    const findById = bed.taskModel.findById.bind(bed.taskModel);
+    bed.taskModel.findById = async (id) => {
+      const found = await findById(id);
+      return found ? { ...found, revision: found.revision - 1 } : null;
+    };
+
+    const response = await sendJson(server.baseUrl, HttpMethod.PUT, `/tasks/${created.id}/forms/${ENTRY_FORM_ID}/draft`, KAVINDU, { values: {} });
+
+    assert.equal(response.status, 409);
+    assert.equal((await readJson<ErrorResponseBody>(response)).code, TaskErrorCode.TASK_REVISION_CONFLICT);
+  });
+});
+
+test("GET /tasks lists the caller's tasks with status filters and pagination", async () => {
+  await withServer(async (server) => {
+    const ids: string[] = [];
+    for (let index = 0; index < 3; index++) ids.push((await readJson<TaskDto>(await createFromCatalogue(server))).id);
+    await sendJson(server.baseUrl, HttpMethod.POST, `/tasks/${ids[0]}/cancel`, KAVINDU);
+
+    const page = await readJson<TaskListResponseDto>(await sendJson(server.baseUrl, HttpMethod.GET, "/tasks?status=in_progress&limit=1&offset=0", KAVINDU));
+    const all = await readJson<TaskListResponseDto>(await sendJson(server.baseUrl, HttpMethod.GET, "/tasks", KAVINDU));
+    const foreign = await readJson<TaskListResponseDto>(await sendJson(server.baseUrl, HttpMethod.GET, "/tasks", HASITHA));
+    const badLimit = await sendJson(server.baseUrl, HttpMethod.GET, "/tasks?limit=1000", KAVINDU);
+
+    assert.deepEqual(page.page, { total: 2, limit: 1, offset: 0 });
+    assert.equal(page.tasks.length, 1);
+    assert.equal(all.page.total, 3);
+    assert.equal(all.tasks[0]!.status, TaskStatus.CANCELLED);
+    assert.equal(all.tasks[1]!.current_steps[0]?.id, "entry_form");
+    assert.equal(foreign.page.total, 0);
+    assert.equal(badLimit.status, 400);
+  });
+});
+
+test("cancel and delete follow the dispatch rule, and other users get 404", async () => {
+  await withServer(async (server) => {
+    const fresh = await readJson<TaskDto>(await createFromCatalogue(server));
+    const live = await readJson<TaskDto>(await createFromCatalogue(server));
+    await sendJson(server.baseUrl, HttpMethod.POST, `/tasks/${live.id}/forms/${ENTRY_FORM_ID}/submit`, KAVINDU, { values: leaveEntryValues() });
+
+    assert.equal((await sendJson(server.baseUrl, HttpMethod.GET, `/tasks/${fresh.id}`, HASITHA)).status, 404);
+    assert.equal((await sendJson(server.baseUrl, HttpMethod.DELETE, `/tasks/${live.id}`, KAVINDU)).status, 409);
+    assert.equal((await sendJson(server.baseUrl, HttpMethod.DELETE, `/tasks/${fresh.id}`, KAVINDU)).status, 204);
+
+    const cancelled = await sendJson(server.baseUrl, HttpMethod.POST, `/tasks/${live.id}/cancel`, KAVINDU);
+    assert.equal((await readJson<TaskDto>(cancelled)).status, TaskStatus.CANCELLED);
+    assert.equal((await sendJson(server.baseUrl, HttpMethod.POST, `/tasks/${live.id}/cancel`, KAVINDU)).status, 409);
+    assert.equal((await sendJson(server.baseUrl, HttpMethod.DELETE, `/tasks/${live.id}`, KAVINDU)).status, 204);
+  });
+});
+
+test("GET /tasks/:id/workflow-definition returns the pinned definition", async () => {
+  await withServer(async (server) => {
+    const created = await readJson<TaskDto>(await createFromCatalogue(server));
+
+    const response = await sendJson(server.baseUrl, HttpMethod.GET, `/tasks/${created.id}/workflow-definition`, KAVINDU);
+
+    assert.equal(response.status, 200);
+    assert.equal((await readJson<{ definition: { title: string } }>(response)).definition.title, "IT Faculty Overseas Leave Approval");
+  });
 });

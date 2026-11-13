@@ -72,7 +72,7 @@ Two applications in one repository:
 | Project | Role | Stack | Port |
 |---|---|---|---|
 | [`unblock-ai-api/`](unblock-ai-api/) | Backend — workflow template generation, validation, versioned storage, retrieval, planning, execution, documents | Node 18+ · TypeScript 5.9 (strict) · Express 5 · MongoDB 7 · PostgreSQL 17 · Azure OpenAI | 3000 |
-| [`unblock-ai-web/`](unblock-ai-web/) | Frontend — dashboard (workflow template management, users, organisation), requester portal, approver decision page | Next.js 16.3 (App Router, RSC) · React 19.2 · Tailwind CSS v4 · React Flow | 3001 |
+| [`unblock-ai-web/`](unblock-ai-web/) | Frontend — dashboard (workflow template management, users, organisation, task request assistant, workspace and list), approver decision page | Next.js 16.3 (App Router, RSC) · React 19.2 · Tailwind CSS v4 · React Flow | 3001 |
 
 Roughly **8,100 lines** of backend source across 169 TypeScript files, and
 **6,700 lines** of frontend source across 89 files, backed by **63 backend test
@@ -107,7 +107,7 @@ to the model for repair — up to three attempts. See [§11.2](#112-the-workflow
 The selector agent may return `no_match` and stop. The generator may declare the
 input "not a workflow" and refuse. A round budget expires into a manual list. The
 system is designed to say "I don't know" rather than stretch to the nearest
-plausible answer. See [§5.6](#56-retrieval--the-selector-agent).
+plausible answer. See [§5.6](#56-selection--the-assistant-conversation).
 
 ## 1.4 Current maturity
 
@@ -172,12 +172,12 @@ Downstream of that compiled artifact, everything else becomes mechanical:
         |  retrieve + select  (embeddings + selector agent)
         v
    MATCHED TEMPLATE                    (the right program for this request)
-        |  compile  (planner -> requirement list)
+        |  compile  (directory-resolved approvers, forms, prefilled details; no AI)
         v
    TASK                                (the process instance)
-        |  collect -> finalize -> start -> decide -> advance
+        |  fill forms -> approvals -> decide (approve / reject / more information) -> advance
         v
-   COMPLETION RECORD                   (the receipt)
+   TRANSCRIPT                          (the receipt, rendered on demand)
 ```
 
 ## 2.3 Who uses it
@@ -185,15 +185,15 @@ Downstream of that compiled artifact, everything else becomes mechanical:
 | Persona | Surface | What they do |
 |---|---|---|
 | **Workflow manager** | `/dashboard/workflows` (signed in, holds `workflow:manage`) | Write a title and prompt, save it as a draft, generate or regenerate, inspect the flowchart, publish, rename, browse version history, archive and restore. |
-| **Requester** | `/portal` (signed in, holds `task:create`) | Describe a need in plain language, answer clarifying questions, fill requirements, submit, track status, download the record. |
+| **Requester** | `/dashboard/tasks/new`, `/dashboard/tasks` (signed in, holds `task:create`) | Describe a need in one sentence, start the matched task, fill step forms (drafts any time), answer information requests, track progress, download the transcript. |
 | **User manager** | `/api/users` (signed in, holds `user:manage`; no web screen yet) | Create users and grant them permissions. |
-| **Approver** | `/approvals/:token` (**no account**, token-authenticated) | Open a link from an email, see the request in context, approve / reject with a reason / ask for more information. |
+| **Approver** | `/approvals/:token` (**no account**, token-authenticated) | Open a link from an email, see the request in context, approve, reject or ask for more information, with a comment. |
 
 These personas are **permissions, not account types**. Everyone signs in at the same
 `/login` page with email and password and lands on `/dashboard`. One account may hold
 any combination of the permissions (`workflow:manage`, `task:create`, `task:approve`,
 `user:manage`, `organisation:manage`) — see [§5.1](#51-authentication--authorization).
-The older `/old/account` and `/old/portal` screens are still reachable by URL.
+The older `/old/account` screen is still reachable by URL; the old requester portal was removed.
 
 The approver having **no account at all** is a deliberate constraint that shapes the
 whole auth design — see [§12.2](#122-two-independent-authentication-mechanisms).
@@ -316,10 +316,10 @@ binding, and both `dynamic` and `static` actor resolution.
 | C | Workflow template generation | `workflow-template-generation.service` | [§5.3](#53-workflow-template-generation--prompt--workflow-json) |
 | D | Validation | `validation.service`, `graph-validator.util` | [§5.4](#54-validation--schema--graph) |
 | E | Versioned storage & embeddings | `workflow-template.service`, `embedding.service` | [§5.5](#55-versioned-template-storage--embeddings) |
-| F | Retrieval & selector agent | `retrieval.service`, `selector.service`, `selection.service` | [§5.6](#56-retrieval--the-selector-agent) |
-| G | Task planning | `planner.service`, `task.service` | [§5.7](#57-task-planning--requirement-collection) |
-| H | Approval execution | `execution.service`, `approval.service`, `notification.service` | [§5.8](#58-approval-execution) |
-| I | Completion documents | `completion-document.service`, `document/` | [§5.9](#59-completion-documents) |
+| F | Selection (assistant) | `requester-profile.service`, `retrieval.service`, `selector.service`, `selection.service` | [§5.6](#56-selection--the-assistant-conversation) |
+| G | Task plan and forms | `task.service`, `task-plan.service`, `task-form.service`, `task-engine.service`, `assignee-resolution/` | [§5.7](#57-task-plan-and-forms) |
+| H | Approvals | `approval.service`, `task-effect-executor.service`, `notification.service` | [§5.8](#58-approvals) |
+| I | Transcript | `task-transcript.service`, `document/` | [§5.9](#59-transcript) |
 | — | Task deletion audit | `audit.service` | [§5.10](#510-deletion-tracking-and-audit) |
 
 ## 3.3 Technology choices and why
@@ -392,8 +392,8 @@ The complete `src/` trees are in [Appendix A](#appendix-a--complete-source-tree)
 
 This is the single most important file in the repository. Everything upstream
 produces it and everything downstream consumes it. Changing it ripples into the
-workflow template generation prompt, the graph validator, the planner, the execution engine, the
-flowchart renderer, the completion document builder, and three test tiers at once.
+workflow template generation prompt, the graph validator, the task plan compiler, the task engine, the
+flowchart renderer, the transcript builder, and three test tiers at once.
 
 ## 4.1 Top-level shape
 
@@ -476,8 +476,8 @@ Each step declares its own preconditions:
 
 A step with no dependencies is an entry step. Two steps with the same single
 dependency run in parallel. A step that requires a specific outcome is gated. The
-execution engine ([§5.8](#58-approval-execution)) needs exactly one rule:
-*a blocked step whose every dependency has recorded its required outcome becomes ready.*
+task engine ([§5.7](#57-task-plan-and-forms)) needs exactly one rule:
+*an upcoming step whose every dependency is satisfied activates (or is skipped when its condition is false).*
 
 ## 4.3 Actors are roles, not people
 
@@ -866,8 +866,8 @@ its own `Authorization` header. The same-origin proxy Route Handler can.
 **`proxy.ts` is UX, not security.** It only checks that the cookie exists and
 otherwise redirects to `/login?next=…`; it cannot validate an opaque token. Real
 validation is the API: an expired, revoked or junk token makes `getSession()` return
-`null` and every guarded API call fail with `401`. Dashboard pages, `/old/account`
-and `/old/portal/jobs/new` redirect to `/login` when `getSession()` returns `null`.
+`null` and every guarded API call fail with `401`. Dashboard pages and `/old/account`
+redirect to `/login` when `getSession()` returns `null`.
 
 ### The `/old/account` page
 
@@ -876,7 +876,7 @@ permissions as badges, and their **active sessions** — device (user agent), si
 time and last activity, with the current session marked "This device". Actions: sign
 out any other single session, **sign out of other sessions**, and sign out.
 
-Sign-in now lands on `/dashboard`. `/old/account` and `/old/portal` are still
+Sign-in now lands on `/dashboard`. `/old/account` is still
 reachable by URL. The old `/admin` template screens have been removed; workflow
 template management lives at `/dashboard/workflows` ([§8.6](#86-the-workflow-template-editor)).
 
@@ -1075,442 +1075,201 @@ lifecycle.
 
 ---
 
-## 5.6 Retrieval & The Selector Agent
+## 5.6 Selection — The Assistant Conversation
 
-**Code:** [`src/services/retrieval.service.ts`](unblock-ai-api/src/services/retrieval.service.ts) ·
-[`src/services/selector.service.ts`](unblock-ai-api/src/services/selector.service.ts) ·
-[`src/services/selection.service.ts`](unblock-ai-api/src/services/selection.service.ts)
+`src/services/selection.service.ts` · `selector.service.ts` · `retrieval.service.ts` ·
+`requester-profile.service.ts` · `src/utils/selection/candidate-eligibility.util.ts`
 
-A multi-round conversation that maps a plain-language request onto exactly one
-template — or honestly reports that it can't.
+The requester describes a need in a chat. The assistant uses what the directory already knows
+about them to pick one published template, usually with **no clarifying question**.
 
-### Retrieval (once, in round 1 only)
+### The requester profile — derived, never asked for
 
-```
-user query
-   |  embed  (text-embedding-3-small)
-   v
-vector search, k = RETRIEVAL_TOP_K + 2      <- over-fetch by 2
-   |           filtered to published + not archived [+ institution_type]
-   v
-alias boost: +RETRIEVAL_ALIAS_BOOST per exact alias match in the query
-   |
-   v
-slice to RETRIEVAL_TOP_K (5)
-```
+`RequesterProfileService` reads the requester's memberships, designations and effective
+faculties from Postgres and derives their actor types from designation categories (a Student
+designation makes them `student`, a Lecturer `faculty` and `staff`). It also renders
+**numbered facts** — `P1: Member of Department of Information Technology (Faculty of
+Information Technology)`, `P2: Holds Student in Department of Information Technology`. No AI.
 
-**Why over-fetch then slice:** the alias boost can reorder candidates. Fetching
-exactly K would mean a candidate whose boost *would* have promoted it into the top
-five never gets the chance, because it was cut before boosting.
+### One embedding, then deterministic eligibility
 
-**The alias boost** is a small additive bump (default `0.15`) for exact matches
-against a template's declared `aliases`. Pure cosine similarity treats "overseas
-leave" and "foreign travel" as merely similar; an explicit alias declares them
-*equivalent for this workflow*. The boost lets a template's own vocabulary
-outweigh a marginally closer generic embedding.
+The first message is embedded once; the vector search, alias boost and `RETRIEVAL_TOP_K` cut
+work as before (optionally with `RETRIEVAL_MIN_SCORE`). The candidate set is then **frozen on
+the session**, so clarification turns cost no second embedding.
 
-### The selector agent — four outcomes
+Before any LLM call, each candidate is checked against the profile:
 
-An LLM reads the candidates' `retrieval_summary` blocks and the conversation so far,
-then returns a structured decision:
+- **Audience** — a non-empty `scope.applies_to.organisational_unit_codes` must include one of
+  the requester's units or a unit's parent (a department member matches their faculty's
+  audience).
+- **Requester type** — `scope.applies_to.actor_type` other than `any` or `external` must be one
+  of the requester's known actor types (skipped when the requester has no designations).
 
-| Decision | Meaning | Terminal? | Produced by |
-|---|---|---|---|
-| `matched` | One template chosen | yes | the model |
-| `ambiguous` | Ask **one** clarifying question, with options | no | the model |
-| `no_match` | Nothing suitable — **stops, never stretches** | yes | the model |
-| `manual_choice` | Round budget spent; show the list, let the user pick | yes | **the service loop, never the model** |
+Excluded candidates are reported in the thinking trace and never sent to the model. **No
+eligible candidate means no LLM call.**
 
-### The critical design decision: retrieval runs once
+### The selector — one structured call
 
-`SelectionService.start()` runs retrieval and **freezes the candidate set on the
-session**. Rounds 2+ (`answer()`) re-run only the *selector*, over the same frozen
-candidates plus the growing transcript.
+The selector (`LlmOperation.workflow_selection`, optionally on a smaller model through
+`LLM_SELECTION_MODEL`) receives the profile facts and compact candidates and returns:
 
-**Why:** if retrieval re-ran on each answer, the candidate set would drift under an
-in-progress clarifying conversation. The user answers a question about candidates A
-and B, and the system replies about candidates C and D. Freezing the set makes the
-conversation coherent by construction.
-
-### The round budget
-
-`SELECTION_MAX_ROUNDS` (default 2). When it is spent without a match, the *service*
-— not the model — emits `manual_choice` and hands the user the candidate list.
-
-**This is a product decision, not a technical limit.** After two clarifying
-questions, continuing to interrogate someone is worse than showing them five options
-and letting them choose. The system stops guessing at a fixed point.
-
-### Session record
-
-`selection_sessions` stores the query, the frozen candidates (with scores, base
-scores, and alias hits), every round, the final `outcome`
-(`matched` / `abandoned` / `no_match`), the `selected_workflow_template_id`, and the
-`requester_context` handed in by the caller.
-
-### `requester_context`
-
-An optional object sent with `POST /selection/sessions` and stored on the session
-record. The web portal builds it server-side with `getRequesterContext()`, which
-currently returns `{ actor_type: "staff" }`. Users carry no faculty or department —
-the `users` table holds identity and credentials only — and the selector prompt does
-not receive this object, so when two candidates differ by faculty the selector
-**asks** "Which faculty are you attached to?" as its clarifying question.
-
----
-
-## 5.7 Task Planning — Requirement Collection
-
-**Code:** [`src/services/planner.service.ts`](unblock-ai-api/src/services/planner.service.ts) ·
-[`src/services/task.service.ts`](unblock-ai-api/src/services/task.service.ts) ·
-[`src/models/task.model.ts`](unblock-ai-api/src/models/task.model.ts) ·
-Design: [`docs/task-planner-design.md`](docs/task-planner-design.md)
-
-### The core insight
-
-Look at what a compiled template actually contains when there is no HR system:
-
-- All the `inputs` are `resolution: "requester"` — data the user types.
-- All the step `assignee`s are `resolution: "dynamic"` with roles like
-  `academic_advisor` — people HR was *meant* to resolve.
-
-Since there is no directory, **an unresolved `dynamic` assignee is just another
-input**: "Who is your academic advisor? Name and email."
-
-> **The planner compiles a template into a flat, ordered *requirement list*, where
-> each requirement is either a template input or an unresolved actor. Collection is
-> one uniform loop over that list.**
-
-This is the load-bearing decision of the whole area. When directory integration
-lands later, the *only* change is that actor requirements arrive pre-filled instead
-of asked — the collection loop and the execution engine are untouched.
-
-### One document, not two
-
-An earlier draft proposed separate `plans` and `tasks` collections. **Rejected.**
-
-An approval email link must resolve, in a single lookup, to: the request's captured
-values, the workflow context, somewhere to write the decision, and something the
-requester can later read the reason from. That is one document's identity, not a
-join. Minting a token against a "plan" and then creating a separate "task" at
-execution time means every token either points at the wrong document or needs
-remapping.
-
-**One `tasks` collection. Planning is a *status*, not a separate document.** The
-task `_id` exists from the first moment values are collected and never changes.
-
-Alongside it sits a human-facing `reference` — `TASK-2026-00042` — allocated from a
-`counters` collection with a unique index. Approver emails read better with one.
-
-### The task status machine
-
-| `status` | Meaning |
+| Decision | Meaning |
 |---|---|
-| `collecting` | Values still being gathered. **The only status in which `values` can change.** |
-| `ready` | Finalized — every required value filled, step states seeded |
-| `in_progress` | Approval chain running (set by `POST /tasks/:id/start`) |
-| `completed` | Every `completion.required_steps` step reached its required outcome |
-| `rejected` | A step resolved to `terminate_workflow`; every non-terminal step became `skipped` |
-| `cancelled` | Terminal, set via `PATCH /tasks/:id/status` |
+| `matched` | One template chosen, with the profile fact ids it relied on |
+| `ambiguous` | One clarifying question with options — the only LLM text shown to users |
+| `no_match` | Nothing suitable — never stretches to the nearest option |
+| `start_requested` | The requester confirmed ("Start the task"); the web app creates the task |
+| `manual_choice` | Produced by the service when `SELECTION_MAX_ROUNDS` is spent — never by the model |
 
-### Requirement keys
+The prompt tells the selector never to ask about something a fact already answers, so the old
+"Which faculty?" round disappears.
 
-| Key form | `source` | `type` | Origin |
-|---|---|---|---|
-| `destination_country` | `input` | schema type | A `workflow.inputs` entry |
-| `actor:advisor_review` | `actor` | `person` | A `dynamic` step assignee |
-| `followup:advisor_review:1` | `input` | `text` | A "request more info" reopen |
+### Ephemeral and owned
 
-Ordering: **inputs first, in declaration order**; then **actor requirements in
-topological step order**, de-duplicated so two steps needing the same
-`role`/`relative_to` pair share one requirement; then follow-ups appended as
-generated.
+Sessions carry `created_by` and `expires_at` (`SELECTION_SESSION_TTL_HOURS`, default 24) with a
+Mongo TTL index. Only the owner can read or continue a session; anyone else gets 404. Starting a
+task copies the conversation into the task and deletes the session; an abandoned chat simply
+expires. Sessions are capped at 20 messages.
 
-`values` is keyed by `requirement.key`. A `person` value is `{ name, email }`.
+### Composed by the web app
 
-Each requirement carries `key`, `source`, `ref`, `label`, `description`, `type`,
-`required`, `validation`, `collection_hint`, and `status`
-(`pending` / `filled` / `skipped`).
+The API returns typed data only: decision kinds, ids, the trace, the matched profile facts and a
+**deterministic workflow overview** (steps, who acts on each, what information is needed). Every
+sentence the assistant shows is composed by the web app from copy modules.
+`GET /selection/catalogue` lists everything the requester is eligible for with no embedding and
+no LLM, which backs **See what Unblock can do**.
 
-### The four operations
+## 5.7 Task Plan and Forms
 
-**1. Create** — `POST /tasks`
-Reads the matched `workflow_template_id` off a selection session, loads that
-template's current version (it must still be published and not archived, otherwise
-`409 WORKFLOW_TEMPLATE_NOT_PUBLISHED`), pins it on the task as
-`workflow_template_id` + `workflow_template_version`, and compiles it
-with `PlannerService.compile` (**pure, no I/O**) into a requirement list plus one
-step-state entry per workflow step. Allocates the `reference`. Inserts with
-`status: "collecting"`.
+`src/services/task.service.ts` · `task-plan.service.ts` · `task-form.service.ts` ·
+`assignee-resolution.service.ts` · `src/services/assignee-resolution/` ·
+`src/utils/task/task-plan-compiler.util.ts`
 
-**2. Collect** — `GET /tasks/:id/next`, `POST /tasks/:id/values`
-One requirement at a time. Each submitted value is type-coerced and validated by
-[`value-validator.util.ts`](unblock-ai-api/src/utils/task/value-validator.util.ts),
-including **cross-field checks** — a return date cannot precede the departure date
-named by `not_before_field`.
+### Compile a complete plan at creation
 
-There is **no LLM in this loop.** `GET /tasks/:id/next` returns a requirement's
-`label` and `collection_hint` as plain strings; the caller renders the prompt. The
-question phrasing is data, not generation.
+`POST /tasks` (from a matched session, or from the catalogue) loads the version-pinned
+definition, resolves every assignee, and calls a **pure compiler** that returns the whole plan:
+ordered steps, one stored form per form step, prefilled values and unsupported inputs. The task
+starts immediately; its first active step is usually the entry form. No AI is involved from here
+to the end of the request.
 
-**3. Finalize** — `POST /tasks/:id/finalize`
-Once every *required* requirement is filled: collected `actor:*` people are attached
-to their steps' `assignee`, and step states are seeded — steps with no dependencies
-→ `ready`, everything else → `blocked`. `status` moves `collecting` → `ready`.
+### Approvers come from the directory
 
-> **Finalizing is not starting.** Finalize only computes initial step states.
-> Nothing progresses a step, resolves an approver, sends a notification, or issues a
-> token. `steps[].approval_token` and `steps[].reason` stay `null` until
-> `POST /tasks/:id/start`.
+A registry of resolvers, keyed by actor resolution, decides each assignee:
 
-**4. Cancel** — `PATCH /tasks/:id/status`
-The only other transition. Any non-terminal task can move to `cancelled`.
+1. A role that is an **active designation code** is looked up among the requester's units
+   (plus effective faculties) narrowed to the template audience, filtered to the designation's
+   unit types.
+2. Exactly one holder who is not the requester → **resolved and locked** (`directory`).
+3. Several holders → a **select field** listing exactly those people (`requester_choice`).
+4. No holder → retry with `fallback_role`, otherwise the requester names the person.
+5. A role that is **not** a designation code (for example `academic_advisor`) → the requester
+   names the person (`requester_supplied`); the fallback is not used, because the directory
+   lacks the data rather than finding the post vacant.
 
-### Trust boundary
+`requester` actors resolve to the requester and `system` actors to the system. Because approver
+roles became designation codes at generation time, most roles resolve with no mapping layer.
 
-> **Approver email is requester-supplied and unverified.** For an `actor:*`
-> requirement, the requester types in their own approver's name and email. There is
-> no directory lookup. The same applies to `requester_email`. See
-> [§12.4](#124-the-central-trust-gap-self-asserted-identity).
+### Forms instead of one-question popups
 
----
+- Each `data_collection` step lists the inputs it gathers in `collects_inputs`. Inputs no step
+  claims go to a synthesised **entry form** placed before every workflow step with no
+  dependency, so a legacy definition compiles into "one entry form, then the workflow".
+- Each input type maps to a control and width (text areas full width, everything else half).
+- The entry form opens with a locked **Your details** section — name, email, faculty,
+  department and division from the account — and, when needed, an **Approver details** section.
+  Legacy input ids such as `full_name` or `requester_email` map onto those attributes and are
+  locked too. Index number, phone, batch and degree programme are not in the data model, so the
+  requester types them.
+- `file` inputs are not collected online; they are listed in `unsupported_inputs`.
 
-## 5.8 Approval Execution
+**Drafts any time, submission when active.** A form can be saved as a draft at any status
+except terminal, even before its step starts (type and format checks only). Submission needs
+the step to be `awaiting_requester` and validates `required` plus cross-field rules (a return
+date not before the departure date). A submitted form is read-only; locked fields can never be
+written.
 
-**Code:** [`src/services/execution.service.ts`](unblock-ai-api/src/services/execution.service.ts) ·
-[`src/services/approval.service.ts`](unblock-ai-api/src/services/approval.service.ts) ·
-[`src/services/notification.service.ts`](unblock-ai-api/src/services/notification.service.ts) ·
-[`src/utils/approval/`](unblock-ai-api/src/utils/approval/) ·
-Design: [`docs/approval-execution-design.md`](docs/approval-execution-design.md)
+### The engine: pure state machine plus effect executor
 
-### The split: a pure engine inside an I/O shell
+`TaskEngineService` never does I/O. Given a task and an event (start, form submitted, decision
+recorded, cancel) it returns the next task and a list of `TaskEffect`s:
 
-This is the defining architectural decision of the area.
+- A `form` or `information_request` step becomes `awaiting_requester`; an approval or review
+  becomes `awaiting_approver` and emits `DISPATCH_APPROVAL`; notification and automated steps
+  complete at once.
+- **Conditions are evaluated** when dependencies are satisfied, over `inputs.*`, `computed.*`,
+  `requester.*`, `steps.<id>.outcome` and `system.today`. `false` → `skipped` ("Not
+  required"); a condition that cannot be evaluated yet runs the step.
+- **Dead ends end the task**: no active step and an unmet completion rule ends it as `rejected`
+  (when any step was rejected) or `cancelled`.
 
-```
-  +-----------------------------------------------------------+
-  |  ApprovalService / TaskService        <- the I/O shell     |
-  |    reads Mongo, mints tokens, sends mail, writes Mongo     |
-  |                                                            |
-  |    +------------------------------------------------+      |
-  |    |  ExecutionService                <- pure       |      |
-  |    |    advance(task, workflow) -> AdvanceResult    |      |
-  |    |    applyDecision(...)      -> AdvanceResult    |      |
-  |    |                                                |      |
-  |    |    NO database. NO network. NO clock beyond    |      |
-  |    |    what is passed in. Fully unit-testable.     |      |
-  |    +------------------------------------------------+      |
-  +-----------------------------------------------------------+
-```
+`TaskEffectExecutorService` performs the effects after a successful write — issuing approval
+tokens and sending email — and never throws into the caller. Every write is
+`findOneAndReplace({ _id, revision })`; a lost race is `409 TASK_REVISION_CONFLICT`, and the web
+app refetches.
 
-`ExecutionService.advance()` returns a `dispatched: string[]` list — **it reports
-what needs sending; it never sends anything.** The shell turns that list into tokens
-and emails. The graph engine is therefore provably correct without a database or a
-network.
+| Task status | Step status | Step outcome |
+|---|---|---|
+| `in_progress`, `completed`, `rejected`, `cancelled` | `upcoming`, `awaiting_requester`, `awaiting_approver`, `completed`, `skipped`, `cancelled` | `completed`, `approved`, `rejected`, `request_more_info`, `skipped` |
 
-### `advance()` — the algorithm, in order
+## 5.8 Approvals
 
-The **order of these four phases is itself a correctness property**:
+`src/services/approval.service.ts` · `notification.service.ts` · `src/utils/approval/token.util.ts` ·
+`src/utils/task/information-request-insertion.util.ts`
 
-```
-1. TERMINATION CHECK  (first, deliberately)
-   Find any step with outcome "rejected" whose workflow outcome
-   action is "terminate_workflow".
-   If found -> every non-terminal step becomes "skipped",
-               status = rejected, dispatched = []  ->  RETURN
+### Tokens never leave the approver channel
 
-2. UNBLOCK
-   Every "blocked" step whose EVERY depends_on entry reports its
-   required_outcome  ->  becomes "ready"
+Each dispatched approval gets an HMAC-signed token, emailed as
+`${APP_PUBLIC_URL}/approvals/<token>`. Only `sha256(token)` is stored on the step. No requester
+DTO contains a token or a hash. Tokens are invalidated on decision and on cancel, and expire
+after `APPROVAL_TOKEN_TTL_DAYS`: an invalid link is 404, an expired one 410, a decided one 409
+for a new decision (the view still loads and shows the decision).
 
-3. DISPATCH
-   Every "ready" step  ->  collected into dispatched[],
-                           state becomes "pending_approval"
+### Three decisions with comments
 
-4. COMPLETION
-   Evaluate workflow.completion.rule against the required_steps
-```
+| Decision | Comment | Effect |
+|---|---|---|
+| `approved` | optional | The task advances, or completes |
+| `rejected` | required | The task ends as `rejected`; open steps are cancelled and other links revoked |
+| `request_more_info` | required | Steps are inserted (below) |
 
-**Why termination is checked first:** if dispatch ran before termination, a
-rejection would still emit a dispatch for a step downstream of the rejection — an
-email to an approver about a request that is already dead. Checking termination
-first makes that impossible rather than merely unlikely.
+### Requesting more information inserts steps
 
-**Completion rules:**
-
-| `rule` | Satisfied when |
-|---|---|
-| `all_required_steps_complete` | every `required_steps` entry has `outcome === "approved"` |
-| `any_step_complete` | any one of them does |
-| `specific_steps` | every one of them does |
-
-**Step states:** `blocked` → `ready` → `pending_approval` → `approved` / `rejected`,
-plus `skipped` for anything cut off by a termination.
-
-### Approval tokens
-
-[`utils/approval/token.util.ts`](unblock-ai-api/src/utils/approval/token.util.ts) —
-`base64url(payload) + "." + base64url(HMAC-SHA256 signature)`. **Non-throwing**:
-verification returns `null` on any malformation rather than raising.
-
-> **The token proves authenticity only.** Whether it is still *usable* —
-> unexpired, unused, and its step still `pending_approval` — is checked separately by
-> `ApprovalService` on **every** request. That separation means revoking an approval
-> is a database write, not a key rotation.
-
-A token is minted per dispatched step, TTL `APPROVAL_TOKEN_TTL_DAYS` (14). The
-sparse index `task_step_token` on `steps.approval_token` makes token → task lookup a
-single indexed query.
-
-### The two places the chain moves
-
-Only two:
-
-| Endpoint | Effect |
-|---|---|
-| `POST /tasks/:id/start` | Dispatches the entry step(s), mints tokens, sends approval-request emails, `status` → `in_progress` |
-| `POST /approvals/:token/decision` | Records the outcome, re-runs `advance()`, dispatches whatever became ready, sends the appropriate notifications |
-
-### The request-more-info loop
-
-An **outcome**, not a backward graph edge:
-
-```
-approver chooses "request more info", writes a question
-        |
-        v
-step resets to "ready", approval_token CLEARED  (forces a fresh token on redispatch)
-reopen_count++                                  (capped at MAX_REOPENS = 3)
-a  followup:<step_id>:<n>  requirement is appended
-task status returns to "collecting"
-        |
-        v
-requester answers via the existing POST /tasks/:id/values
-        |
-        v
-re-finalize  ->  re-dispatches ONLY the reopened step
-```
-
-> **Re-finalizing after a reopen must not re-seed the whole graph.** Doing so would
-> silently wipe approvals already recorded on other steps. This is the subtlest
-> correctness requirement in the area.
-
-The token is cleared rather than reused so that a stale link from the first
-dispatch cannot be replayed against the reopened step.
+The approval completes with outcome `request_more_info`. Right after it, an
+`information_request` step is inserted, holding one required text-area field labelled with the
+approver's comment; after that, a **repeat** of the same approval (same assignee). Every step
+that depended on the original approval is rewired to depend on the repeat. The requester is
+emailed; when they answer, a fresh link goes to the same approver, whose page shows a "Repeat
+review" notice. The cap is `TASK_MAX_INFORMATION_REQUESTS_PER_STEP` (default 3) per approval;
+at the cap the option is no longer offered.
 
 ### Notifications
 
-[`notification.service.ts`](unblock-ai-api/src/services/notification.service.ts)
-over a pluggable `IMailer` (`console` | `smtp`), mirroring the `IVectorStore`
-pattern. Four paths: approval request, rejection, completion, more-info.
+Approval request, requester action required, information requested, rejected and completed
+emails, all addressed from `task.requester` and `step.assignee`. None reads a form value, and
+none throws: a failed send is logged rather than rolling back a recorded decision.
+`MAIL_TRANSPORT=console` prints every email, approval links included.
 
-> **`dispatch()` never throws.** A failed send is logged and returned as `false`
-> rather than rolling back a recorded decision. An approver's decision is a fact
-> about the world; a mail server outage must not un-record it.
+## 5.9 Transcript
 
-**The default `console` transport logs the full approval URL to stdout.** The entire
-approval chain is demonstrable end-to-end with no email account configured — which
-matters enormously for demos and for local development.
+`src/services/task-transcript.service.ts` · `src/utils/document/task-transcript.util.ts` ·
+`src/services/document/`
 
-### `requester_email`
+When a task completes, a transcript PDF is built from the task and its version-pinned
+definition, attached to the completion email (`DOCUMENT_ATTACH_TO_EMAIL`, under
+`DOCUMENT_MAX_ATTACHMENT_BYTES`), and available from `GET /tasks/:id/transcript`. It is
+**rendered on demand and never stored**; the audit log records `transcript_emailed`.
 
-Every workflow now declares a `requester_email` input (a generation-prompt rule —
-see [`docs/requester-contact-gap.md`](docs/requester-contact-gap.md)). It is what
-lets all four notification paths reach the requester.
-
-**Backward compatibility:** workflows stored before that rule existed have no such
-input. Their tasks hit the no-op path gracefully — `notification.service` skips the
-requester send when the requirement is absent — and remain **pull-only** via
-`GET /tasks/:id/status`. Nothing breaks; those requests just aren't pushed.
-
-### The requester-facing status view
-
-`GET /tasks/:id/status` returns the timeline: current pending steps, and —
-critically — for a `rejected` task, **who** rejected it, **at which step**, and
-**why**, lifted straight from the terminating step's `reason`.
-
-The `reason` field is the one the entire rejection experience turns on. Being told
-"rejected" without being told why is the failure mode this endpoint exists to
-prevent.
-
----
-
-## 5.9 Completion Documents
-
-**Code:** [`src/services/completion-document.service.ts`](unblock-ai-api/src/services/completion-document.service.ts) ·
-[`src/utils/document/`](unblock-ai-api/src/utils/document/) ·
-[`src/services/document/`](unblock-ai-api/src/services/document/) ·
-Design: [`docs/completion-document-email-phase-plan.md`](docs/completion-document-email-phase-plan.md)
-
-When a task's last required approval is decided, the system generates a durable
-record of the whole request and emails it alongside the completion notice.
-
-### Four components, each with one job
-
-**1. Pure builder** —
-[`completion-document.util.ts`](unblock-ai-api/src/utils/document/completion-document.util.ts)
-`buildCompletionDocument()` assembles a `CompletionDocument` with **no I/O at all**,
-mirroring `ExecutionService` and `PlannerService`:
-
-- Header (reference, title, requester, dates)
-- Request-detail fields, in `workflow.inputs` **declaration order**
-- Calculated values
-- Follow-up answers from the request-more-info loop
-- One `ApprovalRow` per approval step, in workflow order
-
-**2. Computed-value evaluator** —
-[`computed-evaluator.util.ts`](unblock-ai-api/src/utils/workflow/computed-evaluator.util.ts)
-Evaluates `workflow.computed` against the task's collected values. **Never throws** —
-anything malformed or forward-referenced resolves to `null` and is omitted. A bad
-`computed` entry must not cost the requester their record.
-
-**3. Pluggable renderer** — [`services/document/`](unblock-ai-api/src/services/document/)
-`IDocumentRenderer` behind `createDocumentRenderer(format)`, mirroring
-`services/mailer/`:
-
-| Renderer | Use |
-|---|---|
-| `PdfDocumentRenderer` | `pdfkit`, Standard-14 fonts, no headless browser |
-| `TextDocumentRenderer` | Tests and console runs |
-
-> **The PDF is byte-for-byte deterministic.** Its `CreationDate` is stamped from the
-> task's persisted `completion_document.generated_at`, **not** `new Date()`.
-> Re-rendering the same document produces identical bytes — verified by comparing
-> `sha256` hashes in the test suite.
-
-**4. `CompletionDocumentService`**
-Composes builder + evaluator + renderer behind one `generate()` call that **never
-throws** — `config.document.enabled === false` and any internal failure both return
-`null`. The same failure-isolation discipline as `NotificationService.dispatch()`.
-
-### Where it runs
-
-`ApprovalService` calls it **once**, on the `result.completed === true` branch,
-before sending the completion email. A successful render is attached to that email
-when `DOCUMENT_ATTACH_TO_EMAIL` is on and the size is under
-`DOCUMENT_MAX_ATTACHMENT_BYTES`.
-
-### No bytes are stored
-
-Only **metadata** is persisted onto the task as `completion_document`:
-`filename`, `byte_size`, `sha256`, `emailed_to`, `emailed_at`.
-
-**Why storing bytes is unnecessary:** a completed task is immutable and its workflow
-is version-pinned, so the record is a pure function of data already in Mongo.
-`GET /api/tasks/:id/document` **regenerates** the PDF on every call from the
-persisted `generated_at`. No blob store, no lifecycle management, no orphaned files.
-
-A hash mismatch against the stored `sha256` is **logged as drift, not raised** — the
-requester still gets their document; the operator gets a signal that something
-upstream changed.
+It holds the header, requester details, the requester's original messages, every submitted form
+section in step order, information request questions and answers, the approval trail (step,
+approver, designation, decision, comment, time), skipped steps marked "Not required", and
+computed values. The renderer is pluggable (`pdfkit`, or text for tests and console runs).
+`DOCUMENT_ENABLED=false` turns it off; the endpoint then answers
+`409 TASK_TRANSCRIPT_UNAVAILABLE`.
 
 ### Smoke test
 
-`npm run smoke-test:document -- <task-id> [out.pdf]` renders a real task's record to
-a local file for eyeballing, entirely independent of the completion path that
-normally triggers it.
-
----
+`npm run smoke-test:document` renders a transcript to a local file for eyeballing.
 
 ## 5.10 Deletion Tracking and Audit
 
@@ -1735,8 +1494,9 @@ function invoked on shutdown.
 |---|---|---|
 | `workflow_templates` | One document per template (string UUID `_id`) | `title`, `description`, `status`, `draft_prompt`, `current_version`, `retrieval` (embedding of the current version), `archived_at`, `created_by`, `updated_by`, `created_at`, `updated_at` |
 | `workflow_template_versions` | Immutable generated versions | `workflow_template_id`, `version`, `prompt`, `definition`, `generation_attempts`, `created_by`, `created_at` |
-| `selection_sessions` | Multi-round selection conversations | `user_query`, `candidates[]` (frozen), `rounds[]`, `outcome`, `selected_workflow_template_id`, `requester_context` |
-| `tasks` | Process instances | `reference`, `session_id`, `workflow_template_id`, `workflow_template_version`, `status`, `requirements[]`, `values{}`, `steps[]`, `audit[]`, `completion_document` |
+| `selection_sessions` | Ephemeral, owned assistant conversations (TTL on `expires_at`) | `created_by`, `status`, `messages[]`, `candidates[]` (frozen), `rounds_used`, `selected_workflow_template_id`, `expires_at` |
+| `tasks` | Process instances (optimistic `revision`) | `reference`, `revision`, `created_by`, `requester`, `workflow_template_id`, `workflow_template_version`, `status`, `conversation[]`, `steps[]`, `forms[]`, `values{}`, `unsupported_inputs[]`, `audit[]` |
+| `legacy_tasks` | Pre-revamp tasks, never read | — |
 | `counters` | Sequence allocation for `reference` | one document per counter |
 | `audit_logs` | Task-deletion audit | `resource`, `resource_id`, `created_at` |
 
@@ -1941,11 +1701,11 @@ approvals actually ran against.
 | `/dashboard/workflows` | Server → Client | `proxy.ts` + `requireRouteAccess` + API | Workflow template list: search, Active / Archived / All filter (applied client-side over `GET /workflow-templates?include_archived=true`), archive / restore |
 | `/dashboard/workflows/new` | Server → Client | `proxy.ts` + `requireRouteAccess` (`workflow:manage`) | New template editor: title + prompt, save as draft or generate |
 | `/dashboard/workflows/[workflowTemplateId]` | Server → Client | `proxy.ts` + `requireRouteAccess` + API | Template editor: title, prompt, Save, Generate / Regenerate, Publish, version history drawer; `?version=N` shows a read-only historic version. A non-UUID id is a 404 |
+| `/dashboard/tasks/new` | Server → Client | `proxy.ts` + `requireRouteAccess` (`task:create`) | The assistant: greeting, capabilities drawer, chat with thinking trace, match card, **Start this task**. `?session=<id>` restores the conversation after a refresh |
+| `/dashboard/tasks` | Server → Client | `proxy.ts` + `requireRouteAccess` (`task:create`) | The requester's task requests: search, status filter, pagination, all in the URL |
+| `/dashboard/tasks/[taskId]` | Server → Client | `proxy.ts` + `requireRouteAccess` + API ownership | The task workspace: step rail, forms, approver cards, information requests, outcome banner, plan drawer, transcript. `?step=<id>` selects a step; the topbar shows the workflow title |
 | `/old/account` | Server, `force-dynamic` | `proxy.ts` + session | Profile, permission badges, active sessions (revoke one, sign out of other sessions), sign out |
-| `/old/portal` | Server, `force-dynamic` | `proxy.ts` + API `task:create` | "My Requests" — the caller's own task list |
-| `/old/portal/jobs/new` | Server → Client | `proxy.ts` + session + API `task:create` | Selection chat + live plan preview |
-| `/old/portal/jobs/[id]` | Server, `force-dynamic` | `proxy.ts` + API `task:create` + ownership | Task status timeline + plan + document download |
-| `/approvals/[token]` | Server → Client | **none** | The approver decision page |
+| `/approvals/[token]` | Server → Client | **none** | The approver page: request summary, decisions with comments; dedicated invalid (404) and expired (410) states |
 | `/api/auth/login` | Route Handler | — | Calls the API login (forwarding `User-Agent`), sets the httpOnly `ua_session` cookie |
 | `/api/auth/logout` | Route Handler | — | Revokes the session at the API, then clears the cookie |
 | `/api/proxy/[...path]` | Route Handler | — | Forwards browser fetches upstream with the Bearer header |
@@ -1954,9 +1714,9 @@ approvals actually ran against.
 `ua_session` cookie is present. Dashboard pages call `requireRouteAccess`, which
 redirects to `/dashboard` when the user lacks the route's permission; the API still
 enforces the permission on every call. The old `/admin` template screens were
-removed; `/old/account` and `/old/portal` are reachable by URL only.
+removed, and so was the old requester portal; `/old/account` is reachable by URL only.
 
-> **`/approvals/*` lives deliberately outside `/dashboard` and `/old/portal`.** The approver
+> **`/approvals/*` lives deliberately outside `/dashboard`.** The approver
 > holds a token from an email, not a session. The route must not inherit a
 > navigation shell that implies an account they don't have.
 
@@ -2044,8 +1804,8 @@ data into view data:
 | Module | Input → Output |
 |---|---|
 | [`toFlowGraph.ts`](unblock-ai-web/src/lib/workflow/toFlowGraph.ts) | `WorkflowDefinition` → React Flow nodes + edges, auto-laid-out with dagre from `depends_on` |
-| [`toPlanNodes.ts`](unblock-ai-web/src/lib/workflow/toPlanNodes.ts) | `WorkflowDefinition` → the portal's plan list |
-| [`applyTaskProgress.ts`](unblock-ai-web/src/lib/workflow/applyTaskProgress.ts) | plan nodes + task step states → progress-annotated nodes |
+| [`assignee-source-hint.ts`](unblock-ai-web/src/lib/workflow-template/assignee-source-hint.ts) | an actor + active designation codes → **Directory** / **Requester provides** badge on each flowchart step |
+| [`src/lib/task-request/*`](unblock-ai-web/src/lib/task-request/) | the task request rules — see [§8.7](#87-the-task-request-hooks-and-pure-modules) |
 | [`workflow-template-editor-state.ts`](unblock-ai-web/src/lib/workflow-template/workflow-template-editor-state.ts) | template + typed title/prompt → editor flags |
 
 > **`toFlowGraph` is deterministic.** Same workflow JSON in → byte-identical
@@ -2088,28 +1848,25 @@ Code: [`src/components/workflow-templates/`](unblock-ai-web/src/components/workf
 > click; no effect triggers it. Opening a template is one `GET /workflow-templates/:id`,
 > which returns the current version inline.
 
-## 8.7 The selection conversation hook
+## 8.7 The task request hooks and pure modules
 
-[`useSelectionSession.ts`](unblock-ai-web/src/lib/hooks/useSelectionSession.ts)
-drives one selection conversation and is the single source of truth for the message
-list, the session id, the current decision, and the matched workflow. Components
-render this state and call `send`; they never talk to the API themselves.
-
-Its four decision branches **are the product**:
-
-| Decision | What the user sees |
+| Hook (`src/lib/hooks/`) | Owns |
 |---|---|
-| `ambiguous` | The one clarifying question, with its options as quick replies |
-| `manual_choice` | "Two rounds spent — here are the candidates, pick one" |
-| `no_match` | An honest "nothing matches", not a nearest guess |
-| `matched` | The plan preview, ready to start filling in |
+| `useSelectionConversation` | The session id in the `session` query parameter, the optimistic requester bubble (through the `selection-conversation` reducer), send, choose and start over; restarts cleanly on `SELECTION_SESSION_NOT_FOUND` |
+| `useSelectionCatalogue` | The capabilities drawer's list |
+| `useTaskRequests` | The list, with URL-driven status, debounced search and page |
+| `useTaskRequest` | One task, polling every `TASK_REQUEST_POLL_INTERVAL_MS` while any step is awaiting an approver |
+| `useTaskFormDraft` | Local draft state, client-side issues, save draft and submit; maps `TASK_FORM_INVALID` issues onto fields and exposes `isDirty` for the leave-page guard |
+| `useTaskRequestActions` · `useStartTaskRequest` | Cancel, delete and transcript download with toasts; create-and-route |
+| `usePageHeading` | Lets a screen override the topbar heading (the workspace shows the workflow title) |
 
-`requesterContext` is built **server-side** by the page and handed down as a prop —
-the page first checks `getSession()`, which is Server-Component-only (it calls
-`next/headers`), so this client hook cannot do that itself.
-
-A sibling hook, [`useTaskCollection.ts`](unblock-ai-web/src/lib/hooks/useTaskCollection.ts),
-drives the one-requirement-at-a-time collection modal.
+Pure, unit-tested modules in `src/lib/task-request/` hold every rule the screens need: the
+conversation reducer, form draft state, a client mirror of the API's field validation (same
+issue codes; the server stays authoritative), issue messages, status and decision presentation
+maps (`Record<Enum, …>`, so a new enum value fails to compile until labelled), trace and
+profile-fact sentences, progress numbering ("Step 2 of 5", skipping skipped and cancelled
+steps), error messages, and the approver decision rules. All copy lives in
+`task-request-copy.ts`.
 
 ## 8.8 Component inventory
 
@@ -2126,23 +1883,23 @@ drives the one-requirement-at-a-time collection modal.
 | `flowchart/WorkflowFlowchart` | React Flow canvas; `NODE_TYPES` is module-scope on purpose — moving it inside the component remounts every node on each render |
 | `flowchart/nodes/{Step,Condition,Input,Terminal}Node` | The four node renderers |
 
-### Portal — `src/components/portal/`
+### Task requests — `src/components/task-requests/`
 
-| Component | Role |
+| Folder | Components |
 |---|---|
-| `NewRequestFlow` | Orchestrates chat + plan preview |
-| `SelectionChat` · `ChatComposer` · `ChatMessage` | The conversation UI |
-| `TaskPlanPanel` · `PlanNode` | Live plan preview and progress |
-| `RequirementDialog` · `RequirementField` | One-requirement-at-a-time collection, as a modal |
-| `JobList` · `JobRow` · `EmptyJobs` | "My Requests" |
-| `JobStatusView` | Status timeline, plan, document download |
-| `DeleteRequestDialog` | Task deletion |
-| `TopBar` | Portal nav shell |
+| `assistant/` | `TaskRequestAssistantScreen`, `AssistantWelcome`, `AssistantConversation`, `AssistantMessage` (exhaustive over decisions), `AssistantMatchCard`, `AssistantWorkflowOverview`, `AssistantQuestion`, `AssistantManualChoice`, `AssistantNoMatch`, `AssistantStartingTask`, `AssistantThinkingTrace`, `AssistantTypingIndicator`, `AssistantComposer`, `CapabilitiesDrawer`, `AssistantMark`, `RequesterMessageBubble` |
+| `workspace/` | `TaskWorkspaceScreen`, `TaskStepRail` · `TaskStepRailItem`, `TaskStepPanel` (exhaustive over step kinds), `FormStepPanel`, `ApprovalStepPanel` · `ApproverCard`, `InformationRequestPanel`, `AutomaticStepPanel`, `TaskOutcomeBanner`, `TaskUnsupportedInputsNotice`, `TaskPlanDrawer`, `TaskWorkspaceActions` |
+| `forms/` | `TaskForm`, `TaskFormEditor`, `TaskFormFieldControl` (exhaustive over controls), `PersonFieldControl`, `LockedFieldValue` |
+| `list/` | `TaskRequestsScreen`, `TaskRequestTable` |
+| `shared/` | `TaskStatusBadges` (task, step and decision badges), `TaskRequestActionDialog` |
 
 ### Approvals — `src/components/approvals/`
 
-`ApproverView` (the decision page), `ApproverList` (who has decided, and when),
-`ReasonDialog` (reject / request-more-info reason capture).
+`ApproverView` (header, two-column layout), `ApproverTaskSummary` (request, requester, submitted
+sections, calculated values, information exchanges), `ApproverHistory` (earlier decisions),
+`ApproverDecisionPanel` (step, instructions, repeat-review notice, decision buttons or the
+recorded result), `ApproverDecisionDialog` (comment, required for reject and more information),
+`ApproverPlanRail`, `ApprovalLinkUnavailable` (invalid and expired links), `ApproverSection`.
 
 ### Account and sign-in — `src/components/account/`, `src/components/auth/`
 
@@ -2172,8 +1929,8 @@ tokens live in `globals.css`: semantic color names (`bg`, `surface`, `ink`, `mut
 (`font-admin` / `font-portal`) bound to `Public_Sans` and `IBM_Plex_Sans` via
 `next/font/google`.
 
-The admin and portal surfaces are visually distinct on purpose — different
-typography scale and density for an authoring tool versus a requester-facing app.
+The dashboard and the approver page share `font-admin` and the same tokens, so the requester
+screens and the approver page look like one product.
 
 ---
 
@@ -2258,12 +2015,16 @@ published templates; drafts and unpublished templates return `404` to them.
 
 ### Selection
 
+Sessions are owner-checked inside `SelectionService`: someone else's session is `404`.
+
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 22 | `POST` | `/selection/sessions` | Start a conversation (round 1 — **the only retrieval**). Responses carry `workflow_template_id` and `candidates[].workflow_template_id` | `task:create` |
-| 23 | `POST` | `/selection/sessions/:id/answer` | Answer a clarifying question (round 2+) | `task:create` |
-| 24 | `POST` | `/selection/sessions/:id/choose` | Pick a template manually: `{ workflow_template_id }` (a UUID that must be among the session's candidates, `400` otherwise) | `task:create` |
-| 25 | `GET` | `/selection/sessions/:id/workflow-template` | The matched template's current version → `{ workflow_template_version, definition }`. `409` if nothing is matched yet, `409 WORKFLOW_TEMPLATE_NOT_PUBLISHED` if it was unpublished or archived since | `task:create` |
+| 22 | `GET` | `/selection/catalogue` | Published templates the caller is eligible for; no AI | `task:create` |
+| 23 | `POST` | `/selection/sessions` | First message: profile, one embedding, eligibility, selector | `task:create` |
+| 24 | `GET` | `/selection/sessions/:id` | Restore a conversation | `task:create` + owner |
+| 25 | `POST` | `/selection/sessions/:id/messages` | A clarification answer, a refinement or "Start the task"; reuses the frozen candidates | `task:create` + owner |
+| 26 | `POST` | `/selection/sessions/:id/choose` | Pick an offered template; no AI | `task:create` + owner |
+| 27 | `DELETE` | `/selection/sessions/:id` | Start over | `task:create` + owner |
 
 ### Tasks
 
@@ -2272,30 +2033,27 @@ someone else is `404`.
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
-| 26 | `POST` | `/tasks` | Create a task from a matched session, pinned to `workflow_template_id` + `workflow_template_version`; `created_by` is the caller. `409 WORKFLOW_TEMPLATE_NOT_PUBLISHED` if the template is no longer published | `task:create` |
-| 27 | `GET` | `/tasks` | List **the caller's own** tasks (filter `session_id`, `status`) | `task:create` |
-| 28 | `GET` | `/tasks/:id/status` | Requester-facing timeline (incl. `workflow_template_title`, who rejected and why) | `task:create` + owner |
-| 29 | `GET` | `/tasks/:id/document` | Download the completion PDF (regenerated on demand) | `task:create` + owner |
-| 30 | `GET` | `/tasks/:id` | Get one task | `task:create` + owner |
-| 31 | `GET` | `/tasks/:id/next` | The next unfilled requirement | `task:create` + owner |
-| 32 | `POST` | `/tasks/:id/values` | Submit a value (coerced + validated) | `task:create` + owner |
-| 33 | `POST` | `/tasks/:id/finalize` | Seed step states; `collecting` → `ready` | `task:create` + owner |
-| 34 | `POST` | `/tasks/:id/start` | **Dispatch entry steps, mint tokens, send email** | `task:create` + owner |
-| 35 | `PATCH` | `/tasks/:id/status` | Cancel | `task:create` + owner |
-| 36 | `DELETE` | `/tasks/:id` | Delete a finished task, or one still collecting with no step dispatched (`409` otherwise); writes a Mongo `audit_logs` row first | `task:create` + owner |
+| 28 | `POST` | `/tasks` | Compile and start a task from a matched session or the catalogue; deletes the session | `task:create` |
+| 29 | `GET` | `/tasks` | List **the caller's own** tasks (`status`, `search`, `limit`, `offset`) | `task:create` |
+| 30 | `GET` | `/tasks/:id` | One task with steps, forms and progress | `task:create` + owner |
+| 31 | `GET` | `/tasks/:id/workflow-definition` | The pinned definition, for the plan drawer | `task:create` + owner |
+| 32 | `PUT` | `/tasks/:id/forms/:formId/draft` | Save a draft | `task:create` + owner |
+| 33 | `POST` | `/tasks/:id/forms/:formId/submit` | Submit and advance the engine | `task:create` + owner |
+| 34 | `POST` | `/tasks/:id/cancel` | Cancel; revokes approval links | `task:create` + owner |
+| 35 | `DELETE` | `/tasks/:id` | Delete (`409` while an approval is in progress); writes an audit row | `task:create` + owner |
+| 36 | `GET` | `/tasks/:id/transcript` | The transcript PDF of a completed task, rendered on demand | `task:create` + owner |
 
 ### Approvals
 
 | # | Method | Path | Purpose | Auth |
 |---|---|---|---|---|
 | 37 | `GET` | `/approvals/:token` | The approver page's data | **none — the token IS the auth** |
-| 38 | `POST` | `/approvals/:token/decision` | Approve / reject / request more info | **none — the token IS the auth** |
+| 38 | `POST` | `/approvals/:token/decision` | Approve, reject or request more information, with a comment | **none — the token IS the auth** |
 
 `task:approve` exists in the permission catalogue and can be granted, but no route
 checks it yet: approvers act through the token links above.
 
-> **Route ordering notes:** `GET /tasks/:id/status` and `GET /tasks/:id/document` are
-> registered **before** the bare `GET /tasks/:id` pattern, `POST /workflow-templates/generate`
+> **Route ordering notes:** `POST /workflow-templates/generate`
 > before the `/:workflowTemplateId` routes, and `DELETE /auth/sessions/others` before
 > `DELETE /auth/sessions/:sessionId`, so no literal suffix is ever swallowed as a
 > path parameter.
@@ -2409,14 +2167,14 @@ signing secret to set.
 | `APPROVAL_TOKEN_SECRET` | **when `MAIL_TRANSPORT=smtp`** | `""` | HMAC key for approval tokens. Startup throws if SMTP is on and this is empty |
 | `APPROVAL_TOKEN_TTL_DAYS` | no | `14` | Token lifetime |
 
-## 10.8 Completion documents
+## 10.8 Transcripts
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `DOCUMENT_ENABLED` | no | `true` | `false` reproduces pre-feature behaviour exactly |
+| `DOCUMENT_ENABLED` | no | `true` | `false` turns transcripts off (`409 TASK_TRANSCRIPT_UNAVAILABLE`, no attachment) |
 | `DOCUMENT_ATTACH_TO_EMAIL` | no | `true` | Attach vs. download-only |
 | `DOCUMENT_FORMAT` | no | `pdf` | `pdf` \| `text` |
-| `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | Printed in the record's footer |
+| `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | Printed in the transcript's footer |
 | `DOCUMENT_MAX_ATTACHMENT_BYTES` | no | `5000000` | Above this, download-only |
 
 ## 10.9 Frontend
@@ -2467,9 +2225,10 @@ Never put a real secret in `.example.env`.
 |---|---|
 | Generating workflow JSON from a prompt | Validating the generated graph *(deterministic checks)* |
 | Deciding which template matches a request | Ranking candidates *(vector similarity + alias boost)* |
-| Generating a clarifying question | Phrasing requirement prompts *(plain `label` + `collection_hint`)* |
+| Generating a clarifying question | Composing assistant messages *(the web app, from typed data)* |
 | Writing a template's `retrieval_summary` *(inside the same generation call)* | Deciding whether a step is ready *(a pure graph rule)* |
-| — | Building or rendering the completion document *(pure functions)* |
+| — | Resolving approvers, prefilling and laying out forms, evaluating conditions *(deterministic resolvers and a pure compiler)* |
+| — | Building or rendering the transcript *(pure functions)* |
 | — | Suggesting reject-vs-more-info to an approver *(left as plain data)* |
 
 > **The pattern:** the LLM is used for *language*, never for *state*. Anything that
@@ -2566,7 +2325,7 @@ The prompt receives:
 
 The session's `requester_context` is stored on the session record but not sent to
 the model, so attributes such as faculty are asked as clarifying questions
-([§5.6](#56-retrieval--the-selector-agent)).
+([§5.6](#56-selection--the-assistant-conversation)).
 
 And must return one of `matched` / `ambiguous` / `no_match`, with a question and
 options when ambiguous.
@@ -2664,29 +2423,22 @@ That separation is what makes revocation a **database write** rather than a key
 rotation that would invalidate every outstanding approval link in the institution.
 
 **Additional properties:**
-- `GET /approvals/:token` returns `404` for both a malformed and an
-  unrecognised/expired token. The API deliberately does not distinguish, so the page
-  can't be used to probe which tokens exist.
+- `GET /approvals/:token` returns `404` for a malformed or unrecognised token and `410`
+  only for a genuinely signed token that has expired, so the page can't be used to probe
+  which tokens exist. Only `sha256(token)` is stored.
 - Verification is **non-throwing** — malformation returns `null`, so a garbage URL
   can't produce a 500.
-- A reopened step gets its token **cleared**, forcing a fresh one on redispatch, so a
-  stale link from the first dispatch cannot be replayed.
+- A decided, cancelled or expired step has its token hash **cleared**; a repeat approval
+  after an information request gets a fresh token, so a stale link cannot be replayed.
 
-## 12.4 The central trust gap: self-asserted identity
+## 12.4 Identity: mostly from the directory now
 
-> **There is no directory or identity service.** The approval authority emailed for a
-> decision is whatever address the *requester typed in*. The same applies to
-> `requester_email`.
-
-Concretely, a requester could name themselves as their own approver and approve their
-own request.
-
-This is a known, documented gap, not an oversight — see
-[`docs/requester-contact-gap.md`](docs/requester-contact-gap.md). It is the single
-most important thing to close before any real deployment, and closing it is
-structurally cheap: `actor:*` requirements simply arrive **pre-filled** from a
-directory instead of being asked, and the collection loop and execution engine are
-untouched by design ([§5.7](#57-task-planning--requirement-collection)).
+The requester's name, email and units come from their account and are locked on the form.
+Approvers whose post is a designation in the directory are looked up, never typed, and a
+holder who is the requester is skipped. **The remaining gap** is roles the directory does
+not model, such as the academic advisor: the requester names that person, and the address is
+not verified. Adding a resolver for them (for example an advisor directory) closes it without
+changing templates or tasks.
 
 ## 12.5 What is protected
 
@@ -2738,16 +2490,17 @@ npm run test:live   # tests/live/**                          slow, real Azure ca
 **63 backend test files.** Runner: Node's built-in `node:test` via `tsx` — no Jest,
 no Vitest on the backend.
 
-### `tests/unit/utils/` — 23 files
+### `tests/unit/utils/`
 
 Schema validation, graph validation (with **mutation tests** per failure mode), alias
 boost, render-summary, request-validator, serializer, vector math, approval-token
 utils, user-session tokens, bearer-token parsing, email normalisation, permission
-checks, Postgres error mapping, password hashing, content hashing, requirement
-builder, value validator, computed evaluator, completion document, answer format,
+checks, Postgres error mapping, password hashing, content hashing, the task plan
+compiler, field validator, condition evaluator, information request insertion, eligibility,
+requester profile, computed evaluator, transcript builder,
 reference allocation, migration and seed file names.
 
-### `tests/unit/services/` — 18 files
+### `tests/unit/services/`
 
 Workflow template, retrieval, selection, selector, vector-store, task, execution,
 approval, notification, mailer, document, embedding, the LLM and embedding adapters,
@@ -2867,7 +2620,7 @@ npm run dev                   # Next dev on :3001
 
 Open http://localhost:3001 and sign in with `SEED_ADMINISTRATOR_EMAIL` and the
 `USER_DEFAULT_PASSWORD` value. You land on `/dashboard`; workflow templates are at
-`/dashboard/workflows` and the older requester portal at `/old/portal`. Create further users with
+`/dashboard/workflows` and the requester screens under `/dashboard/tasks`. With `SEED_SAMPLE_USERS=true`, sample requesters such as `u17@u.c` exist already. Create further users with
 `POST /api/users` while signed in as the administrator.
 
 > **Port 3001 is fixed in `package.json`** because the API binds 3000 and its
@@ -3031,9 +2784,9 @@ thing.
 | Pattern | Where it appears |
 |---|---|
 | **Interface + factory + config-selected implementation** | `IVectorStore`, `IMailer`, `IDocumentRenderer`, `IUserRepository` / `IUserSessionRepository` / the organisation repositories |
-| **Pure core, I/O shell** | `ExecutionService` / `ApprovalService`; `buildCompletionDocument` / `CompletionDocumentService`; `PlannerService` / `TaskService` |
+| **Pure core, I/O shell** | `TaskEngineService` / `TaskEffectExecutorService`; `buildTaskTranscript` / `TaskTranscriptService`; `compileTaskPlan` / `TaskPlanService` |
 | **Never-throw at failure-isolation boundaries** | `NotificationService.dispatch()`, `CompletionDocumentService.generate()`, `computed-evaluator`, approval-token verification |
-| **Derive, don't store** | Flowchart layout, completion-document bytes, requirement lists |
+| **Derive, don't store** | Flowchart layout, transcript bytes, workflow overviews |
 | **Freeze what a conversation depends on** | Selection candidate set; task workflow version |
 | **One chokepoint per external boundary** | `client.ts` for fetch; `env.config.ts` for `process.env`; `errorHandler` for error responses |
 | **Write the audit row before the destructive act** | Task deletion |
@@ -3060,8 +2813,8 @@ thing.
 
 | Issue | Detail | Fix |
 |---|---|---|
-| **Malformed ObjectId → 500** | On `/selection/sessions/:id*`, an invalid ObjectId fails inside the driver as `DATABASE_ERROR` instead of `400`/`404` | An ObjectId-shape guard in `request-validator.util.ts` |
-| **Pre-`requester_email` workflows** | Templates saved before that input existed produce tasks that send no requester notifications — pull-only via `GET /tasks/:id/status` | Regenerate the template from its prompt |
+| **Legacy template versions** | Versions generated before the revamp have no audience codes or `collects_inputs`; they are open to everyone and compile into one entry form | Regenerate the template from its prompt |
+| **Expired approval links** | There is no re-issue; the requester must start again | A requester-side **Resend link** that re-runs `DISPATCH_APPROVAL` |
 | **SMTP config unvalidated at startup** | A bad host surfaces only at send time | Intentional: caught and logged rather than crashing the process |
 | **`revalidate` is inert on API-backed pages** | The shared client sends `cache: "no-store"`, opting routes out of the Data Cache | Documented; `router.refresh()` is used instead |
 
@@ -3081,23 +2834,13 @@ thing.
 
 ### Tier 1 — Required before any real deployment
 
-**1. Directory / identity integration**
-Resolve `dynamic` actors against a real institutional directory.
-*Why the architecture is already ready:* `actor:*` requirements simply arrive
-pre-filled instead of asked. The collection loop, execution engine, and every
-downstream component are untouched — this was the explicit design goal of
-[§5.7](#57-task-planning--requirement-collection).
-*Closes:* the central trust gap ([§12.4](#124-the-central-trust-gap-self-asserted-identity)).
+**1. Directory coverage for the remaining roles**
+Add resolvers for posts the directory does not model yet (the academic advisor first).
+*Why the architecture is already ready:* assignee resolution is a registry keyed by
+resolution kind; a new resolver is Open/Closed, and templates and tasks need no change.
+*Closes:* the remaining identity gap ([§12.4](#124-identity-mostly-from-the-directory-now)).
 
-**2. Runtime condition evaluation**
-Evaluate `WorkflowStep.condition` in `ExecutionService.advance()`; a step whose
-condition is false becomes `skipped` rather than `ready`.
-*Foundation already present:* `computed-evaluator.util.ts` resolves namespace paths
-against collected values, and `checkNamespacePaths` guarantees every path is valid.
-*Why it matters:* today, the fourteen-day Dean rule is *generated, validated, and
-drawn on the flowchart* — but not enforced at runtime.
-
-**3. Complete user management**
+**2. Complete user management**
 Password change and reset (every user currently keeps `USER_DEFAULT_PASSWORD`), user
 update / disable / delete endpoints, a user-management screen in the web app, SSO or
 self-registration, and IP rate limiting on login.
@@ -3106,33 +2849,30 @@ schema, `UserService`, the `user:manage` permission, and per-user session revoca
 
 ### Tier 2 — Operational maturity
 
-**4. Readiness probe + metrics + tracing**
+**3. Readiness probe + metrics + tracing**
 `/health/ready` that pings both databases; counters for generation attempts, repair
 loops, selection decisions by type, and approval latency.
 
-**5. SLA reminders and escalation**
+**4. SLA reminders and escalation**
 A scheduler reading `WorkflowStep.sla` — reminder at `reminder_after_hours`,
 escalation to `fallback_role` at `escalate_after_hours`. Both fields already exist.
 
-**6. ObjectId guard**
-Close the 500-instead-of-400 rough edge.
-
 ### Tier 3 — Product depth
 
-**7. Approver accounts and permission-aware dashboards**
+**5. Approver accounts and permission-aware dashboards**
 Put `task:approve` to work — approvers sign in to act on their steps instead of
-holding a bare token link — and fold the remaining `/old/portal` screens into the
-permission-aware `/dashboard`.
+holding a bare token link. Assignees already carry `user_id`, so the inbox query is
+`steps.assignee.user_id = me AND status = awaiting_approver`.
 
-**8. Analytics on the corpus**
+**6. Analytics on the corpus**
 Which workflows are used most, which steps bottleneck, which get rejected, average
 time-to-completion per step. The `tasks` collection already holds every fact needed.
 
-**9. Multi-institution / tenancy**
+**7. Multi-institution / tenancy**
 `scope.institution_type` exists in the schema and filters retrieval. Real tenancy
 would add an org dimension to templates, users, and tasks.
 
-**10. Selection quality loop**
+**8. Selection quality loop**
 Feed real `no_match` and `manual_choice` outcomes back into `retrieval_summary`
 tuning — the sessions are already recorded with their frozen candidate sets and
 scores.
@@ -3162,9 +2902,8 @@ scores.
 | **Alias boost** | An additive score bump (default 0.15) applied when a query exactly matches a template's declared alias |
 | **Approval token** | An HMAC-SHA256-signed token minted per dispatched step, embedded in the approver's email link. Proves authenticity; usability is checked separately |
 | **Candidate** | A template returned by retrieval, carrying `score`, `base_score`, `alias_hits`, and its `retrieval_summary` |
-| **Completion document** | The deterministic PDF record generated when a task completes. Metadata persisted, bytes regenerated on demand |
 | **Computed value** | A derived value from a fixed operation set (`date_diff_days`, `sum`, …). Never a free-text formula |
-| **Dispatch** | Moving a `ready` step to `pending_approval`, minting its token, and emailing the assignee |
+| **Dispatch** | Moving an approval step to `awaiting_approver`, minting its token (hash stored), and emailing the assignee |
 | **Draft** | A workflow template status: title and prompt saved, nothing generated yet. Also `draft_prompt` — prompt text saved on a generated template but not yet generated |
 | **Entry step** | A step with `depends_on: []`. Every valid workflow has at least one |
 | **Few-shot examples** | Two worked input/output pairs loaded from real fixture files into the generation prompt |
@@ -3172,8 +2911,9 @@ scores.
 | **Namespace path** | A dotted reference into the shared run data: `inputs.x`, `computed.y`, `steps.z.outcome`, `requester.a`, `system.today` |
 | **Permission** | A `resource:action` code a user holds — `workflow:manage`, `task:create`, `task:approve`, `user:manage`, `organisation:manage`. Routes require one of a listed set; every user holds at least one |
 | **Publish gate** | A workflow template's `status` moving `unpublished` → `published`. Retrieval only ever sees published, unarchived templates |
-| **Reopen** | The "request more info" loop — an outcome that resets a step to `ready`, clears its token, and appends a `followup:*` requirement. Capped at 3 |
-| **Requirement** | One unit of the flat collection list: a template input, an unresolved actor, or a follow-up question |
+| **Information request** | A step inserted when an approver requests more information: one answer field for the requester, followed by a repeat of the same approval. Capped per approval |
+| **Requester profile** | The requester's memberships, designations, actor types and numbered facts, derived from the directory. Never asked for |
+| **Transcript** | The PDF record of a completed task, rendered on demand and never stored |
 | **`retrieval_summary`** | The block that gets embedded and read by the selector: one-liner, aliases, keywords, requester types, triggers, and **`not_for`** |
 | **Selection session** | A multi-round conversation record with a **frozen** candidate set |
 | **Selector agent** | The LLM that chooses `matched` / `ambiguous` / `no_match` over the frozen candidates |
@@ -3206,8 +2946,9 @@ controllers/               health · auth · user-session · user · workflow-te
 services/
   workflow-template · workflow-template-generation · validation · embedding
   retrieval · selector · selection
-  planner · task · execution · approval · notification
-  completion-document · audit
+  requester-profile · organisation-catalogue · assignee-resolution/
+  task · task-plan · task-form · task-engine · task-transition · task-effect-executor
+  approval · notification · task-transcript · audit
   authentication · user-session · user · organisation services
   azure-openai.client · azure-embedding.client
   vector-store/    interface · in-memory · atlas · index
@@ -3233,12 +2974,16 @@ utils/
   http/                    request-validator · serializer · actor · auth-context
                            · auth-serializer · bearer-token · user-serializer
                            · workflow-template-serializer
-  task/                    requirement-builder · value-validator · reference
-  approval/                token · outcome-resolver · answer-format
+  task/                    task-plan-compiler · task-field-validator · task-field-id · task-step-id
+                           · task-form-layout · information-request-insertion · reference · …
+  selection/               candidate-eligibility
+  requester/               requester-profile · requester-attribute · requester-attribute-input
+  assignee/                assignee-context-unit
+  approval/                token
   auth/                    user-session-token · permission · authenticated-user
   user/                    email
   database/                postgres-error
-  document/                completion-document · document-format · pdf-layout
+  document/                task-transcript · document-format · pdf-layout
 data/
   prompts/                 workflow-template-generation
                            · workflow-template-generation-few-shot · selector
@@ -3272,18 +3017,17 @@ app/
   login/page.tsx
   dashboard/ layout · page · workflows/{page, new/page, [workflowTemplateId]/page}
              · tasks · approvals · users · organisation · profile
-  old/    account/{layout,page} · portal/{layout, page, jobs/new/page, jobs/[id]/page}
+  dashboard/tasks/ page · new/page · [taskId]/page
+  old/    account/{layout,page}
   approvals/ layout · [token]/{page,loading,not-found}
   api/    auth/login · auth/logout · proxy/[...path]
 components/
   workflow-templates/  list/ · editor/ · detail/ · workspace/ · versions/ · shared/
              · flowchart/WorkflowFlowchart + nodes/{Step,Condition,Input,Terminal}
   dashboard/ DashboardShell · sidebar/ · topbar/
-  portal/    NewRequestFlow · SelectionChat · ChatComposer · ChatMessage
-             · TaskPlanPanel · PlanNode · RequirementDialog · RequirementField
-             · JobList · JobRow · JobStatusView · EmptyJobs · DeleteRequestDialog
-             · TopBar
-  approvals/ ApproverView · ApproverList · ReasonDialog
+  task-requests/ assistant/ · workspace/ · forms/ · list/ · shared/
+  approvals/ ApproverView · ApproverTaskSummary · ApproverHistory · ApproverDecisionPanel
+             · ApproverDecisionDialog · ApproverPlanRail · ApprovalLinkUnavailable
   account/   AccountProfileCard · PermissionBadgeList · ActiveSessionList
              · ActiveSessionRow
   auth/      LoginForm · SignOutButton
@@ -3294,11 +3038,13 @@ lib/
              · tasks · approvals · user-sessions · health
   auth/      session · session-cookie · auth-error-message · permission-label
   routing/   route-path
-  hooks/     useSelectionSession · useTaskCollection · useWorkflowTemplateData
+  hooks/     useSelectionConversation · useSelectionCatalogue · useTaskRequest(s)
+             · useTaskFormDraft · useTaskRequestActions · usePageHeading · useWorkflowTemplateData
              · useWorkflowTemplateEditor · useWorkflowTemplateLifecycle · …
-  workflow/  toFlowGraph · toPlanNodes · applyTaskProgress
+  workflow/  toFlowGraph
+  task-request/ conversation · form draft · field validation · presentation · progress · copy
   workflow-template/  editor-state · status · version-param · error-message
-             · field-limit · copy
+             · field-limit · copy · assignee-source-hint
   utils/     cn · format · submit-error
 types/       workflow · workflow-template · task · selection · approval · auth · permission · …
 ```
@@ -3310,6 +3056,7 @@ types/       workflow · workflow-template · task · selection · approval · a
 | Document | Covers |
 |---|---|
 | `overview.md` | The prior single-page project reference |
+| `task-request-revamp-phase-plan.md` | **Current** design of areas F–I and the requester and approver UIs: assistant, task plans, forms, approvals, transcript, with the end-to-end acceptance script. Supersedes the task planner, approval execution, requester contact, web task approval and completion document plans below |
 | `task-planner-design.md` | Area G design and the requirement-list insight |
 | `task-planner-implementation-plan.md` | Area G build plan |
 | `approval-execution-design.md` | Area H design: the pure-engine split |
@@ -3379,56 +3126,45 @@ permission, so it can drive both the authoring and the requester parts.
    regenerating makes the new version live immediately, and tasks already running
    stay on the version they started from.*
 
-### 2 · Requester selection (2 min)
+### 2 · The assistant (2 min)
 
-1. Open `/old/portal` with the same session. *Talking point: there is one login; what a
-   user can reach is decided by their permissions, checked by the API on every call.*
-2. **New Request** → type something deliberately vague: *"I need to go to a
-   conference in Singapore next month."*
-3. *Talking point: that query was embedded, matched against published templates by
-   vector similarity plus an alias boost, and handed to a selector agent with a
-   round budget of two.*
-4. If it asks a clarifying question, answer it. The plan preview appears.
-5. **Optional, and worth doing:** ask for something that genuinely doesn't exist.
-   *Talking point: it says `no_match` and stops. It does not stretch to the nearest
-   template. That refusal is the feature.*
+1. Sign in as `u17@u.c` (Kavindu, an IT student) in a second browser profile and open
+   **New task request**. Point at **See what Unblock can do**: only templates he is eligible
+   for, listed with no AI.
+2. Type *"I want to take 1 month overseas leave for a research visit."* It matches the IT
+   template with no question. Open **Show thinking**: profile read, candidates found, the
+   Engineering template left out by audience, the selector consulted once.
+3. **Optional, and worth doing:** ask for something that genuinely doesn't exist. *Talking
+   point: it says no match and stops. That refusal is the feature.*
 
-### 3 · Filling and starting (2 min)
+### 3 · The form (2 min)
 
-1. Answer the requirements one at a time in the modal.
-2. Point out the **approver requirement**: "Name and email of your Academic
-   Advisor." *Talking point: with no HR directory, an unresolved role is just another
-   input. When directory integration lands, this arrives pre-filled and nothing else
-   changes.*
-3. Try an invalid date — a return before departure. It's rejected by a cross-field
-   rule declared in the workflow itself.
-4. **Submit.** *Talking point: finalizing is not starting. Start dispatches the entry
-   steps, mints a signed token per step, and sends the emails.*
+1. **Start this task**. Name and email are locked and grey: they came from the account. HoD
+   and Dean are not asked: the directory found them. Only the advisor is named by hand.
+2. **Save draft**, refresh, and show the values persist. Try a return date before departure:
+   a cross-field rule rejects it.
+3. **Submit and continue.** The rail moves to the advisor: **Awaiting decision**.
 
 ### 4 · The approval chain (2 min)
 
-1. **Switch to the API terminal.** The console mailer has printed the full approval
-   URL. *Talking point: no mail account is configured. The whole chain is
-   demonstrable from a terminal.*
-2. Open the link in a private window. *Talking point: no session, no account. The
-   token in that URL is the entire authentication — scoped to one step of one task,
-   expiring in fourteen days, and revocable with a database write.*
-3. **Approve.** Back in the terminal: the next approver's email appears immediately.
-4. On the second step, choose **Request more information** and type a question.
-   *Talking point: that is not a backward edge in the graph. It's an outcome that
-   resets the step, clears its token, and appends a follow-up question to the
-   requester's list — which is how the dependency graph stays a strict DAG.*
-5. Answer as the requester; resubmit; approve.
+1. **Switch to the API terminal.** The console mailer printed the approval URL. Open it in a
+   private window. *Talking point: no session, no account; only the token's hash is stored.*
+2. Choose **Request more information** with a comment. Back on the workspace, a **More
+   information requested** step and a repeat review have appeared. Answer it; a fresh link
+   prints; approve.
+3. Approve as the HoD and the Dean (a 40-day trip needs the Dean; a 10-day one shows that step
+   as "Not required").
 
 ### 5 · Completion (1 min)
 
-1. The final approval triggers completion. **The PDF is in the console output**, and
-   downloadable from `/old/portal/jobs/[id]`.
-2. Open it: every input in declaration order, every computed value, every follow-up
-   Q&A, and every approver with their decision and timestamp.
-3. *Talking point: those bytes are not stored anywhere. The record is regenerated on
-   every request from a version-pinned workflow and an immutable task — and it is
-   byte-for-byte identical each time, which the test suite verifies by hash.*
+1. **Request completed.** **Download transcript**: the conversation, the answers, the
+   information request Q&A and the approval trail with comments.
+2. *Talking point: those bytes are not stored anywhere; the transcript is rendered on demand
+   from a version-pinned workflow and the task.*
+
+The full 10-minute script is [docs/demo-script.md](docs/demo-script.md), and the step-by-step
+acceptance walk is Appendix A of
+[docs/task-request-revamp-phase-plan.md](docs/task-request-revamp-phase-plan.md).
 
 ### 6 · Optional closers
 

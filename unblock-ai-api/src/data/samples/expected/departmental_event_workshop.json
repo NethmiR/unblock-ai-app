@@ -45,6 +45,7 @@
     "institution_type": "university",
     "applies_to": {
       "actor_type": "staff",
+      "organisational_unit_codes": [],
       "constraints": []
     }
   },
@@ -70,16 +71,6 @@
       "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
       "required": true,
       "validation": { "min_length": null, "max_length": null, "min": 1, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
-      "collection_hint": null
-    },
-    {
-      "id": "requester_email",
-      "label": "Your Email Address",
-      "description": "Email address for approval and outcome notifications.",
-      "type": "email",
-      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
-      "required": true,
-      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
       "collection_hint": null
     }
   ],
@@ -110,6 +101,7 @@
         { "id": "venue_name", "label": "Assigned Venue", "type": "string", "required_on_outcome": ["approved"] }
       ],
       "context_from_steps": [],
+      "collects_inputs": [],
       "outcomes": {
         "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
         "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
@@ -141,6 +133,7 @@
       "instructions_to_approver": "Verify and clear the guest speaker for campus access.",
       "response_fields": [],
       "context_from_steps": [],
+      "collects_inputs": [],
       "outcomes": {
         "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
         "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
@@ -174,6 +167,7 @@
       "context_from_steps": [
         { "step_id": "hall_booking", "field": "confirmed_capacity", "as": "venue_capacity" }
       ],
+      "collects_inputs": [],
       "outcomes": {
         "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
         "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },

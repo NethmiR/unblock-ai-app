@@ -9,7 +9,7 @@ import type { RetrievalConfig } from "../../../src/lib/types/config/config.type.
 const RETRIEVAL_CONFIG: RetrievalConfig = {
   topK: 3,
   aliasBoost: 0.15,
-  maxSelectionRounds: 2,
+  minScore: 0,
   vectorBackend: "memory",
   atlasIndexName: "template_vector_index",
 };

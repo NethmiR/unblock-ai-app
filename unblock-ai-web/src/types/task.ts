@@ -1,105 +1,212 @@
 /**
- * TypeScript mirror of unblock-ai-api/src/lib/types/task/{requirement,task}.type.ts.
+ * TypeScript mirror of unblock-ai-api/src/lib/types/task/task-dto.type.ts and the enums in
+ * unblock-ai-api/src/data/constants/{task,assignee,task-error}.constant.ts.
  *
  * WHEN THE SCHEMA CHANGES, CHANGE THIS FILE IN THE SAME COMMIT.
- * There is no codegen step; this is a hand-maintained contract, and a drifted
- * contract produces `undefined` at runtime with no compile error.
  */
-import type { InputType, InputValidation } from "./workflow";
+import type { RequesterSnapshotDto } from "./requester";
+import type { SelectionMessageRole } from "./selection";
+import type { TaskFormDto } from "./task-form";
+import type { Workflow } from "./workflow";
 
-export type RequirementSource = "input" | "actor";
-export type RequirementStatus = "pending" | "filled" | "skipped";
-export type RequirementType = InputType | "person";
-
-export interface PersonValue {
-  name: string;
-  email: string;
+export enum TaskStatus {
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed",
+  REJECTED = "rejected",
+  CANCELLED = "cancelled",
 }
 
-export type RequirementValue = string | number | boolean | PersonValue | null;
+export const TASK_STATUSES: readonly TaskStatus[] = Object.values(TaskStatus);
+export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = [TaskStatus.COMPLETED, TaskStatus.REJECTED, TaskStatus.CANCELLED];
 
-export interface TaskRequirement {
-  key: string;
-  source: RequirementSource;
-  ref: string;
-  label: string;
-  description: string | null;
-  type: RequirementType;
-  required: boolean;
-  validation: InputValidation | null;
-  collection_hint: string | null;
-  status: RequirementStatus;
+export enum TaskStepKind {
+  FORM = "form",
+  APPROVAL = "approval",
+  INFORMATION_REQUEST = "information_request",
+  NOTIFICATION = "notification",
+  AUTOMATED_ACTION = "automated_action",
 }
 
-export type TaskStatus =
-  | "collecting"
-  | "ready"
-  | "in_progress"
-  | "completed"
-  | "rejected"
-  | "cancelled";
+export enum TaskStepOrigin {
+  WORKFLOW = "workflow",
+  ENTRY_FORM = "entry_form",
+  INFORMATION_REQUEST = "information_request",
+  APPROVAL_REPEAT = "approval_repeat",
+}
 
-export type StepRuntimeState =
-  | "blocked"
-  | "ready"
-  | "pending_approval"
-  | "approved"
-  | "rejected"
-  | "skipped";
+export enum TaskStepStatus {
+  UPCOMING = "upcoming",
+  AWAITING_REQUESTER = "awaiting_requester",
+  AWAITING_APPROVER = "awaiting_approver",
+  COMPLETED = "completed",
+  SKIPPED = "skipped",
+  CANCELLED = "cancelled",
+}
 
-export type StepOutcomeResult = "approved" | "rejected" | "request_more_info";
+export const ACTIVE_TASK_STEP_STATUSES: readonly TaskStepStatus[] = [TaskStepStatus.AWAITING_REQUESTER, TaskStepStatus.AWAITING_APPROVER];
 
-export interface TaskStepState {
-  step_id: string;
-  name: string;
-  type: string; // API types this `string`, not StepType — mirror it as-is
-  depends_on: Array<{ step_id: string; required_outcome: string }>;
-  state: StepRuntimeState;
-  assignee: PersonValue | null;
-  outcome: StepOutcomeResult | null;
-  reason: string | null;
-  responded_at: string | null; // Date on the API, ISO string on the wire
-  approval_token: string | null;
-  token_expires_at: string | null;
-  token_used_at: string | null;
+export enum TaskStepOutcome {
+  COMPLETED = "completed",
+  APPROVED = "approved",
+  REJECTED = "rejected",
+  REQUEST_MORE_INFO = "request_more_info",
+  SKIPPED = "skipped",
+}
+
+export enum ApprovalDecision {
+  APPROVED = "approved",
+  REJECTED = "rejected",
+  REQUEST_MORE_INFO = "request_more_info",
+}
+
+export enum TaskCreationSource {
+  SELECTION_SESSION = "selection_session",
+  CATALOGUE = "catalogue",
+}
+
+export enum AssigneeSource {
+  DIRECTORY = "directory",
+  REQUESTER_CHOICE = "requester_choice",
+  REQUESTER_SUPPLIED = "requester_supplied",
+  REQUESTER = "requester",
+  SYSTEM = "system",
+}
+
+export enum AssigneeResolutionNote {
+  NOT_A_DESIGNATION = "not_a_designation",
+  NO_HOLDER = "no_holder",
+  MULTIPLE_HOLDERS = "multiple_holders",
+  HOLDER_IS_REQUESTER = "holder_is_requester",
+  RESOLVED_BY_FALLBACK = "resolved_by_fallback",
+}
+
+export enum TaskErrorCode {
+  TASK_NOT_FOUND = "TASK_NOT_FOUND",
+  TASK_NOT_ACTIVE = "TASK_NOT_ACTIVE",
+  TASK_NOT_DELETABLE = "TASK_NOT_DELETABLE",
+  TASK_REVISION_CONFLICT = "TASK_REVISION_CONFLICT",
+  TASK_FORM_NOT_FOUND = "TASK_FORM_NOT_FOUND",
+  TASK_FORM_ALREADY_SUBMITTED = "TASK_FORM_ALREADY_SUBMITTED",
+  TASK_FORM_NOT_AWAITING_INPUT = "TASK_FORM_NOT_AWAITING_INPUT",
+  TASK_FORM_INVALID = "TASK_FORM_INVALID",
+  TASK_TRANSCRIPT_UNAVAILABLE = "TASK_TRANSCRIPT_UNAVAILABLE",
+}
+
+export interface TaskAssigneeDto {
+  source: AssigneeSource;
+  full_name: string | null;
+  email: string | null;
+  designation_title: string | null;
+  organisational_unit_name: string | null;
+  note: AssigneeResolutionNote | null;
+}
+
+export interface TaskApprovalDto {
+  decision: ApprovalDecision | null;
+  comment: string | null;
+  decided_at: string | null;
   notified_at: string | null;
-  reopen_count: number;
 }
 
-export interface TaskAuditEntry {
-  type: string;
-  detail: string | null;
-  created_at: string;
+export interface TaskInformationRequestDto {
+  requested_by_step_id: string;
+  question: string;
 }
 
-/** Metadata only - the bytes are fetched separately via `tasksApi.document`. */
-export interface CompletionDocumentRecord {
-  generated_at: string; // Date on the API, ISO string on the wire
-  filename: string;
-  byte_size: number;
-  sha256: string;
-  emailed_to: string | null;
-  emailed_at: string | null; // Date on the API, ISO string on the wire
+export interface TaskStepDto {
+  id: string;
+  position: number;
+  kind: TaskStepKind;
+  origin: TaskStepOrigin;
+  name: string;
+  description: string | null;
+  status: TaskStepStatus;
+  outcome: TaskStepOutcome | null;
+  is_conditional: boolean;
+  form_id: string | null;
+  assignee: TaskAssigneeDto | null;
+  approval: TaskApprovalDto | null;
+  information_request: TaskInformationRequestDto | null;
+  activated_at: string | null;
+  completed_at: string | null;
+}
+
+export interface TaskProgressDto {
+  completed: number;
+  total: number;
+  current_step_ids: string[];
+}
+
+export interface TaskAvailableActionsDto {
+  can_cancel: boolean;
+  can_delete: boolean;
+  can_download_transcript: boolean;
+}
+
+export interface TaskConversationMessageDto {
+  role: SelectionMessageRole;
+  text: string;
+  sent_at: string;
+}
+
+export interface UnsupportedTaskInput {
+  input_id: string;
+  label: string;
 }
 
 export interface TaskDto {
   id: string;
   reference: string;
-  session_id: string;
-  created_by: string;
+  title: string;
+  status: TaskStatus;
+  creation_source: TaskCreationSource;
   workflow_template_id: string;
   workflow_template_version: number;
+  requester: RequesterSnapshotDto;
+  conversation: TaskConversationMessageDto[];
+  steps: TaskStepDto[];
+  forms: TaskFormDto[];
+  unsupported_inputs: UnsupportedTaskInput[];
+  progress: TaskProgressDto;
+  available_actions: TaskAvailableActionsDto;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface TaskSummaryStepDto {
+  id: string;
+  name: string;
+  status: TaskStepStatus;
+}
+
+export interface TaskSummaryDto {
+  id: string;
+  reference: string;
+  title: string;
   status: TaskStatus;
-  requirements: TaskRequirement[];
-  values: Record<string, RequirementValue>;
-  steps: TaskStepState[];
-  audit: TaskAuditEntry[];
-  completion_document: CompletionDocumentRecord | null;
+  current_steps: TaskSummaryStepDto[];
+  progress: TaskProgressDto;
   created_at: string;
   updated_at: string;
 }
 
-export interface NextRequirementDto {
-  requirement: TaskRequirement | null;
-  complete: boolean;
+export interface TaskListResponseDto {
+  tasks: TaskSummaryDto[];
+  page: { total: number; limit: number; offset: number };
+}
+
+export interface TaskWorkflowDefinitionDto {
+  definition: Workflow;
+}
+
+export type CreateTaskRequest =
+  | { source: TaskCreationSource.SELECTION_SESSION; selection_session_id: string }
+  | { source: TaskCreationSource.CATALOGUE; workflow_template_id: string };
+
+export interface TaskListQuery {
+  status: TaskStatus | null;
+  search: string | null;
+  limit: number;
+  offset: number;
 }

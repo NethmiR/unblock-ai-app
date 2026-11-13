@@ -8,10 +8,12 @@ export function createSelectionRouter(controller: SelectionController): Router {
   const router = Router();
   const createTasks = requireAnyPermission(Permission.TASK_CREATE);
 
+  router.get("/selection/catalogue", createTasks, asyncHandler(controller.getCatalogue));
   router.post("/selection/sessions", createTasks, asyncHandler(controller.startSession));
-  router.post("/selection/sessions/:id/answer", createTasks, asyncHandler(controller.answerQuestion));
+  router.get("/selection/sessions/:id", createTasks, asyncHandler(controller.getSession));
+  router.post("/selection/sessions/:id/messages", createTasks, asyncHandler(controller.postMessage));
   router.post("/selection/sessions/:id/choose", createTasks, asyncHandler(controller.chooseWorkflowTemplate));
-  router.get("/selection/sessions/:id/workflow-template", createTasks, asyncHandler(controller.getMatchedWorkflowTemplate));
+  router.delete("/selection/sessions/:id", createTasks, asyncHandler(controller.discardSession));
 
   return router;
 }

@@ -16,8 +16,13 @@ const NODE_TYPES: NodeTypes = {
   terminal: TerminalNode,
 };
 
-export function WorkflowFlowchart({ definition }: { definition: WorkflowTemplateDefinition }) {
-  const { nodes, edges } = useMemo(() => toFlowGraph(definition), [definition]);
+interface WorkflowFlowchartProps {
+  definition: WorkflowTemplateDefinition;
+  designationCodes?: ReadonlySet<string> | null;
+}
+
+export function WorkflowFlowchart({ definition, designationCodes = null }: WorkflowFlowchartProps) {
+  const { nodes, edges } = useMemo(() => toFlowGraph(definition, designationCodes), [definition, designationCodes]);
 
   return (
     <ReactFlow

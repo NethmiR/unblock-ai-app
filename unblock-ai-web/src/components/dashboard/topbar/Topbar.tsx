@@ -3,6 +3,7 @@ import { Icon } from "@/components/ui/icons/Icon";
 import { APP_CONFIG } from "@/lib/config/app.config";
 import { DASHBOARD_COPY } from "@/lib/constants/ui-copy";
 import { useDashboardNavigation } from "@/lib/hooks/useDashboardNavigation";
+import { usePageHeadingOverride } from "@/lib/hooks/usePageHeading";
 import { IconName } from "@/types/icon";
 import { TopbarUserSummary } from "./TopbarUserSummary";
 
@@ -12,9 +13,12 @@ interface TopbarProps {
   onOpenSidebar: () => void;
 }
 
-/** Page heading (from the active nav item) on the left, the signed-in user on the right. */
+/** Page heading (a screen override, else the active nav item) on the left, the signed-in user on the right. */
 export function Topbar({ sidebarId, isSidebarOpen, onOpenSidebar }: TopbarProps) {
   const { activeItem } = useDashboardNavigation();
+  const override = usePageHeadingOverride();
+  const title = override?.title ?? activeItem?.title ?? APP_CONFIG.name;
+  const description = override ? override.description : (activeItem?.description ?? null);
 
   return (
     <header className="flex flex-none items-center gap-3 rounded-card border border-line-admin bg-surface px-4 py-3 sm:px-6">
@@ -31,9 +35,9 @@ export function Topbar({ sidebarId, isSidebarOpen, onOpenSidebar }: TopbarProps)
 
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-[18px] font-bold tracking-tight text-accent">
-          {activeItem?.title ?? APP_CONFIG.name}
+          {title}
         </h1>
-        {activeItem && <p className="truncate text-[13px] text-muted">{activeItem.description}</p>}
+        {description && <p className="truncate text-[13px] text-muted">{description}</p>}
       </div>
 
       <TopbarUserSummary />

@@ -4,11 +4,18 @@ import type { AzureOpenAI } from "openai";
 import { FinishReason, type GoogleGenAI } from "@google/genai";
 import { AzureOpenAILlmAdapter } from "../../../src/services/llm-adapter/azure-openai.llm-adapter.js";
 import { GeminiLlmAdapter } from "../../../src/services/llm-adapter/gemini.llm-adapter.js";
-import { createLlmAdapter } from "../../../src/services/llm-adapter/index.llm-adapter.js";
+import { createLlmAdapter, createLlmAdapters } from "../../../src/services/llm-adapter/index.llm-adapter.js";
+import { UsageLoggingLlmAdapter } from "../../../src/services/llm-adapter/usage-logging.llm-adapter.js";
+import type { ILlmAdapter } from "../../../src/services/llm-adapter/llm-adapter.interface.js";
+import type { Logger } from "../../../src/utils/shared/logger.util.js";
 import { AiProvider } from "../../../src/data/constants/ai-provider.constant.js";
-import { LlmFinishReason, LlmMessageRole } from "../../../src/data/constants/llm.constant.js";
+import { LlmFinishReason, LlmMessageRole, LlmOperation } from "../../../src/data/constants/llm.constant.js";
 import type { LlmCompletionRequest } from "../../../src/lib/types/ai/llm.type.js";
-import type { AzureOpenAIConnectionConfig, GeminiConnectionConfig } from "../../../src/lib/types/config/config.type.js";
+import type {
+  AiProviderConnectionConfig,
+  AzureOpenAIConnectionConfig,
+  GeminiConnectionConfig,
+} from "../../../src/lib/types/config/config.type.js";
 
 const AZURE_CONFIG: AzureOpenAIConnectionConfig = {
   endpoint: "https://fake.openai.azure.com/",
@@ -22,6 +29,7 @@ const GEMINI_CONFIG: GeminiConnectionConfig = { apiKey: "fake-key", model: "gemi
 const JSON_CONTENT = JSON.stringify({ ok: true });
 
 const STRUCTURED_REQUEST: LlmCompletionRequest = {
+  operation: LlmOperation.WORKFLOW_SELECTION,
   messages: [
     { role: LlmMessageRole.SYSTEM, content: "You are a classifier." },
     { role: LlmMessageRole.USER, content: "first question" },
@@ -98,7 +106,7 @@ test("azure adapter omits response_format when no response schema is requested",
   let sent: Record<string, unknown> = {};
   const adapter = new AzureOpenAILlmAdapter({ config: AZURE_CONFIG, client: fakeAzureClient((body) => (sent = body)) });
 
-  await adapter.generateCompletion({ messages: [{ role: LlmMessageRole.USER, content: "hi" }] });
+  await adapter.generateCompletion({ operation: LlmOperation.WORKFLOW_SELECTION, messages: [{ role: LlmMessageRole.USER, content: "hi" }] });
 
   assert.equal("response_format" in sent, false);
 });
@@ -152,7 +160,7 @@ test("gemini adapter sends no structured-output config when no response schema i
   let sent: Record<string, unknown> = {};
   const adapter = new GeminiLlmAdapter({ config: GEMINI_CONFIG, client: fakeGeminiClient((params) => (sent = params)) });
 
-  await adapter.generateCompletion({ messages: [{ role: LlmMessageRole.USER, content: "hi" }] });
+  await adapter.generateCompletion({ operation: LlmOperation.WORKFLOW_SELECTION, messages: [{ role: LlmMessageRole.USER, content: "hi" }] });
 
   assert.deepEqual(sent.config, {});
 });
@@ -189,4 +197,70 @@ test("gemini adapter normalises provider finish reasons", async () => {
 test("createLlmAdapter builds the adapter for the configured provider", () => {
   assert.ok(createLlmAdapter({ provider: AiProvider.AZURE_OPENAI, azureOpenAI: AZURE_CONFIG }) instanceof AzureOpenAILlmAdapter);
   assert.ok(createLlmAdapter({ provider: AiProvider.GEMINI, gemini: GEMINI_CONFIG }) instanceof GeminiLlmAdapter);
+});
+
+function recordingAdapter(modelName: string): ILlmAdapter {
+  return {
+    modelName,
+    generateCompletion: async () => ({
+      content: "{}",
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      finishReason: LlmFinishReason.STOP,
+    }),
+  };
+}
+
+test("UsageLoggingLlmAdapter delegates and logs usage labelled by operation", async () => {
+  const entries: Array<{ message: string; meta: Record<string, unknown> | undefined }> = [];
+  const logger: Logger = {
+    debug: () => {},
+    info: (message, meta) => entries.push({ message, meta }),
+    warn: () => {},
+    error: () => {},
+  };
+  const ticks = [100, 140];
+  const adapter = new UsageLoggingLlmAdapter({ adapter: recordingAdapter("gpt-small"), logger, now: () => ticks.shift() ?? 0 });
+
+  const completion = await adapter.generateCompletion(STRUCTURED_REQUEST);
+
+  assert.equal(completion.content, "{}");
+  assert.equal(adapter.modelName, "gpt-small");
+  assert.deepEqual(entries[0]?.meta, {
+    operation: LlmOperation.WORKFLOW_SELECTION,
+    model: "gpt-small",
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15,
+    durationMs: 40,
+  });
+});
+
+test("createLlmAdapters reuses one adapter when no operation override is configured", () => {
+  const built: AiProviderConnectionConfig[] = [];
+  const adapters = createLlmAdapters(
+    { provider: AiProvider.AZURE_OPENAI, azureOpenAI: AZURE_CONFIG, operationModels: {} },
+    (connection) => {
+      built.push(connection);
+      return recordingAdapter("gpt-4o");
+    },
+  );
+
+  assert.equal(built.length, 1);
+  assert.equal(adapters[LlmOperation.WORKFLOW_SELECTION], adapters[LlmOperation.WORKFLOW_TEMPLATE_GENERATION]);
+  assert.ok(adapters[LlmOperation.WORKFLOW_SELECTION] instanceof UsageLoggingLlmAdapter);
+});
+
+test("createLlmAdapters routes an operation override to its own model", () => {
+  const built: AiProviderConnectionConfig[] = [];
+  const adapters = createLlmAdapters(
+    { provider: AiProvider.GEMINI, gemini: GEMINI_CONFIG, operationModels: { [LlmOperation.WORKFLOW_SELECTION]: "gemini-mini" } },
+    (connection) => {
+      built.push(connection);
+      return recordingAdapter(connection.provider === AiProvider.GEMINI ? connection.gemini.model : "");
+    },
+  );
+
+  assert.equal(built.length, 2);
+  assert.equal(adapters[LlmOperation.WORKFLOW_SELECTION].modelName, "gemini-mini");
+  assert.equal(adapters[LlmOperation.WORKFLOW_TEMPLATE_GENERATION].modelName, GEMINI_CONFIG.model);
 });

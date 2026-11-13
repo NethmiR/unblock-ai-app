@@ -1,5 +1,7 @@
 # Task Planner — Implementation Plan
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 Step-by-step build order for the endpoints described in
 [task-planner-design.md](task-planner-design.md). Read that first — this document assumes
 its decisions and does not re-argue them.

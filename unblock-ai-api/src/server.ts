@@ -9,7 +9,12 @@ import { WorkflowTemplateVersionModel } from "./models/workflow-template-version
 import { SelectionSessionModel } from "./models/selection-session.model.js";
 import { TaskModel } from "./models/task.model.js";
 import { AuditLogModel } from "./models/audit-log.model.js";
-import { createLlmAdapter } from "./services/llm-adapter/index.llm-adapter.js";
+import { createLlmAdapters } from "./services/llm-adapter/index.llm-adapter.js";
+import { LlmOperation } from "./data/constants/llm.constant.js";
+import { OrganisationCatalogueService } from "./services/organisation-catalogue.service.js";
+import { RequesterProfileService } from "./services/requester-profile.service.js";
+import { AssigneeResolutionService } from "./services/assignee-resolution.service.js";
+import { createAssigneeResolverRegistry } from "./services/assignee-resolution/index.assignee-resolver.js";
 import { createEmbeddingAdapter } from "./services/embedding-adapter/index.embedding-adapter.js";
 import { EmbeddingService } from "./services/embedding.service.js";
 import { ValidationService } from "./services/validation.service.js";
@@ -20,14 +25,19 @@ import { createVectorStore } from "./services/vector-store/index.vector-store.js
 import { RetrievalService } from "./services/retrieval.service.js";
 import { SelectorService } from "./services/selector.service.js";
 import { SelectionService } from "./services/selection.service.js";
-import { PlannerService } from "./services/planner.service.js";
-import { ExecutionService } from "./services/execution.service.js";
 import { NotificationService } from "./services/notification.service.js";
-import { ApprovalService } from "./services/approval.service.js";
-import { CompletionDocumentService } from "./services/completion-document.service.js";
-import { createDocumentRenderer } from "./services/document/index.document.js";
 import { createMailer } from "./services/mailer/index.mailer.js";
 import { TaskService } from "./services/task.service.js";
+import { TaskEngineService } from "./services/task-engine.service.js";
+import { TaskPlanService } from "./services/task-plan.service.js";
+import { TaskFormService } from "./services/task-form.service.js";
+import { TaskTransitionService } from "./services/task-transition.service.js";
+import { TaskEffectExecutorService } from "./services/task-effect-executor.service.js";
+import { TaskFormController } from "./controllers/task-form.controller.js";
+import { ApprovalController } from "./controllers/approval.controller.js";
+import { ApprovalService } from "./services/approval.service.js";
+import { TaskTranscriptService } from "./services/task-transcript.service.js";
+import { createDocumentRenderer } from "./services/document/index.document.js";
 import { createRepositoryRegistry } from "./repositories/repository-registry.factory.js";
 import { UserSessionService } from "./services/user-session.service.js";
 import { AuthenticationService } from "./services/authentication.service.js";
@@ -38,7 +48,6 @@ import { UserAffiliationService } from "./services/user-affiliation.service.js";
 import { WorkflowTemplateController } from "./controllers/workflow-template.controller.js";
 import { SelectionController } from "./controllers/selection.controller.js";
 import { TaskController } from "./controllers/task.controller.js";
-import { ApprovalController } from "./controllers/approval.controller.js";
 import { HealthController } from "./controllers/health.controller.js";
 import { AuthController } from "./controllers/auth.controller.js";
 import { UserSessionController } from "./controllers/user-session.controller.js";
@@ -55,11 +64,10 @@ async function main(): Promise<void> {
   const auditLogModel = new AuditLogModel();
 
   const auditService = new AuditService({ auditLogModel });
-  const llmAdapter = createLlmAdapter(config.llm);
+  const llmAdapters = createLlmAdapters(config.llm);
   const embeddingAdapter = createEmbeddingAdapter(config.embedding);
   const embeddingService = new EmbeddingService({ embeddingAdapter });
   const validationService = new ValidationService();
-  const workflowTemplateGenerationService = new WorkflowTemplateGenerationService({ llmAdapter, validationService });
 
   const {
     userRepository,
@@ -68,6 +76,18 @@ async function main(): Promise<void> {
     designationRepository,
     userAffiliationRepository,
   } = createRepositoryRegistry(config.postgres.repositoryBackend);
+
+  const organisationCatalogueService = new OrganisationCatalogueService({ organisationalUnitRepository, designationRepository });
+  const requesterProfileService = new RequesterProfileService({ userRepository, userAffiliationRepository });
+  const assigneeResolutionService = new AssigneeResolutionService({
+    registry: createAssigneeResolverRegistry({ holderLookup: userAffiliationRepository }),
+  });
+  const workflowTemplateGenerationService = new WorkflowTemplateGenerationService({
+    llmAdapter: llmAdapters[LlmOperation.WORKFLOW_TEMPLATE_GENERATION],
+    validationService,
+    organisationCatalogueService,
+    generationConfig: config.workflowTemplateGeneration,
+  });
 
   const userSessionService = new UserSessionService({ userSessionRepository, authConfig: config.auth });
   const authenticationService = new AuthenticationService({
@@ -99,45 +119,56 @@ async function main(): Promise<void> {
   });
 
   const retrievalService = new RetrievalService({ vectorStore, embeddingService });
-  const selectorService = new SelectorService({ llmAdapter });
+  const selectorService = new SelectorService({ llmAdapter: llmAdapters[LlmOperation.WORKFLOW_SELECTION] });
   const selectionService = new SelectionService({
     retrievalService,
     selectorService,
     sessionModel,
     workflowTemplateService,
+    workflowTemplateModel,
+    workflowTemplateVersionModel,
+    requesterProfileService,
+    organisationCatalogueService,
+    selectionConfig: config.selection,
   });
-  const plannerService = new PlannerService();
   const mailer = createMailer(config.mail.transport, config.mail);
-  const notificationService = new NotificationService({ mailer, config });
-  const executionService = new ExecutionService();
-  const documentRenderer = createDocumentRenderer(config.document.format);
-  const completionDocumentService = new CompletionDocumentService({ renderer: documentRenderer, config });
+  const notificationService = new NotificationService({ mailer, mailConfig: config.mail, documentConfig: config.document });
+  const transcriptService = new TaskTranscriptService({
+    renderer: createDocumentRenderer(config.document.format),
+    documentConfig: config.document,
+    workflowTemplateService,
+  });
+  const taskEngine = new TaskEngineService();
+  const effectExecutor = new TaskEffectExecutorService({
+    taskModel,
+    mailConfig: config.mail,
+    notifier: notificationService,
+    transcriptRenderer: transcriptService,
+  });
+  const transitions = new TaskTransitionService({ taskModel, effectExecutor, workflowTemplateService, taskConfig: config.task });
+  const taskPlanService = new TaskPlanService({ assigneeResolutionService });
   const taskService = new TaskService({
     taskModel,
     selectionService,
     workflowTemplateService,
-    plannerService,
-    executionService,
-    notificationService,
+    requesterProfileService,
+    organisationCatalogueService,
+    taskPlanService,
+    taskEngine,
+    transitions,
+    effectExecutor,
     auditService,
-    completionDocumentService,
-    config,
   });
-  const approvalService = new ApprovalService({
-    taskModel,
-    workflowTemplateService,
-    executionService,
-    notificationService,
-    taskService,
-    completionDocumentService,
-    config,
-  });
+  const taskFormService = new TaskFormService({ taskModel, taskEngine, transitions });
+  const approvalService = new ApprovalService({ taskModel, taskEngine, transitions, mailConfig: config.mail });
+  const serialization = { documentsEnabled: config.document.enabled, isDeletable: TaskService.isDeletable };
 
   const controllers = {
     healthController: new HealthController(),
     workflowTemplateController: new WorkflowTemplateController({ workflowTemplateService }),
     selectionController: new SelectionController({ selectionService }),
-    taskController: new TaskController({ taskService }),
+    taskController: new TaskController({ taskService, serialization, transcriptService }),
+    taskFormController: new TaskFormController({ taskFormService, serialization }),
     approvalController: new ApprovalController({ approvalService }),
     authController: new AuthController({ authenticationService }),
     userSessionController: new UserSessionController({ userSessionService }),

@@ -1,5 +1,7 @@
 # Requester Contact — Implementation Plan (Option A)
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 Closes the gap recorded in [requester-contact-gap.md](requester-contact-gap.md): the system
 has no way to email the requester, because nothing captures a requester's email address.
 

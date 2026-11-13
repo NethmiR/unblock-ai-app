@@ -1,518 +1,128 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ObjectId } from "mongodb";
-import { ApprovalService } from "../../../src/services/approval.service.js";
-import { ExecutionService } from "../../../src/services/execution.service.js";
-import { NotificationService } from "../../../src/services/notification.service.js";
-import { TaskService } from "../../../src/services/task.service.js";
-import { CompletionDocumentService } from "../../../src/services/completion-document.service.js";
-import { TextDocumentRenderer } from "../../../src/services/document/text.document.js";
-import { PlannerService } from "../../../src/services/planner.service.js";
+import { ApprovalErrorCode } from "../../../src/data/constants/approval-error.constant.js";
+import { ApprovalDecision, TaskCreationSource, TaskStatus, TaskStepStatus } from "../../../src/data/constants/task.constant.js";
 import { issueToken } from "../../../src/utils/approval/token.util.js";
-import { NotFoundError } from "../../../src/errors/not-found.error.js";
-import { ValidationError } from "../../../src/errors/validation.error.js";
-import { ConflictError } from "../../../src/errors/conflict.error.js";
-import { STEP_STATE, TASK_STATUS } from "../../../src/data/constants/status.constant.js";
-import { FakeAuditLogModel, FakeTaskModel } from "../../helpers/fake-model.helper.js";
-import { AuditService } from "../../../src/services/audit.service.js";
-import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
-import { LEAVE_WORKFLOW_TEMPLATE_ID, stubWorkflowTemplateService } from "../../helpers/workflow-template.helper.js";
-import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
-import type { IDocumentRenderer } from "../../../src/services/document/document.interface.js";
-import type { MailMessage, MailSendResult } from "../../../src/lib/types/approval/mail.type.js";
-import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
-import type { TaskDocument, TaskStepState } from "../../../src/lib/types/task/task.type.js";
-import type { WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
-import type { CompletionDocument, RenderedDocument } from "../../../src/lib/types/document/document.type.js";
+import { withErrorCode } from "../../helpers/error-assertion.helper.js";
+import { IT_LEAVE_ID } from "../../helpers/selection-testbed.helper.js";
+import {
+  createTaskTestbed,
+  ENTRY_FORM_ID,
+  leaveEntryValues,
+  RecordingNotifier,
+  TEST_MAIL_CONFIG,
+  type TaskTestbed,
+} from "../../helpers/task-testbed.helper.js";
 
-const LEAVE_WORKFLOW = loadExpectedFixture("it_faculty_overseas_leave.json");
-const SECRET = "test-secret";
+interface Dispatched {
+  bed: TaskTestbed;
+  notifier: RecordingNotifier;
+  taskId: string;
+}
 
-const FAKE_CONFIG = {
-  mail: { appPublicUrl: "https://unblock.example", tokenSecret: SECRET, tokenTtlDays: 14 },
-  document: {
-    enabled: true,
-    attachToEmail: true,
-    format: "text",
-    institutionName: "Unblock AI",
-    maxAttachmentBytes: 5_000_000,
-  },
-} as unknown as AppConfig;
+async function dispatchedLeave(options: { now?: () => Date; returnDate?: string } = {}): Promise<Dispatched> {
+  const notifier = new RecordingNotifier();
+  const bed = await createTaskTestbed({ notifier, now: options.now });
+  const task = await bed.taskService.create(bed.world.userIdOf("Kavindu Jayawardena"), { source: TaskCreationSource.CATALOGUE, workflowTemplateId: IT_LEAVE_ID });
+  const taskId = String(task._id);
+  await bed.taskFormService.submit(taskId, ENTRY_FORM_ID, leaveEntryValues(options.returnDate));
+  return { bed, notifier, taskId };
+}
 
-class ThrowingDocumentRenderer implements IDocumentRenderer {
-  render(_doc: CompletionDocument): Promise<RenderedDocument> {
-    return Promise.reject(new Error("renderer exploded"));
+test("the approver view shows the request, the plan and the allowed decisions", async () => {
+  const { bed, notifier } = await dispatchedLeave();
+
+  const view = await bed.approvalService.getView(notifier.tokenFor("advisor_review"));
+
+  assert.equal(view.context.step.id, "advisor_review");
+  assert.equal(view.context.live, true);
+  assert.deepEqual(view.allowedDecisions, [ApprovalDecision.APPROVED, ApprovalDecision.REJECTED, ApprovalDecision.REQUEST_MORE_INFO]);
+  assert.ok(view.computed.some((field) => field.value === "40"));
+  assert.equal(notifier.calls[0]?.to, "advisor@u.c");
+});
+
+test("a forged or unknown link is invalid", async () => {
+  const { bed, taskId } = await dispatchedLeave();
+
+  await assert.rejects(bed.approvalService.getView("garbage"), withErrorCode(ApprovalErrorCode.APPROVAL_LINK_INVALID));
+  await assert.rejects(
+    bed.approvalService.getView(issueToken(taskId, "advisor_review", TEST_MAIL_CONFIG.tokenSecret)),
+    withErrorCode(ApprovalErrorCode.APPROVAL_LINK_INVALID),
+  );
+  await assert.rejects(
+    bed.approvalService.getView(issueToken(taskId, "advisor_review", "wrong-secret")),
+    withErrorCode(ApprovalErrorCode.APPROVAL_LINK_INVALID),
+  );
+});
+
+test("an expired link returns gone", async () => {
+  let now = new Date("2026-11-13T09:00:00Z");
+  const { bed, notifier } = await dispatchedLeave({ now: () => now });
+  now = new Date("2026-12-31T09:00:00Z");
+
+  await assert.rejects(bed.approvalService.getView(notifier.tokenFor("advisor_review")), withErrorCode(ApprovalErrorCode.APPROVAL_LINK_EXPIRED));
+});
+
+test("a comment is required to reject or ask for more information", async () => {
+  const { bed, notifier } = await dispatchedLeave();
+  const token = notifier.tokenFor("advisor_review");
+
+  for (const decision of [ApprovalDecision.REJECTED, ApprovalDecision.REQUEST_MORE_INFO]) {
+    await assert.rejects(bed.approvalService.decide(token, { decision, comment: "   " }), withErrorCode(ApprovalErrorCode.APPROVAL_COMMENT_REQUIRED));
   }
-}
-
-class FakeMailer implements IMailer {
-  readonly sent: MailMessage[] = [];
-  send(message: MailMessage): Promise<MailSendResult> {
-    this.sent.push(message);
-    return Promise.resolve({ sent: true, error: null });
-  }
-}
-
-function finalizedTask(workflow: WorkflowDefinition, overrides: Partial<TaskDocument> = {}): TaskDocument {
-  const planner = new PlannerService();
-  const { requirements, steps } = planner.compile(workflow);
-  const now = new Date();
-
-  const seeded: TaskStepState[] = steps.map((step) => ({
-    ...step,
-    state: step.depends_on.length === 0 ? STEP_STATE.READY : STEP_STATE.BLOCKED,
-    assignee: { name: `${step.step_id} approver`, email: `${step.step_id}@example.com` },
-  }));
-
-  return {
-    _id: new ObjectId(),
-    reference: "TASK-2026-00099",
-    session_id: "session-1",
-    created_by: "user-1",
-    workflow_template_id: LEAVE_WORKFLOW_TEMPLATE_ID,
-    workflow_template_version: 1,
-    status: TASK_STATUS.IN_PROGRESS,
-    requirements,
-    values: {},
-    steps: seeded,
-    audit: [],
-    completion_document: null,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
-
-function dispatchAdvisorStep(task: TaskDocument): TaskDocument {
-  const engine = new ExecutionService();
-  const result = engine.advance(task, LEAVE_WORKFLOW);
-  const token = issueToken(String(task._id), "advisor_review", SECRET);
-  const steps = result.steps.map((s) =>
-    s.step_id === "advisor_review"
-      ? { ...s, approval_token: token, token_expires_at: new Date(Date.now() + 86400000) }
-      : s,
-  );
-  return { ...task, steps };
-}
-
-function build(
-  taskModel: FakeTaskModel,
-  workflow: WorkflowDefinition = LEAVE_WORKFLOW,
-  options: { config?: AppConfig; renderer?: IDocumentRenderer } = {},
-) {
-  const config = options.config ?? FAKE_CONFIG;
-  const mailer = new FakeMailer();
-  const notificationService = new NotificationService({ mailer, config });
-  const executionService = new ExecutionService();
-  const completionDocumentService = new CompletionDocumentService({
-    renderer: options.renderer ?? new TextDocumentRenderer(),
-    config,
-  });
-  const taskService = new TaskService({
-    taskModel: taskModel as unknown as ConstructorParameters<typeof TaskService>[0]["taskModel"],
-    selectionService: {} as unknown as ConstructorParameters<typeof TaskService>[0]["selectionService"],
-    workflowTemplateService: stubWorkflowTemplateService(workflow),
-    plannerService: new PlannerService(),
-    executionService,
-    notificationService,
-    auditService: new AuditService({
-      auditLogModel: new FakeAuditLogModel() as unknown as ConstructorParameters<
-        typeof AuditService
-      >[0]["auditLogModel"],
-    }),
-    completionDocumentService,
-    config,
-  });
-  const service = new ApprovalService({
-    taskModel: taskModel as unknown as ConstructorParameters<typeof ApprovalService>[0]["taskModel"],
-    workflowTemplateService: stubWorkflowTemplateService(workflow),
-    executionService,
-    notificationService,
-    taskService,
-    completionDocumentService,
-    config,
-  });
-  return { service, mailer };
-}
-
-async function seedDispatchedTask(taskModel: FakeTaskModel): Promise<TaskDocument> {
-  const base = finalizedTask(LEAVE_WORKFLOW);
-  const inserted = await taskModel.insert(base);
-  const dispatched = dispatchAdvisorStep(inserted);
-  await taskModel.updateStepAndStatus(dispatched._id, dispatched.steps, TASK_STATUS.IN_PROGRESS);
-  return (await taskModel.findById(dispatched._id))!;
-}
-
-test("getApproverView with an invalid token throws NotFoundError", async () => {
-  const taskModel = new FakeTaskModel();
-  const { service } = build(taskModel);
-
-  await assert.rejects(() => service.getApproverView("garbage"), NotFoundError);
 });
 
-test("submitDecision rejecting with no reason throws ValidationError", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+test("a decided link shows the decision and refuses a second one", async () => {
+  const { bed, notifier } = await dispatchedLeave();
+  const token = notifier.tokenFor("advisor_review");
 
-  await assert.rejects(() => service.submitDecision(token, "rejected", null), ValidationError);
+  const result = await bed.approvalService.decide(token, { decision: ApprovalDecision.APPROVED, comment: null });
+  const view = await bed.approvalService.getView(token);
+
+  assert.deepEqual(result, { decision: ApprovalDecision.APPROVED, task_status: TaskStatus.IN_PROGRESS, next_step_name: "Head of Department Sign-off" });
+  assert.equal(view.context.live, false);
+  assert.deepEqual(view.allowedDecisions, []);
+  assert.equal(view.context.step.approval?.decision, ApprovalDecision.APPROVED);
+  await assert.rejects(bed.approvalService.decide(token, { decision: ApprovalDecision.APPROVED, comment: null }), withErrorCode(ApprovalErrorCode.APPROVAL_ALREADY_DECIDED));
+  assert.equal(notifier.calls.at(-1)?.to, "u19@u.c");
 });
 
-test("submitDecision rejecting with a whitespace-only reason throws ValidationError", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+test("asking for more information emails the requester and the repeat review gets a new link after the answer", async () => {
+  const { bed, notifier, taskId } = await dispatchedLeave();
+  const firstToken = notifier.tokenFor("advisor_review");
 
-  await assert.rejects(() => service.submitDecision(token, "rejected", "   "), ValidationError);
+  await bed.approvalService.decide(firstToken, { decision: ApprovalDecision.REQUEST_MORE_INFO, comment: "Which institute?" });
+  assert.ok(notifier.calls.some((call) => call.kind === "information_requested" && call.to === "u17@u.c"));
+
+  await bed.taskFormService.submit(taskId, "advisor_review__information_request_1__form", { "responses.advisor_review__information_request_1": "Tokyo Tech" });
+  const repeatToken = notifier.tokenFor("advisor_review__repeat_1");
+  assert.notEqual(repeatToken, firstToken);
+
+  const view = await bed.approvalService.getView(repeatToken);
+  assert.equal(view.context.step.origin, "approval_repeat");
 });
 
-test("submitDecision rejecting with a reason terminates the task and the reason is stored", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
+test("a rejection terminates the task and revokes the other links", async () => {
+  const { bed, notifier, taskId } = await dispatchedLeave();
 
-  const result = await service.submitDecision(token, "rejected", "Exams that week.");
+  const result = await bed.approvalService.decide(notifier.tokenFor("advisor_review"), { decision: ApprovalDecision.REJECTED, comment: "Exams" });
 
-  assert.equal(result.status, TASK_STATUS.REJECTED);
-  assert.equal(result.terminated, true);
-
-  const updated = await taskModel.findById(task._id);
-  const advisorStep = updated!.steps.find((s) => s.step_id === "advisor_review");
-  assert.equal(advisorStep?.reason, "Exams that week.");
-  assert.equal(updated!.status, TASK_STATUS.REJECTED);
+  const task = await bed.taskService.get(taskId);
+  assert.equal(result.task_status, TaskStatus.REJECTED);
+  assert.ok(task.steps.every((step) => step.approval === null || step.approval.token_hash === null));
+  assert.equal(task.steps.find((step) => step.id === "hod_review")?.status, TaskStepStatus.CANCELLED);
+  assert.ok(notifier.calls.some((call) => call.kind === "rejected"));
 });
 
-test("a second decision on an already-used token throws ConflictError", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  await service.submitDecision(token, "approved", null);
-
-  await assert.rejects(() => service.submitDecision(token, "approved", null), ConflictError);
-});
-
-test("getApproverView on a used token returns already_decided true", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  await service.submitDecision(token, "approved", null);
-  const view = await service.getApproverView(token);
-
-  assert.equal(view.already_decided, true);
-  assert.equal(view.decided_outcome, "approved");
-});
-
-test("getApproverView evaluates the workflow's computed values from the requester's answers", async () => {
-  const taskModel = new FakeTaskModel();
-  const base = finalizedTask(LEAVE_WORKFLOW, {
-    values: { departure_date: "2026-03-01", return_date: "2026-03-10" },
-  });
-  const inserted = await taskModel.insert(base);
-  const dispatched = dispatchAdvisorStep(inserted);
-  await taskModel.updateStepAndStatus(dispatched._id, dispatched.steps, TASK_STATUS.IN_PROGRESS);
-  const task = (await taskModel.findById(dispatched._id))!;
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const view = await service.getApproverView(token);
-
-  assert.deepEqual(view.computed, [
-    { label: "Total days between departure and return, inclusive.", value: "10" },
-  ]);
-});
-
-test("allowed_outcomes reflects only the outcomes the step declares", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const view = await service.getApproverView(token);
-
-  assert.deepEqual(new Set(view.allowed_outcomes), new Set(["approved", "rejected", "request_more_info"]));
-});
-
-test("approving advisor_review dispatches hod_review and sends a notification", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service, mailer } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  await service.submitDecision(token, "approved", null);
-
-  const updated = await taskModel.findById(task._id);
-  const hodStep = updated!.steps.find((s) => s.step_id === "hod_review");
-  assert.equal(hodStep?.state, STEP_STATE.PENDING_APPROVAL);
-  assert.ok(hodStep?.approval_token);
-  assert.equal(mailer.sent.length, 1);
-});
-
-test("submitDecision on an expired token throws ConflictError", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const step = task.steps.find((s) => s.step_id === "advisor_review")!;
-  const token = step.approval_token!;
-
-  const expired = task.steps.map((s) =>
-    s.step_id === "advisor_review" ? { ...s, token_expires_at: new Date(Date.now() - 1000) } : s,
-  );
-  await taskModel.updateStepAndStatus(task._id, expired, TASK_STATUS.IN_PROGRESS);
-
-  await assert.rejects(() => service.submitDecision(token, "approved", null), ConflictError);
-});
-
-test("a token that expires in the future is still accepted", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const result = await service.submitDecision(token, "approved", null);
-
-  assert.equal(result.outcome, "approved");
-});
-
-test("getApproverView still renders for an expired token", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const expired = task.steps.map((s) =>
-    s.step_id === "advisor_review" ? { ...s, token_expires_at: new Date(Date.now() - 1000) } : s,
-  );
-  await taskModel.updateStepAndStatus(task._id, expired, TASK_STATUS.IN_PROGRESS);
-
-  const view = await service.getApproverView(token);
-
-  assert.equal(view.step.step_id, "advisor_review");
-  assert.equal(view.already_decided, false);
-});
-
-test("submitDecision on a step that is no longer pending_approval throws ConflictError", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const skipped = task.steps.map((s) =>
-    s.step_id === "advisor_review" ? { ...s, state: STEP_STATE.SKIPPED } : s,
-  );
-  await taskModel.updateStepAndStatus(task._id, skipped, TASK_STATUS.IN_PROGRESS);
-
-  await assert.rejects(() => service.submitDecision(token, "approved", null), ConflictError);
-});
-
-test("approvers lists every actor requirement, ordered by workflow step order", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const view = await service.getApproverView(token);
-
-  assert.deepEqual(
-    view.approvers.map((a) => a.step_id),
-    ["advisor_review", "hod_review", "dean_review"],
-  );
-});
-
-test("approvers marks the dispatched step 'awaiting' and downstream steps 'not_yet_reached'", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const view = await service.getApproverView(token);
-  const byStep = new Map(view.approvers.map((a) => [a.step_id, a]));
-
-  assert.equal(byStep.get("advisor_review")?.status, "awaiting");
-  assert.equal(byStep.get("advisor_review")?.is_current, true);
-  assert.equal(byStep.get("hod_review")?.status, "not_yet_reached");
-  assert.equal(byStep.get("hod_review")?.is_current, false);
-});
-
-test("approvers reports a decided step's outcome and decided_at", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  await service.submitDecision(token, "approved", null);
-
-  const hodToken = (await taskModel.findById(task._id))!.steps.find((s) => s.step_id === "hod_review")!
-    .approval_token!;
-  const view = await service.getApproverView(hodToken);
-  const advisor = view.approvers.find((a) => a.step_id === "advisor_review");
-
-  assert.equal(advisor?.status, "approved");
-  assert.ok(advisor?.decided_at);
-});
-
-test("approvers uses the requirement's designation label, not the raw actor key", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const view = await service.getApproverView(token);
-  const advisor = view.approvers.find((a) => a.step_id === "advisor_review");
-
-  assert.equal(advisor?.designation, "Academic Advisor");
-  assert.ok(!advisor?.designation.startsWith("actor:"));
-});
-
-test("approvers reports null name/email for a step whose assignee was never supplied (deduped-actor case)", async () => {
-  // Finding 3: when two steps share a role, buildActorRequirements dedupes to one
-  // requirement keyed to the first step, so the second step's requirement.ref can point
-  // at a task.steps entry whose assignee is legitimately null. The approver list must
-  // reflect that as "not yet supplied", not throw or fall back to step.assignee.
-  const taskModel = new FakeTaskModel();
-  const base = finalizedTask(LEAVE_WORKFLOW);
-  const withNullAssignee: TaskDocument = {
-    ...base,
-    steps: base.steps.map((s) => (s.step_id === "hod_review" ? { ...s, assignee: null } : s)),
-  };
-  const inserted = await taskModel.insert(withNullAssignee);
-  const dispatched = dispatchAdvisorStep(inserted);
-  await taskModel.updateStepAndStatus(dispatched._id, dispatched.steps, TASK_STATUS.IN_PROGRESS);
-  const { service } = build(taskModel);
-  const token = dispatched.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  const view = await service.getApproverView(token);
-  const hod = view.approvers.find((a) => a.step_id === "hod_review");
-
-  assert.equal(hod?.name, null);
-  assert.equal(hod?.email, null);
-  assert.equal(hod?.status, "not_yet_reached");
-});
-
-test("requesting more info reopens the step, clears its token, and moves the task back to collecting", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTask(taskModel);
-  const { service } = build(taskModel);
-  const token = task.steps.find((s) => s.step_id === "advisor_review")!.approval_token!;
-
-  await service.submitDecision(token, "request_more_info", "Please attach your travel itinerary.");
-
-  const updated = await taskModel.findById(task._id);
-  assert.equal(updated!.status, "collecting");
-
-  const advisorStep = updated!.steps.find((s) => s.step_id === "advisor_review");
-  assert.equal(advisorStep?.state, STEP_STATE.READY);
-  assert.equal(advisorStep?.reopen_count, 1);
-  assert.equal(advisorStep?.approval_token, null);
-
-  const followup = updated!.requirements.find((r) => r.key === "followup:advisor_review:1");
-  assert.ok(followup);
-  assert.equal(followup?.label, "Please attach your travel itinerary.");
-});
-
-async function seedDispatchedTaskWithRequesterEmail(taskModel: FakeTaskModel): Promise<TaskDocument> {
-  const base = finalizedTask(LEAVE_WORKFLOW, { values: { requester_email: "student@example.com" } });
-  const inserted = await taskModel.insert(base);
-  const dispatched = dispatchAdvisorStep(inserted);
-  await taskModel.updateStepAndStatus(dispatched._id, dispatched.steps, TASK_STATUS.IN_PROGRESS);
-  return (await taskModel.findById(dispatched._id))!;
-}
-
-async function approveStep(
-  taskModel: FakeTaskModel,
-  service: ApprovalService,
-  taskId: TaskDocument["_id"],
-  stepId: string,
-) {
-  const task = (await taskModel.findById(taskId))!;
-  const token = task.steps.find((s) => s.step_id === stepId)!.approval_token!;
-  return service.submitDecision(token, "approved", null);
-}
-
-test("approving the final step generates a document, attaches it, and persists completion_document", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTaskWithRequesterEmail(taskModel);
-  const { service, mailer } = build(taskModel);
-
-  await approveStep(taskModel, service, task._id, "advisor_review");
-  await approveStep(taskModel, service, task._id, "hod_review");
-  const result = await approveStep(taskModel, service, task._id, "dean_review");
-
-  assert.equal(result.completed, true);
-
-  const completionMail = mailer.sent.find((m) => m.to === "student@example.com");
-  assert.ok(completionMail);
-  assert.equal(completionMail?.attachments?.length, 1);
-
-  const updated = await taskModel.findById(task._id);
-  assert.ok(updated!.completion_document);
-  assert.equal(updated!.completion_document?.emailed_to, "student@example.com");
-  assert.ok(updated!.completion_document?.sha256);
-
-  const auditEntry = updated!.audit.find((a) => a.type === "completion_document_generated");
-  assert.ok(auditEntry);
-});
-
-test("a renderer that throws still commits the decision, still sends the completion email, and leaves completion_document null", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTaskWithRequesterEmail(taskModel);
-  const { service, mailer } = build(taskModel, LEAVE_WORKFLOW, { renderer: new ThrowingDocumentRenderer() });
-
-  await approveStep(taskModel, service, task._id, "advisor_review");
-  await approveStep(taskModel, service, task._id, "hod_review");
-  const result = await approveStep(taskModel, service, task._id, "dean_review");
-
-  assert.equal(result.completed, true);
-
-  const updated = await taskModel.findById(task._id);
-  assert.equal(updated!.completion_document, null);
-  assert.equal(updated!.status, TASK_STATUS.COMPLETED);
-
-  const completionMail = mailer.sent.find((m) => m.to === "student@example.com");
-  assert.ok(completionMail);
-  assert.equal(completionMail?.attachments, undefined);
-});
-
-test("DOCUMENT_ENABLED=false reproduces today's behaviour exactly - no document, no attachment", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTaskWithRequesterEmail(taskModel);
-  const disabledConfig = {
-    ...FAKE_CONFIG,
-    document: { ...FAKE_CONFIG.document, enabled: false },
-  } as unknown as AppConfig;
-  const { service, mailer } = build(taskModel, LEAVE_WORKFLOW, { config: disabledConfig });
-
-  await approveStep(taskModel, service, task._id, "advisor_review");
-  await approveStep(taskModel, service, task._id, "hod_review");
-  const result = await approveStep(taskModel, service, task._id, "dean_review");
-
-  assert.equal(result.completed, true);
-
-  const updated = await taskModel.findById(task._id);
-  assert.equal(updated!.completion_document, null);
-
-  const completionMail = mailer.sent.find((m) => m.to === "student@example.com");
-  assert.ok(completionMail);
-  assert.equal(completionMail?.attachments, undefined);
-});
-
-test("a non-final approval generates no completion document", async () => {
-  const taskModel = new FakeTaskModel();
-  const task = await seedDispatchedTaskWithRequesterEmail(taskModel);
-  const { service } = build(taskModel);
-
-  await approveStep(taskModel, service, task._id, "advisor_review");
-
-  const updated = await taskModel.findById(task._id);
-  assert.equal(updated!.completion_document, null);
-  assert.equal(
-    updated!.audit.some((a) => a.type === "completion_document_generated"),
-    false,
-  );
+test("approving through to the end completes the task and sends the completion email", async () => {
+  const { bed, notifier, taskId } = await dispatchedLeave();
+
+  await bed.approvalService.decide(notifier.tokenFor("advisor_review"), { decision: ApprovalDecision.APPROVED, comment: null });
+  await bed.approvalService.decide(notifier.tokenFor("hod_review"), { decision: ApprovalDecision.APPROVED, comment: null });
+  const result = await bed.approvalService.decide(notifier.tokenFor("dean_review"), { decision: ApprovalDecision.APPROVED, comment: "Enjoy" });
+
+  assert.equal(result.task_status, TaskStatus.COMPLETED);
+  assert.equal(result.next_step_name, null);
+  assert.equal((await bed.taskService.get(taskId)).status, TaskStatus.COMPLETED);
+  assert.ok(notifier.calls.some((call) => call.kind === "completed"));
 });

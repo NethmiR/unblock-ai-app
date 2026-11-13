@@ -4,7 +4,7 @@
 
 ## 1. What this project does
 
-UNBLOCK-AI turns a **plain-English description of an institutional approval workflow** (e.g. "students who want to travel overseas must get approval from their advisor, then the Head of Department...") into a **strict, machine-readable JSON workflow definition** — a reusable template that a (future) execution engine could run: resolving approvers from a directory, evaluating conditions, tracking step completion, sending notifications, etc.
+UNBLOCK-AI turns a **plain-English description of an institutional approval workflow** (e.g. "students who want to travel overseas must get approval from their advisor, then the Head of Department...") into a **strict, machine-readable JSON workflow definition**, then runs it for requesters: an assistant picks the right published template from the requester's request and profile, a task plan is compiled with approvers resolved from the directory and details prefilled, the requester fills step forms, approvers decide through emailed links, and a transcript PDF closes the request.
 
 ```
 Admin writes a title + prompt
@@ -18,12 +18,23 @@ Admin writes a title + prompt
                                                version + retrieval embedding)
                                                │ admin publishes
                                                ▼
-                                     Retrieval + Selector Agent
-                                     (maps a user's plain-language
-                                      request to a published template)
+                                     Selection (profile + retrieval +
+                                     eligibility + one selector call)
+                                               │ requester starts the task
+                                               ▼
+                                     Task plan compiler (no AI): steps,
+                                     forms, directory-resolved approvers
+                                               │
+                                               ▼
+                                     Task engine (pure) + effect executor:
+                                     forms → approval emails → decisions
+                                     (approve / reject / more information)
+                                               │ completed
+                                               ▼
+                                     Transcript PDF (rendered on demand)
 ```
 
-Actually **executing** a workflow (sending real emails, collecting real approvals, walking the graph at runtime) is out of scope — the schema is simply designed so a future execution engine could consume it without redesign.
+Only two operations call an LLM: workflow template generation (per admin generate) and workflow selection (per requester message). Everything after a task starts is deterministic.
 
 ## 2. Tech stack
 
@@ -86,7 +97,7 @@ Key modeling decisions (also encoded as instructions in the workflow template ge
 - **Conditions are structured, not prose.** `condition.operator` (`equals`, `greater_than`, `and`/`or`/`not` with `clauses`, etc.) over `left`/`right`, which are dotted namespace paths — never a free-text expression.
 - **Computed values use a fixed operation set**: `date_diff_days`, `sum`, `difference`, `multiply`, `count`, `lookup`, `constant` — again, no free-text formulas.
 - **A flat data namespace** is shared across a workflow run: `inputs.<id>`, `computed.<id>`, `steps.<id>.outcome`, `steps.<id>.response.<field>`, `requester.<attr>`, `system.today`.
-- **Loop-backs stay acyclic.** "Request more info" is modeled as an *outcome* on the same step (`action: "reopen_input"`, `return_to_step: "self"`), not a new step pointing backward — keeping the dependency graph a DAG.
+- **Loop-backs stay acyclic.** "Request more info" is modeled as an *outcome* on the same step, not a new step pointing backward — keeping the dependency graph a DAG. At runtime the task engine inserts an information request step and a repeat approval into the task's own step list.
 - **Terminal rejection** is an outcome effect (`action: "terminate_workflow"`) rather than a special workflow-level field.
 - **Every outcome-bearing step has exactly three fixed outcome keys**: `approved`, `rejected`, `request_more_info` (nullable when not applicable).
 - **Non-workflow input is a first-class outcome**, not an error: if the source text describes no institutional process at all, the prompt instructs the model to emit the smallest valid document (one `review` step, `system`-resolved, `metadata.is_workflow: false`) rather than hallucinating a workflow.
@@ -122,7 +133,8 @@ Schema + graph validation lives in its own service ([src/services/validation.ser
 
 - **`src/models/workflow-template.model.ts`** — the `workflow_templates` collection, one document per template (string UUID `_id`): `title`, `description`, `status` (`draft` → `unpublished` → `published`), `current_version`, `draft_prompt` (a saved but not yet generated prompt), `retrieval` (the current version's embedding text, `embedding`, `aliases_lower`, `retrieval_summary`, `institution_type`, embedding `model`/`dim`/`embedded_at`), `archived_at`, `created_by`/`updated_by` (Postgres user ids) and timestamps. It also runs the retrieval queries (published, non-archived only) and the Atlas `$vectorSearch`.
 - **`src/models/workflow-template-version.model.ts`** — the `workflow_template_versions` collection: one immutable document per generated version (`workflow_template_id`, `version`, `prompt`, `definition`, `generation_attempts`, `created_by`, `created_at`). Tasks pin `workflow_template_id` + `workflow_template_version`, so older versions stay readable after a regenerate.
-- **`src/models/selection-session.model.ts`** — the `selection_sessions` collection: multi-round clarifying-question conversations.
+- **`src/models/selection-session.model.ts`** — the `selection_sessions` collection: ephemeral assistant conversations, owned by `created_by` and removed by a TTL index on `expires_at` (`SELECTION_SESSION_TTL_HOURS`). The candidate set is frozen on the first retrieval. Starting a task copies the messages into the task and deletes the session.
+- **`src/models/task.model.ts`** — the `tasks` collection: one document per task with the requester snapshot, conversation, ordered `steps` (including inserted information requests and repeat approvals), stored `forms`, a `values` map keyed by field id, and an `audit` trail. Every write is `findOneAndReplace({ _id, revision })`, so a lost race is `409 TASK_REVISION_CONFLICT`. Approval tokens are stored only as `steps.approval.token_hash`. Pre-revamp tasks live in `legacy_tasks` and are never read.
 - Models own the collection name, the document interface, and thin typed CRUD operations. Lifecycle policy (version numbering, status transitions, archive/restore) and the embedding call live in [src/services/workflow-template.service.ts](../../src/services/workflow-template.service.ts) and [src/services/embedding.service.ts](../../src/services/embedding.service.ts), not in the model. The retrieval embedding is rebuilt whenever a version is generated and whenever the title changes; a title change never creates a version.
 
 ### 8.1 A second database: PostgreSQL for users, sessions and the organisation
@@ -154,18 +166,23 @@ one store. The reasoning, and the consequences it forces:
   `npm run migrate:up` applies them. The Postgres set is
   `20261111000000_initial-schema`,
   `20261111015501_unified-users-permissions-and-sessions`,
-  `20261111060534_organisational-structure-and-user-affiliations` and
-  `20261111101054_workflow-template-archive-only` (drops `template_deletions`).
-  The Mongo set is `20261111000000_initial-schema` followed by
-  `20261111101053_workflow-templates`.
+  `20261111060534_organisational-structure-and-user-affiliations`,
+  `20261111101054_workflow-template-archive-only` (drops `template_deletions`) and
+  `20261111110611_department-faculty-membership-rule`.
+  The Mongo set is `20261111000000_initial-schema`,
+  `20261111101053_workflow-templates`,
+  `20261113084701_ephemeral-selection-sessions` (recreates `selection_sessions` with
+  TTL and owner indexes) and `20261113090856_task-request-revamp` (renames `tasks` to
+  `legacy_tasks` and creates a fresh `tasks` collection).
 - **A seed pack mirrors the migration pack** — [src/db/seed/](../../src/db/seed/)
   holds a core runner/loader/generator/CLI plus timestamped Postgres seeders in
   [src/db/seed/postgres/seeders/](../../src/db/seed/postgres/seeders/). Seeders are
   idempotent and untracked (every run re-checks and skips what exists) and go
-  through services such as `UserService`, so business rules apply. The only seeder
-  creates the bootstrap administrator (`SEED_ADMINISTRATOR_EMAIL`,
-  `SEED_ADMINISTRATOR_FULL_NAME`, password `USER_DEFAULT_PASSWORD`, all four
-  permissions). `npm run seed:pg:run` runs them, `seed:pg:list` lists them and
+  through services such as `UserService`, so business rules apply. They create the
+  bootstrap administrator (`SEED_ADMINISTRATOR_EMAIL`, `SEED_ADMINISTRATOR_FULL_NAME`,
+  password `USER_DEFAULT_PASSWORD`, every permission), the University of Moratuwa
+  organisational units and designations, and, with `SEED_SAMPLE_USERS=true`, sample users
+  with affiliations (including the task request demo users). `npm run seed:pg:run` runs them, `seed:pg:list` lists them and
   `seed:pg:create -- <name>` scaffolds a new one (see
   [../guides/database-seeding.md](../guides/database-seeding.md)).
 - **Data access is behind repositories** in [src/repositories/](../../src/repositories/) —
@@ -196,7 +213,7 @@ one store. The reasoning, and the consequences it forces:
 - **Permissions, not roles.** Each user holds one or more of `workflow:manage`,
   `task:create`, `task:approve` and `user:manage`
   ([src/data/constants/permission.constant.ts](../../src/data/constants/permission.constant.ts)).
-  `task:approve` is grantable but gates nothing yet.
+  `task:approve` is grantable but gates nothing yet; approvers act through emailed links.
 
 ## 9. HTTP API
 
@@ -213,7 +230,8 @@ permissions) do the actual gating, applied per-route:
 `workflow:manage` for creating, generating, editing, publishing, archiving and
 restoring workflow templates; `workflow:manage` or `task:create` for reading
 workflow templates and their versions; `task:create` for
-`/selection` and `/tasks`; `user:manage` for `/users`.
+`/selection` and `/tasks` (selection sessions are also owner-checked inside
+`SelectionService`); `user:manage` for `/users`.
 [src/middlewares/require-task-ownership.middleware.ts](../../src/middlewares/require-task-ownership.middleware.ts)
 limits `/tasks/:id*` to the task's creator and answers `404` for anyone else's task. The split matters because `/api/approvals/*` is authenticated by a
 *different* mechanism (a per-step approval token) and must keep working for
@@ -222,52 +240,45 @@ deliberately two separate middleware layers, not one.
 
 **Error handling**: a single error-handling middleware ([src/middlewares/error-handler.middleware.ts](../../src/middlewares/error-handler.middleware.ts)) reads `statusCode` and `toJSON()` off any `BaseError` subclass and responds accordingly; anything else is logged with its stack and answered with a generic `500`. See [error-handling.md](./error-handling.md) for the full hierarchy. All route handlers are wrapped in [src/middlewares/async-handler.middleware.ts](../../src/middlewares/async-handler.middleware.ts) so rejected promises reach this middleware instead of crashing the process.
 
-## 10. Completion documents (PDF record on approval)
+## 10. Task requests: plan, engine, approvals and transcript
 
-When a task's last required approval step is decided, `ApprovalService.sendDecisionNotifications`
-generates a durable record of the whole request and emails it alongside the existing
-completion notice. See [../../../docs/completion-document-email-phase-plan.md](../../../docs/completion-document-email-phase-plan.md)
-for the full design rationale; summary of what exists in code:
+See [../../../docs/task-request-revamp-phase-plan.md](../../../docs/task-request-revamp-phase-plan.md) for the
+full design. Summary of what exists in code:
 
-- **Pure builder** ([src/utils/document/completion-document.util.ts](../../src/utils/document/completion-document.util.ts)) —
-  `buildCompletionDocument()` assembles a `CompletionDocument` (header, request-detail
-  fields in `workflow.inputs` declaration order, calculated values, follow-up answers
-  from the request-more-info loop, and one `ApprovalRow` per approval step in workflow
-  order) with no I/O at all, mirroring `ExecutionService`/`PlannerService`.
-- **Computed-value evaluator** ([src/utils/workflow/computed-evaluator.util.ts](../../src/utils/workflow/computed-evaluator.util.ts)) —
-  evaluates `workflow.computed` (`date_diff_days`, `sum`, `difference`, `multiply`,
-  `count`, `lookup`, `constant`) against the task's collected values; never throws,
-  resolving anything malformed or forward-referenced to `null` and omitting it.
-- **Renderer, pluggable** ([src/services/document/](../../src/services/document/)) — `IDocumentRenderer`
-  behind `createDocumentRenderer(format)`, mirroring `services/mailer/`: `PdfDocumentRenderer`
-  (`pdfkit`, Standard-14 fonts, no headless browser) for real output, `TextDocumentRenderer`
-  for tests and console runs. The PDF's `CreationDate` is stamped from the task's
-  `completion_document.generated_at`, not `new Date()`, so re-rendering the same document
-  is byte-for-byte deterministic — verified by comparing `sha256` hashes.
-- **`CompletionDocumentService`** ([src/services/completion-document.service.ts](../../src/services/completion-document.service.ts)) —
-  composes the builder, evaluator, and renderer behind one `generate()` call that never
-  throws (`config.document.enabled === false` or any internal failure both return `null`),
-  the same failure-isolation discipline as `NotificationService.dispatch()`. `ApprovalService`
-  calls it once, on the `result.completed === true` branch, before sending the completion
-  email; a successful render is attached to that email (when `DOCUMENT_ATTACH_TO_EMAIL` is
-  on and under `DOCUMENT_MAX_ATTACHMENT_BYTES`) and its metadata — not its bytes —
-  persisted onto the task as `completion_document` (`filename`, `byte_size`, `sha256`,
-  `emailed_to`, `emailed_at`).
-- **No bytes are stored.** A completed task is immutable and its workflow is
-  version-pinned, so `GET /api/tasks/:id/document` ([../api/api-documentation.md](../api/api-documentation.md) §7.10)
-  regenerates the PDF on every call from the persisted `generated_at` instead of reading
-  a blob store; a hash mismatch against the stored `sha256` is logged as drift, not raised.
-- **Config**: `document.config.ts` owns five `DOCUMENT_*` variables (`DOCUMENT_ENABLED`,
-  `DOCUMENT_ATTACH_TO_EMAIL`, `DOCUMENT_FORMAT`, `DOCUMENT_INSTITUTION_NAME`,
-  `DOCUMENT_MAX_ATTACHMENT_BYTES`) — see [../guides/configuration.md](../guides/configuration.md).
-- **Smoke test**: `npm run smoke-test:document -- <task-id> [out.pdf]`
-  ([tests/smoke/smoke-test-document.script.ts](../../tests/smoke/smoke-test-document.script.ts)) renders
-  a real task's record to a local file for eyeballing, independent of the completion path.
+- **Requester profile** ([src/services/requester-profile.service.ts](../../src/services/requester-profile.service.ts)) —
+  memberships, designations, effective faculties, derived actor types and numbered profile
+  facts, read from the Postgres repositories. No AI.
+- **Selection** ([src/services/selection.service.ts](../../src/services/selection.service.ts),
+  [src/utils/selection/candidate-eligibility.util.ts](../../src/utils/selection/candidate-eligibility.util.ts)) —
+  retrieval once, deterministic audience and requester-type eligibility, then one selector call
+  that sees the profile facts. `GET /selection/catalogue` lists eligible templates with no AI.
+- **Plan compiler** ([src/utils/task/task-plan-compiler.util.ts](../../src/utils/task/task-plan-compiler.util.ts), pure) —
+  steps in display order, one form per form step plus a synthesised entry form, locked
+  prefilled requester details, approver details when the directory cannot supply them.
+  Assignees come from the resolver registry in [src/services/assignee-resolution/](../../src/services/assignee-resolution/).
+- **Engine** ([src/services/task-engine.service.ts](../../src/services/task-engine.service.ts), pure) —
+  activation by step kind, condition evaluation, approvals, information request insertion
+  ([src/utils/task/information-request-insertion.util.ts](../../src/utils/task/information-request-insertion.util.ts)),
+  termination and completion; returns `TaskEffect[]`. The
+  [effect executor](../../src/services/task-effect-executor.service.ts) issues hashed approval
+  tokens and sends notifications after a successful write, and never throws into the caller.
+- **Approvals** ([src/services/approval.service.ts](../../src/services/approval.service.ts)) —
+  token resolution (invalid 404, expired 410, decided 409), comment rules, decisions.
+- **Transcript** ([src/services/task-transcript.service.ts](../../src/services/task-transcript.service.ts),
+  [src/utils/document/task-transcript.util.ts](../../src/utils/document/task-transcript.util.ts)) —
+  built from the task and its pinned definition and rendered by the pluggable
+  [document renderer](../../src/services/document/) (`pdfkit`, or text for tests). Never stored:
+  `GET /api/tasks/:id/transcript` renders it on demand and the completion email attaches the same
+  render (`DOCUMENT_ATTACH_TO_EMAIL`, under `DOCUMENT_MAX_ATTACHMENT_BYTES`). The audit trail records
+  `transcript_emailed`.
+- **LLM usage logging** — every adapter is wrapped in `UsageLoggingLlmAdapter`, which logs one
+  `llm completion usage` line per call with its `LlmOperation`.
+- **Smoke test**: `npm run smoke-test:document` renders a transcript to a local file.
 
 ## 11. Supporting pieces
 
 - **Logger** ([src/utils/shared/logger.util.ts](../../src/utils/shared/logger.util.ts)): structured JSON logger (`debug`/`info`/`warn`/`error`) writing single-line JSON to stdout/stderr with timestamps.
-- **Smoke test scripts** ([tests/smoke/smoke-test-llm.script.ts](../../tests/smoke/smoke-test-llm.script.ts), [tests/smoke/smoke-test-embeddings.script.ts](../../tests/smoke/smoke-test-embeddings.script.ts), [tests/smoke/smoke-test-document.script.ts](../../tests/smoke/smoke-test-document.script.ts), [tests/smoke/smoke-test-mail.script.ts](../../tests/smoke/smoke-test-mail.script.ts)): sanity-check connectivity of the configured LLM and embedding providers, completion-document rendering, and SMTP delivery, each independent of the paths that normally trigger them.
+- **Smoke test scripts** ([tests/smoke/smoke-test-llm.script.ts](../../tests/smoke/smoke-test-llm.script.ts), [tests/smoke/smoke-test-embeddings.script.ts](../../tests/smoke/smoke-test-embeddings.script.ts), [tests/smoke/smoke-test-document.script.ts](../../tests/smoke/smoke-test-document.script.ts), [tests/smoke/smoke-test-mail.script.ts](../../tests/smoke/smoke-test-mail.script.ts)): sanity-check connectivity of the configured LLM and embedding providers, transcript rendering, and mail delivery, each independent of the paths that normally trigger them.
 
 ## 12. Test suite
 
@@ -295,11 +306,11 @@ These live under [src/data/samples/](../../src/data/samples/) (`input/`, `expect
 
 ## 14. What is explicitly out of scope / not yet built
 
-- **No workflow execution engine** — nothing runs a saved workflow instance, resolves actors against a real directory, evaluates conditions against real data, or sends real notifications. The schema is designed to support this later, but none of it exists yet.
+- **No academic advisor directory, file uploads, reminders, SLA escalation or re-issue of expired approval links.** Roles the directory does not model are named by the requester. See §20 of the task request revamp plan.
 - **No self-registration, password reset, or password change.** Every user starts with `USER_DEFAULT_PASSWORD` and keeps it. The user API covers create, list and get-by-id only — no update, deactivate or delete yet.
 - **`task:approve` gates nothing yet** — approval links stay public and token-based; requiring approvers to sign in is a later revamp.
 - **No rate limiting by IP** — only per-account failed-attempt lockout (§8.1), and that enforcement is off by default (`AUTH_MAX_FAILED_ATTEMPTS=0`).
-- **No directory/identity service integration** (needed to actually resolve `dynamic`/`static` actors to real people/offices) — this is unrelated to and not fixed by the auth work in §8.1, which authenticates *who is calling the API*, not who a workflow's actors resolve to.
+- **No signed-in approval inbox** — assignees carry `user_id`, so it is a straightforward follow-up.
 
 ## 15. Quick reference — how to run it
 
@@ -309,7 +320,7 @@ See [../guides/running-the-app.md](../guides/running-the-app.md) for the full se
 npm install
 cp .example.env .env   # then fill in AI provider + MongoDB + PostgreSQL credentials
 npm run migrate:up            # apply Postgres + Mongo migrations (tables, collections, indexes)
-npm run seed:pg:run           # create the bootstrap administrator (SEED_ADMINISTRATOR_EMAIL, password USER_DEFAULT_PASSWORD)
+npm run seed:pg:run           # administrator, organisation, and sample users when SEED_SAMPLE_USERS=true
 npm run dev                   # tsx watch, or: npm run build && npm start
 npm test                      # fast unit + integration tests (in-memory repositories, no Postgres needed)
 npm run test:live             # slow tests that call the configured AI provider (needs valid .env)

@@ -119,4 +119,25 @@ export const UNIVERSITY_OF_MORATUWA_SAMPLE_USERS: readonly SampleUserSeed[] = to
     permissions: [TASK_CREATE],
     memberships: [],
   },
+  {
+    fullName: "Kavindu Jayawardena",
+    permissions: [TASK_CREATE],
+    memberships: [
+      { organisationalUnitCode: "FIT", designationCodes: [] },
+      { organisationalUnitCode: "IT", designationCodes: ["student"] },
+    ],
+  },
+  {
+    fullName: "Sunethra Ratnayake",
+    permissions: [TASK_CREATE, TASK_APPROVE],
+    memberships: [{ organisationalUnitCode: "FIT", designationCodes: ["dean"] }],
+  },
+  {
+    fullName: "Dinesh Wijesinghe",
+    permissions: [TASK_CREATE, TASK_APPROVE],
+    memberships: [
+      { organisationalUnitCode: "FIT", designationCodes: [] },
+      { organisationalUnitCode: "IT", designationCodes: ["head_of_department", "senior_lecturer_grade_i"] },
+    ],
+  },
 ]);

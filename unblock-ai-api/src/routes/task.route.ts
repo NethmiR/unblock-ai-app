@@ -1,24 +1,28 @@
 import { Router, type RequestHandler } from "express";
-import { TaskController } from "../controllers/task.controller.js";
 import { asyncHandler } from "../middlewares/async-handler.middleware.js";
 import { requireAnyPermission } from "../middlewares/index.middleware.js";
 import { Permission } from "../data/constants/permission.constant.js";
+import type { TaskController } from "../controllers/task.controller.js";
+import type { TaskFormController } from "../controllers/task-form.controller.js";
 
-export function createTaskRouter(controller: TaskController, requireTaskOwnership: RequestHandler): Router {
+export function createTaskRouter(
+  controller: TaskController,
+  formController: TaskFormController,
+  requireTaskOwnership: RequestHandler,
+): Router {
   const router = Router();
   const createTasks = requireAnyPermission(Permission.TASK_CREATE);
+  const owned = [createTasks, requireTaskOwnership];
 
   router.post("/tasks", createTasks, asyncHandler(controller.createTask));
   router.get("/tasks", createTasks, asyncHandler(controller.listTasks));
-  router.get("/tasks/:id/status", createTasks, requireTaskOwnership, asyncHandler(controller.getTaskStatus));
-  router.get("/tasks/:id/document", createTasks, requireTaskOwnership, asyncHandler(controller.getTaskDocument));
-  router.get("/tasks/:id", createTasks, requireTaskOwnership, asyncHandler(controller.getTask));
-  router.get("/tasks/:id/next", createTasks, requireTaskOwnership, asyncHandler(controller.getNext));
-  router.post("/tasks/:id/values", createTasks, requireTaskOwnership, asyncHandler(controller.setValue));
-  router.post("/tasks/:id/finalize", createTasks, requireTaskOwnership, asyncHandler(controller.finalizeTask));
-  router.post("/tasks/:id/start", createTasks, requireTaskOwnership, asyncHandler(controller.startTask));
-  router.patch("/tasks/:id/status", createTasks, requireTaskOwnership, asyncHandler(controller.updateStatus));
-  router.delete("/tasks/:id", createTasks, requireTaskOwnership, asyncHandler(controller.deleteTask));
+  router.get("/tasks/:id", ...owned, asyncHandler(controller.getTask));
+  router.get("/tasks/:id/workflow-definition", ...owned, asyncHandler(controller.getWorkflowDefinition));
+  router.put("/tasks/:id/forms/:formId/draft", ...owned, asyncHandler(formController.saveDraft));
+  router.post("/tasks/:id/forms/:formId/submit", ...owned, asyncHandler(formController.submit));
+  router.post("/tasks/:id/cancel", ...owned, asyncHandler(controller.cancelTask));
+  router.get("/tasks/:id/transcript", ...owned, asyncHandler(controller.getTranscript));
+  router.delete("/tasks/:id", ...owned, asyncHandler(controller.deleteTask));
 
   return router;
 }

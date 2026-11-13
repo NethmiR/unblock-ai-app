@@ -3,14 +3,14 @@
 Two files:
 
 - `unblock-ai.postman_collection.json` — requests across 10 folders, run in order:
-  **Health → Auth → Users → Organisation → User affiliations → Workflow Templates → Selection →
-  Tasks → Approvals → Error cases**.
+  **Health → Auth → Users → Organisation → User affiliations → Workflow Templates → Task requests →
+  Approvals → Transcript → Error cases**.
 - `unblock-ai.postman_environment.json` — just `baseUrl`. `loginEmail`, `loginPassword`,
   `authToken`, `secondAuthToken`, `otherUserSessionId`, `logoutToken`, `userId`,
   `facultyId`, `departmentId`, `designationId`, `workflowTemplateId`,
-  `draftWorkflowTemplateId`, `sessionId`, `templateVersion`, `selectionDecision`, `taskId`,
-  `requirementKey`, `requirementType`, `requirementLabel`, `requirementValue`, and
-  `approvalToken` live only as **collection** variables (declared on the collection
+  `draftWorkflowTemplateId`, `templateVersion`, `requesterEmail`, `requesterToken`,
+  `selectionMessage`, `sessionId`, `taskId`, `formId`, `formFields`, `draftValues`,
+  `formValues`, `approvalUrl` and `approvalToken` live only as **collection** variables (declared on the collection
   itself, visible under the collection's *Variables* tab) so that
   `pm.collectionVariables.set(...)` in each request's test script is never shadowed by an
   empty same-named environment variable — Postman resolves environment variables first,
@@ -71,7 +71,9 @@ Each route is guarded by a permission rather than a user type:
   publish, archive, restore).
 - `workflow:manage` **or** `task:create` — `GET /workflow-templates`,
   `GET /workflow-templates/:workflowTemplateId` and the two `…/versions` reads.
-- `task:create` — Selection and Tasks. A user only sees their own tasks; another
+- `task:create` — Task requests and Transcript. A user only sees their own selection
+  sessions and tasks; another user's id answers `404`. These folders run as
+  `{{requesterEmail}}` through `{{requesterToken}}`, not as the administrator.
   user's task id answers `404`.
 - `user:manage` — Users.
 - `organisation:manage` — writes in Organisation.
@@ -104,19 +106,24 @@ request timeout: **Settings → General → Request timeout in ms** — set it t
 - The server is running (`npm run dev` or `npm run build && npm start`), `npm run
   migrate:up` has been run to create the collections, indexes and tables, and `npm run
   seed:pg:run` has created the administrator you log in as (see *Auth*).
-- At least one **published**, non-archived workflow template exists before the
-  **Selection** folder can find anything. The **Workflow Templates** folder generates and
-  publishes one from `src/data/samples/demo-drafts/workshop_event.txt`, which matches the
-  Selection query — run it first, or run the whole collection with the Collection Runner
-  so the ordering happens automatically.
+- Sample users are seeded (`SEED_SAMPLE_USERS=true`, then `npm run seed:pg:run`). The Task
+  requests folder logs in as `{{requesterEmail}}`, default `u17@u.c` (Kavindu, a student in
+  the Department of Information Technology), with `{{loginPassword}}`.
+- A **published** template the requester is eligible for and that matches
+  `{{selectionMessage}}` exists. The default message asks for overseas leave, so generate and
+  publish `src/data/samples/demo-drafts/it_overseas_leave.txt` first (from the web app,
+  or by pointing **Generate workflow template** at it). The Workflow Templates folder's own
+  workshop template is not offered to Kavindu if its audience excludes his department.
+- `MAIL_TRANSPORT=console`, so approval URLs are printed to the API's stdout.
 
 ## Running the whole collection
 
 Use the **Collection Runner** (or `newman run unblock-ai.postman_collection.json -e
 unblock-ai.postman_environment.json`) and select all 10 folders in their listed order.
-Apart from `loginEmail` / `loginPassword` (see *Auth*), no manual variable entry is
-required — every token and id (`authToken`, `userId`, `workflowTemplateId`,
-`draftWorkflowTemplateId`, `sessionId`, `templateVersion`, `taskId`) is written into a collection variable by a
+Apart from `loginEmail` / `loginPassword` (see *Auth*) and `{{approvalUrl}}` (see
+*Approvals folder*), no manual variable entry is required — every token and id
+(`authToken`, `requesterToken`, `userId`, `workflowTemplateId`, `draftWorkflowTemplateId`,
+`templateVersion`, `sessionId`, `taskId`, `formId`) is written into a collection variable by a
 `pm.test` script in an earlier request and read by a later one.
 
 ## Workflow Templates folder
@@ -125,53 +132,48 @@ required — every token and id (`authToken`, `userId`, `workflowTemplateId`,
 `{{workflowTemplateId}}` (and `current_version` in `{{templateVersion}}`). The rest of
 the folder renames it and saves a prompt edit (**PATCH**), publishes it, regenerates it
 (the template stays published and version 2 goes live at once), reads the version
-history, then archives and restores it — restore brings it back as published, so the
-Selection folder still finds it. **Save draft workflow template** saves a title and
+history, then archives and restores it — restore brings it back as published. **Save draft workflow template** saves a title and
 prompt without generating and stores that id in `{{draftWorkflowTemplateId}}`, which the
 Error cases folder uses to show `409 WORKFLOW_TEMPLATE_NOT_GENERATED`.
 
 There is no delete endpoint; each run leaves its templates behind. Archive the ones you
 no longer want from the web app or with **Archive workflow template**.
 
-Two requests carry conditional logic in a pre-request script and call
-`postman.setNextRequest(...)` to skip a step that does not apply to the current session:
+## Task requests folder
 
-- **Answer clarifying question (round 2+)** only runs if `Start session (round 1)`
-  returned `decision: "ambiguous"`; otherwise it jumps to `Choose workflow template manually`.
-- **Choose workflow template manually** only meaningfully runs if the decision was
-  `"manual_choice"`; otherwise it jumps to `Get matched workflow template`. Its body sends
-  `{ "workflow_template_id": "{{workflowTemplateId}}" }`, which must be one of the
-  session's candidates.
+Runs as the requester (folder-level bearer auth on `{{requesterToken}}`):
 
-Each pass of the **Selection** folder therefore takes a different path through those two
-requests depending on what the Selector Agent decided — this is expected, not a failure.
+1. **Login as requester** → `{{requesterToken}}`.
+2. **Get catalogue** — templates the requester may start; no AI.
+3. **Start selection session** — sends `{{selectionMessage}}` and expects a `matched` (or
+   `start_requested`) assistant message; stores `{{sessionId}}`. One LLM call.
+4. **Get selection session** — restores the conversation.
+5. **Create task from session** — compiles and starts the task; stores `{{taskId}}`, the
+   submittable form in `{{formId}}` and its fields in `{{formFields}}`.
+6. **Get task**, **List tasks**, **Get pinned workflow definition**.
+7. **Save form draft** — a pre-request script saves only the first editable field.
+8. **Submit form** — a pre-request script fills every editable field with a sample for its
+   control (text, a 40-day number, dates 40 days apart so later dates follow earlier ones,
+   `advisor@example.edu`, `+94 77 123 4567`, the first select option, a person
+   `{ name, email }`) into `{{formValues}}`. Set `{{formValues}}` by hand (raw JSON) for
+   specific answers. On success the console prints the first approval email.
+9. **Submit form again (409)** — `TASK_FORM_ALREADY_SUBMITTED`.
 
-## Tasks folder
+## Approvals folder
 
-Chains `sessionId` (from the **Selection** folder) into `POST /tasks`, then walks the
-requirement list. `Get next requirement` and `Submit next requirement value` are meant
-to be run in a loop until `next` reports `complete: true`.
+No session. Copy the approval URL from the API's stdout into the `{{approvalUrl}}` collection
+variable (a bare token works too); the folder's pre-request script extracts
+`{{approvalToken}}`. Then **Get approver view**, **Request more information without comment
+(400)**, **Approve**, **Approve again (409)** and **Get approver view after deciding**. Repeat
+paste → view → approve for each approval step until the task completes. To exercise the
+information request loop, send `request_more_info` with a comment instead, re-run **Get task**
+and **Submit form** for the inserted step, then use the new link.
 
-The loop is **type-aware**, so it no longer needs hand-editing per requirement.
-`POST /tasks/:id/values` coerces strictly by the requirement's `type`, and a single
-`"example value"` string is rejected with a 400 by every non-string type — including
-`requester_email`, the `type: "email"` input that every workflow template now declares. So:
+## Transcript folder
 
-- `Get next requirement` stores `requirement.key` **and** `requirement.type` into
-  `{{requirementKey}}` / `{{requirementType}}`.
-- `Submit next requirement value` reads that type in a **pre-request** script and builds
-  a matching sample into `{{requirementValue}}` — `jane.doe@example.com` for `email`,
-  `{ "name": ..., "email": ... }` for a `person` (`source: "actor"`) requirement, `42`
-  for `number`, `true` for `boolean`, a date 30 days out for `date`/`datetime`, and
-  `"example value"` for the string-ish types.
-
-The body interpolates that variable **unquoted** (`"value": {{requirementValue}}`) so
-numbers, booleans, and objects arrive as their real JSON types rather than as strings.
-To send a specific answer instead of a placeholder, set `{{requirementValue}}` yourself
-as raw JSON (quote it if it is a string) or just edit the body directly.
-
-`Finalize task` will 400 until every required requirement is filled. `Cancel task` is
-terminal — only run it against a task you are done with.
+**Download transcript** returns `application/pdf` once the task is completed and
+`409 TASK_TRANSCRIPT_UNAVAILABLE` before. **Cancel task** (200, or 409 once finished) and
+**Delete task** clean up.
 
 ## Error cases folder
 
@@ -182,7 +184,10 @@ never counts toward any account's lockout), `GET /users` with no token
 (`401 AUTHENTICATION_REQUIRED`), and an unknown user id (`404 USER_NOT_FOUND`). The
 workflow template cases cover a missing prompt (`400`), an unknown and a non-UUID
 `workflowTemplateId` (`404 WORKFLOW_TEMPLATE_NOT_FOUND`, `400`), publishing a draft or an
-already-published template (`409`), and a prompt that is not a workflow
+already-published template (`409`), a selection session already used by a task
+(`404 SELECTION_SESSION_NOT_FOUND`), a malformed task create (`400`), a deleted task
+(`404 TASK_NOT_FOUND`), a garbage approval token (`404 APPROVAL_LINK_INVALID`), an unknown
+decision (`400`), and a prompt that is not a workflow
 (`422 WORKFLOW_TEMPLATE_PROMPT_REJECTED` — decided by the model, so it can be flaky). These
 requests are expected to fail with their documented status code — that is a passing test, not a bug in the
 server.

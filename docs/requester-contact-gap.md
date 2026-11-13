@@ -1,5 +1,7 @@
 # Requester Contact — A Gap to Handle Gracefully
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 An unresolved gap surfaced while implementing Phase 3 of
 [approval-execution-implementation-plan.md](approval-execution-implementation-plan.md):
 **the system has no way to email the requester**, because nothing anywhere captures a

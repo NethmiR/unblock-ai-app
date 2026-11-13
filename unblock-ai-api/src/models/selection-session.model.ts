@@ -1,15 +1,26 @@
-import type { ObjectId, Collection } from "mongodb";
+import { ObjectId, type Collection, type Filter } from "mongodb";
 import { getCollection } from "../db/mongo.client.js";
 import { COLLECTIONS } from "../data/constants/collection.constant.js";
-import { toObjectId } from "../utils/shared/object-id.util.js";
 import { DatabaseError } from "../errors/database.error.js";
-import type {
-  SelectionSessionDocument,
-  SessionOutcome,
-  SessionRound,
-} from "../lib/types/selection/session.type.js";
+import type { SelectionSessionDocument } from "../lib/types/selection/session.type.js";
 
-export class SelectionSessionModel {
+export interface ISelectionSessionModel {
+  insert(doc: Omit<SelectionSessionDocument, "_id">): Promise<SelectionSessionDocument>;
+  findOwned(id: string, userId: string): Promise<SelectionSessionDocument | null>;
+  replace(session: SelectionSessionDocument): Promise<void>;
+  deleteOwned(id: string, userId: string): Promise<boolean>;
+  deleteById(id: string): Promise<void>;
+}
+
+function parseId(id: string): ObjectId | null {
+  return ObjectId.isValid(id) ? new ObjectId(id) : null;
+}
+
+function liveOwnedFilter(id: ObjectId, userId: string, now: Date): Filter<SelectionSessionDocument> {
+  return { _id: id, created_by: userId, expires_at: { $gt: now } };
+}
+
+export class SelectionSessionModel implements ISelectionSessionModel {
   private collection(): Promise<Collection<SelectionSessionDocument>> {
     return getCollection<SelectionSessionDocument>(COLLECTIONS.SELECTION_SESSIONS);
   }
@@ -17,72 +28,54 @@ export class SelectionSessionModel {
   async insert(doc: Omit<SelectionSessionDocument, "_id">): Promise<SelectionSessionDocument> {
     try {
       const sessions = await this.collection();
-      const { insertedId } = await sessions.insertOne(doc as SelectionSessionDocument);
-      return { ...doc, _id: insertedId };
+      const _id = new ObjectId();
+      await sessions.insertOne({ ...doc, _id });
+      return { ...doc, _id };
     } catch (err) {
       throw new DatabaseError("Failed to insert selection session", { cause: err });
     }
   }
 
-  async findById(id: string | ObjectId): Promise<SelectionSessionDocument | null> {
+  async findOwned(id: string, userId: string): Promise<SelectionSessionDocument | null> {
+    const objectId = parseId(id);
+    if (objectId === null) return null;
     try {
       const sessions = await this.collection();
-      return await sessions.findOne({ _id: toObjectId(id) });
+      return await sessions.findOne(liveOwnedFilter(objectId, userId, new Date()));
     } catch (err) {
       throw new DatabaseError("Failed to look up selection session", { cause: err });
     }
   }
 
-  async pushRound(id: string | ObjectId, round: SessionRound): Promise<SelectionSessionDocument | null> {
+  async replace(session: SelectionSessionDocument): Promise<void> {
     try {
       const sessions = await this.collection();
-      await sessions.updateOne(
-        { _id: toObjectId(id) },
-        { $push: { rounds: round }, $set: { updated_at: new Date() } },
-      );
+      await sessions.replaceOne({ _id: session._id }, session);
     } catch (err) {
-      throw new DatabaseError("Failed to push selection session round", { cause: err });
+      throw new DatabaseError("Failed to save selection session", { cause: err });
     }
-    return this.findById(id);
   }
 
-  async setRoundAnswer(
-    id: string | ObjectId,
-    index: number,
-    answer: string,
-  ): Promise<SelectionSessionDocument | null> {
+  async deleteOwned(id: string, userId: string): Promise<boolean> {
+    const objectId = parseId(id);
+    if (objectId === null) return false;
     try {
       const sessions = await this.collection();
-      await sessions.updateOne(
-        { _id: toObjectId(id) },
-        {
-          $set: {
-            [`rounds.${index}.answer`]: answer,
-            [`rounds.${index}.answered_at`]: new Date(),
-            updated_at: new Date(),
-          },
-        },
-      );
+      const { deletedCount } = await sessions.deleteOne(liveOwnedFilter(objectId, userId, new Date()));
+      return deletedCount > 0;
     } catch (err) {
-      throw new DatabaseError("Failed to set selection session round answer", { cause: err });
+      throw new DatabaseError("Failed to delete selection session", { cause: err });
     }
-    return this.findById(id);
   }
 
-  async finalize(
-    id: string | ObjectId,
-    outcome: SessionOutcome,
-    selectedWorkflowTemplateId: string | null,
-  ): Promise<SelectionSessionDocument | null> {
+  async deleteById(id: string): Promise<void> {
+    const objectId = parseId(id);
+    if (objectId === null) return;
     try {
       const sessions = await this.collection();
-      await sessions.updateOne(
-        { _id: toObjectId(id) },
-        { $set: { outcome, selected_workflow_template_id: selectedWorkflowTemplateId, updated_at: new Date() } },
-      );
+      await sessions.deleteOne({ _id: objectId });
     } catch (err) {
-      throw new DatabaseError("Failed to finalize selection session", { cause: err });
+      throw new DatabaseError("Failed to delete selection session", { cause: err });
     }
-    return this.findById(id);
   }
 }

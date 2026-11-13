@@ -1,9 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evaluateComputed } from "../../../src/utils/workflow/computed-evaluator.util.js";
+import { computedLabel, computeValues } from "../../../src/utils/workflow/computed-evaluator.util.js";
+import { formatFieldValue } from "../../../src/utils/task/task-field-format.util.js";
 import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
 import type { WorkflowComputed, WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
-import type { RequirementValue } from "../../../src/lib/types/task/requirement.type.js";
+type RequirementValue = string | number | boolean | { name: string; email: string } | null;
+
+function evaluateComputed(workflow: WorkflowDefinition, values: Record<string, RequirementValue>): Array<{ label: string; value: string }> {
+  const resolved = computeValues(workflow, (inputId) => {
+    const value = values[inputId];
+    if (value === undefined || value === null) return null;
+    return typeof value === "object" ? { user_id: null, ...value } : value;
+  });
+  return workflow.computed.flatMap((computed) => {
+    const value = resolved.get(computed.id) ?? null;
+    return value === null ? [] : [{ label: computedLabel(computed), value: formatFieldValue(value) }];
+  });
+}
 
 const BASE_WORKFLOW = loadExpectedFixture("it_faculty_overseas_leave.json");
 

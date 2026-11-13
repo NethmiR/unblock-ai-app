@@ -1,29 +1,33 @@
 import { apiRequest } from "./client";
-import type { ChooseResponse, SelectionResponse } from "@/types/selection";
-import type { InstitutionType, Workflow } from "@/types/workflow";
-import type { MatchedWorkflowTemplateResponse } from "@/types/workflow-template";
+import type { SelectionChooseRequest, SelectionMessageRequest, SelectionSessionDto } from "@/types/selection";
+
+export const SELECTION_SESSIONS_PATH = "/selection/sessions";
+
+export function selectionSessionPath(sessionId: string): string {
+  return `${SELECTION_SESSIONS_PATH}/${encodeURIComponent(sessionId)}`;
+}
+
+export function selectionCataloguePath(): string {
+  return "/selection/catalogue";
+}
 
 export const selectionApi = {
-  start: (query: string, requesterContext?: Record<string, unknown>, institutionType?: InstitutionType) =>
-    apiRequest<SelectionResponse>("/selection/sessions", {
-      method: "POST",
-      body: { query, requester_context: requesterContext, institution_type: institutionType },
-    }),
+  start: (message: string) => {
+    const body: SelectionMessageRequest = { message };
+    return apiRequest<SelectionSessionDto>(SELECTION_SESSIONS_PATH, { method: "POST", body });
+  },
 
-  answer: (sessionId: string, answer: string) =>
-    apiRequest<SelectionResponse>(`/selection/sessions/${sessionId}/answer`, {
-      method: "POST",
-      body: { answer },
-    }),
+  get: (sessionId: string) => apiRequest<SelectionSessionDto>(selectionSessionPath(sessionId)),
 
-  choose: (sessionId: string, workflowTemplateId: string) =>
-    apiRequest<ChooseResponse>(`/selection/sessions/${sessionId}/choose`, {
-      method: "POST",
-      body: { workflow_template_id: workflowTemplateId },
-    }),
+  sendMessage: (sessionId: string, message: string) => {
+    const body: SelectionMessageRequest = { message };
+    return apiRequest<SelectionSessionDto>(`${selectionSessionPath(sessionId)}/messages`, { method: "POST", body });
+  },
 
-  getWorkflowTemplate: (sessionId: string): Promise<Workflow> =>
-    apiRequest<MatchedWorkflowTemplateResponse>(`/selection/sessions/${sessionId}/workflow-template`).then(
-      (response) => response.definition,
-    ),
+  choose: (sessionId: string, workflowTemplateId: string) => {
+    const body: SelectionChooseRequest = { workflow_template_id: workflowTemplateId };
+    return apiRequest<SelectionSessionDto>(`${selectionSessionPath(sessionId)}/choose`, { method: "POST", body });
+  },
+
+  discard: (sessionId: string) => apiRequest<void>(selectionSessionPath(sessionId), { method: "DELETE" }),
 };

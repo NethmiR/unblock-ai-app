@@ -5,6 +5,7 @@ import { compareDesignations } from "../../utils/organisation/designation-refere
 import { toOrganisationalUnitReference } from "../../utils/organisation/organisational-unit-reference.util.js";
 import { compareMemberships, compareOrganisationalUnits } from "../../utils/user-affiliation/membership-order.util.js";
 import { compareText } from "../../utils/shared/text.util.js";
+import { UserStatus } from "../../data/constants/user.constant.js";
 import type { InMemoryOrganisationStore, StoredDesignationAssignment } from "../in-memory-organisation-store.js";
 import type { IUserRepository } from "../user-repository/user-repository.interface.js";
 import type { IUserAffiliationRepository } from "./user-affiliation-repository.interface.js";
@@ -113,6 +114,31 @@ export class InMemoryUserAffiliationRepository implements IUserAffiliationReposi
       });
     }
     return holders;
+  }
+
+  async findDesignationHolders(
+    designationId: string,
+    organisationalUnitIds: readonly string[] | null,
+  ): Promise<DesignationHolderRecord[]> {
+    const unitFilter = organisationalUnitIds === null ? null : new Set(organisationalUnitIds);
+    const holders: DesignationHolderRecord[] = [];
+    for (const assignment of this.store.assignments) {
+      if (assignment.designationId !== designationId) continue;
+      if (unitFilter !== null && !unitFilter.has(assignment.organisationalUnitId)) continue;
+      const user = await this.userRepository.findById(assignment.userId);
+      if (!user || user.status !== UserStatus.ACTIVE) continue;
+      holders.push({
+        designationId: assignment.designationId,
+        organisationalUnitId: assignment.organisationalUnitId,
+        holder: { id: user.id, fullName: user.fullName, email: user.email },
+      });
+    }
+    return holders.sort(
+      (a, b) =>
+        compareText(a.holder.fullName, b.holder.fullName)
+        || a.holder.id.localeCompare(b.holder.id)
+        || a.organisationalUnitId.localeCompare(b.organisationalUnitId),
+    );
   }
 
   async replaceForUser(userId: string, memberships: readonly MembershipInput[], actorUserId: string | null): Promise<void> {

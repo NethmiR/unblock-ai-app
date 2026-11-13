@@ -11,3 +11,7 @@ export function normalizeOptionalText(raw: string | null): string | null {
 export function compareText(a: string, b: string): number {
   return a.localeCompare(b, "en", { sensitivity: "base" });
 }
+
+export function titleCaseIdentifier(identifier: string): string {
+  return identifier.replace(/_/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
+}

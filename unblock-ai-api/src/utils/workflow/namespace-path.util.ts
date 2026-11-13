@@ -1,5 +1,10 @@
 import type { WorkflowDefinition } from "../../lib/types/workflow/workflow.type.js";
 import type { WorkflowStep } from "../../lib/types/workflow/step.type.js";
+import { REQUESTER_ATTRIBUTES } from "../../data/constants/requester.constant.js";
+
+export function isRequesterAttributeKey(key: string | undefined): boolean {
+  return key !== undefined && (REQUESTER_ATTRIBUTES as readonly string[]).includes(key);
+}
 
 export interface DeclaredNamespace {
   inputIds: Set<string>;
@@ -32,7 +37,7 @@ export function isValidNamespacePath(
     return rest.length === 1 && namespace.computedIds.has(rest[0] as string);
   }
   if (root === "requester") {
-    return rest.length === 1;
+    return rest.length === 1 && isRequesterAttributeKey(rest[0]);
   }
   if (root === "system") {
     return rest.length === 1 && rest[0] === "today";

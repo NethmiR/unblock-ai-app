@@ -32,7 +32,9 @@ export class RetrievalService {
       institutionType: options.institutionType,
     });
 
-    const boosted = applyAliasBoost(raw, userQuery, this.retrievalConfig.aliasBoost).slice(0, topK);
+    const boosted = applyAliasBoost(raw, userQuery, this.retrievalConfig.aliasBoost)
+      .filter((candidate) => candidate.score >= this.retrievalConfig.minScore)
+      .slice(0, topK);
 
     logger.debug("retrieved candidates", {
       query: userQuery.slice(0, 80),

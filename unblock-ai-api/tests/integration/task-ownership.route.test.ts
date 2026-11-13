@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { TaskController } from "../../src/controllers/task.controller.js";
+import { TaskFormController } from "../../src/controllers/task-form.controller.js";
+import { TaskService } from "../../src/services/task.service.js";
 import { createRequireTaskOwnership } from "../../src/middlewares/require-task-ownership.middleware.js";
 import { ConflictError } from "../../src/errors/conflict.error.js";
 import {
@@ -12,7 +14,6 @@ import {
   startTestServer,
   type TestServer,
 } from "../helpers/test-server.helper.js";
-import type { TaskService } from "../../src/services/task.service.js";
 import type { ErrorResponseBody } from "../../src/lib/types/http/http.type.js";
 
 const OWNED_TASK_ID = "64b64b64b64b64b64b64b641";
@@ -20,24 +21,25 @@ const HANDLER_REACHED = "handler reached";
 
 const TASK_ROUTES: ReadonlyArray<{ method: string; path: string; body?: Record<string, unknown> }> = [
   { method: "GET", path: `/api/tasks/${OWNED_TASK_ID}` },
-  { method: "GET", path: `/api/tasks/${OWNED_TASK_ID}/status` },
-  { method: "GET", path: `/api/tasks/${OWNED_TASK_ID}/document` },
-  { method: "GET", path: `/api/tasks/${OWNED_TASK_ID}/next` },
-  { method: "POST", path: `/api/tasks/${OWNED_TASK_ID}/values`, body: { key: "departure_date", value: "2026-12-01" } },
-  { method: "POST", path: `/api/tasks/${OWNED_TASK_ID}/finalize` },
-  { method: "POST", path: `/api/tasks/${OWNED_TASK_ID}/start` },
-  { method: "PATCH", path: `/api/tasks/${OWNED_TASK_ID}/status`, body: { status: "cancelled" } },
+  { method: "GET", path: `/api/tasks/${OWNED_TASK_ID}/workflow-definition` },
+  { method: "PUT", path: `/api/tasks/${OWNED_TASK_ID}/forms/entry_form__form/draft`, body: { values: {} } },
+  { method: "POST", path: `/api/tasks/${OWNED_TASK_ID}/forms/entry_form__form/submit`, body: { values: {} } },
+  { method: "POST", path: `/api/tasks/${OWNED_TASK_ID}/cancel` },
+  { method: "GET", path: `/api/tasks/${OWNED_TASK_ID}/transcript` },
   { method: "DELETE", path: `/api/tasks/${OWNED_TASK_ID}` },
 ];
 
-function handlerReachedTaskService(): TaskService {
-  return new Proxy({}, { get: () => () => Promise.reject(new ConflictError(HANDLER_REACHED)) }) as TaskService;
+function handlerReached<T extends object>(): T {
+  return new Proxy({}, { get: () => () => Promise.reject(new ConflictError(HANDLER_REACHED)) }) as T;
 }
+
+const SERIALIZATION = { documentsEnabled: true, isDeletable: TaskService.isDeletable };
 
 async function buildServer(): Promise<TestServer> {
   const owners = new Map([[OWNED_TASK_ID, TEST_USERS[TestIdentity.TASK_CREATOR].id]]);
   const controllers = createTestControllers({
-    taskController: new TaskController({ taskService: handlerReachedTaskService() }),
+    taskController: new TaskController({ taskService: handlerReached(), serialization: SERIALIZATION, transcriptService: handlerReached() }),
+    taskFormController: new TaskFormController({ taskFormService: handlerReached(), serialization: SERIALIZATION }),
   });
 
   return startTestServer(controllers, {

@@ -6,7 +6,6 @@ import { canAccessRoute } from "@/lib/navigation/navigation-access";
 import { RoutePath } from "@/lib/routing/route-path";
 import { initialsOf } from "@/lib/utils/initials";
 import { SESSION_COOKIE_NAME } from "./session-cookie";
-import { RequesterActorType } from "@/types/selection";
 import type { CurrentSession } from "@/types/auth";
 
 /**
@@ -44,8 +43,3 @@ export async function requireRouteAccess(route: RoutePath): Promise<CurrentSessi
   if (!canAccessRoute(session.user.permissions, route)) redirect(RoutePath.DASHBOARD);
   return session;
 }
-
-export function getRequesterContext(): Record<string, unknown> {
-  return { actor_type: RequesterActorType.STAFF };
-}
-

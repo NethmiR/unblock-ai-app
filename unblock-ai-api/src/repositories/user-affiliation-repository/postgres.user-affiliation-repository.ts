@@ -4,6 +4,7 @@ import { isPostgresError } from "../../utils/database/postgres-error.util.js";
 import { compareDesignations } from "../../utils/organisation/designation-reference.util.js";
 import { toOrganisationalUnitReference } from "../../utils/organisation/organisational-unit-reference.util.js";
 import { compareMemberships, compareOrganisationalUnits } from "../../utils/user-affiliation/membership-order.util.js";
+import { UserStatus } from "../../data/constants/user.constant.js";
 import { designationHolderConflict, facultyMembershipRequired } from "../../errors/user-affiliation.error.js";
 import {
   ORGANISATIONAL_UNIT_COLUMNS,
@@ -156,6 +157,29 @@ export class PostgresUserAffiliationRepository implements IUserAffiliationReposi
          JOIN users u ON u.id = ud.user_id
         WHERE ud.single_holder_per_unit`,
       [keys.map((key) => key.designationId), keys.map((key) => key.organisationalUnitId)],
+    );
+    return rows.map((row) => ({
+      designationId: row.designation_id,
+      organisationalUnitId: row.organisational_unit_id,
+      holder: { id: row.holder_id, fullName: row.holder_full_name, email: row.holder_email },
+    }));
+  }
+
+  async findDesignationHolders(
+    designationId: string,
+    organisationalUnitIds: readonly string[] | null,
+  ): Promise<DesignationHolderRecord[]> {
+    if (organisationalUnitIds !== null && organisationalUnitIds.length === 0) return [];
+    const rows = await query<DesignationHolderRow>(
+      `SELECT ud.designation_id, ud.organisational_unit_id,
+              u.id AS holder_id, u.full_name AS holder_full_name, u.email AS holder_email
+         FROM user_designations ud
+         JOIN users u ON u.id = ud.user_id
+        WHERE ud.designation_id = $1
+          AND u.status = $2
+          AND ($3::uuid[] IS NULL OR ud.organisational_unit_id = ANY($3::uuid[]))
+        ORDER BY lower(u.full_name), u.id, ud.organisational_unit_id`,
+      [designationId, UserStatus.ACTIVE, organisationalUnitIds === null ? null : [...organisationalUnitIds]],
     );
     return rows.map((row) => ({
       designationId: row.designation_id,

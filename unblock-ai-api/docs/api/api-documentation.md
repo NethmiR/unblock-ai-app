@@ -139,23 +139,23 @@ only affects browsers; Postman ignores it.
 | 19 | `POST`  | `/api/workflow-templates/:workflowTemplateId/restore` | Restore an archived template (§4.9) | `workflow:manage` |
 | 20 | `GET`   | `/api/workflow-templates/:workflowTemplateId/versions` | Version history, newest first (§4.10) | `workflow:manage` or `task:create` |
 | 21 | `GET`   | `/api/workflow-templates/:workflowTemplateId/versions/:version` | One version with its prompt and definition (§4.11) | `workflow:manage` or `task:create` |
-| 22 | `POST`  | `/api/selection/sessions`              | Start a selection conversation (round 1) | `task:create` |
-| 23 | `POST`  | `/api/selection/sessions/:id/answer`   | Answer a clarifying question (round 2+) | `task:create` |
-| 24 | `POST`  | `/api/selection/sessions/:id/choose`   | Pick a workflow template manually | `task:create` |
-| 25 | `GET`   | `/api/selection/sessions/:id/workflow-template` | Get the matched template's published definition | `task:create` |
-| 26 | `POST`  | `/api/tasks`                           | Create a task from a matched selection session | `task:create` |
-| 27 | `GET`   | `/api/tasks`                           | List the caller's own tasks (filter by `session_id` / `status`) | `task:create` |
-| 28 | `GET`   | `/api/tasks/:id`                       | Get one task | `task:create` + owner |
-| 29 | `GET`   | `/api/tasks/:id/next`                  | Get the next unfilled requirement | `task:create` + owner |
-| 30 | `POST`  | `/api/tasks/:id/values`                | Submit a value for a requirement | `task:create` + owner |
-| 31 | `POST`  | `/api/tasks/:id/finalize`              | Finalize a task once all required values are filled | `task:create` + owner |
-| 32 | `PATCH` | `/api/tasks/:id/status`                | Cancel a task | `task:create` + owner |
-| 33 | `POST`  | `/api/tasks/:id/start`                 | Start the approval chain — dispatches the first step(s) and sends email | `task:create` + owner |
-| 34 | `GET`   | `/api/tasks/:id/status`                | Requester-facing status timeline | `task:create` + owner |
-| 35 | `GET`   | `/api/tasks/:id/document`              | Download the completion-document PDF record (§7.10) | `task:create` + owner |
-| 36 | `DELETE` | `/api/tasks/:id`                      | Permanently delete a finished or never-started task | `task:create` + owner |
-| 37 | `GET`   | `/api/approvals/:token`                | Approver view — the decision page's data | none — the approval token IS the auth |
-| 38 | `POST`  | `/api/approvals/:token/decision`       | Submit an approve / reject / request-more-info decision | none — the approval token IS the auth |
+| 22 | `GET`   | `/api/selection/catalogue`             | Published templates the caller is eligible for, no AI (§6.6) | `task:create` |
+| 23 | `POST`  | `/api/selection/sessions`              | Start an assistant conversation with a first message (§6.1) | `task:create` |
+| 24 | `GET`   | `/api/selection/sessions/:id`          | Restore a conversation (§6.2) | `task:create` + session owner |
+| 25 | `POST`  | `/api/selection/sessions/:id/messages` | Send a follow-up message (§6.3) | `task:create` + session owner |
+| 26 | `POST`  | `/api/selection/sessions/:id/choose`   | Pick an offered template manually, no AI (§6.4) | `task:create` + session owner |
+| 27 | `DELETE` | `/api/selection/sessions/:id`         | Start over (§6.5) | `task:create` + session owner |
+| 28 | `POST`  | `/api/tasks`                           | Create and start a task from a session or the catalogue (§7.1) | `task:create` |
+| 29 | `GET`   | `/api/tasks`                           | List the caller's own tasks (§7.2) | `task:create` |
+| 30 | `GET`   | `/api/tasks/:id`                       | Get one task with its steps and forms (§7.3) | `task:create` + owner |
+| 31 | `GET`   | `/api/tasks/:id/workflow-definition`   | The pinned workflow definition (§7.4) | `task:create` + owner |
+| 32 | `PUT`   | `/api/tasks/:id/forms/:formId/draft`   | Save a form draft (§7.5) | `task:create` + owner |
+| 33 | `POST`  | `/api/tasks/:id/forms/:formId/submit`  | Submit a form and advance the task (§7.6) | `task:create` + owner |
+| 34 | `POST`  | `/api/tasks/:id/cancel`                | Cancel a task in progress (§7.7) | `task:create` + owner |
+| 35 | `DELETE` | `/api/tasks/:id`                      | Delete a task (§7.8) | `task:create` + owner |
+| 36 | `GET`   | `/api/tasks/:id/transcript`            | Download the transcript PDF of a completed task (§7.9) | `task:create` + owner |
+| 37 | `GET`   | `/api/approvals/:token`                | Approver view (§8.1) | none — the approval token IS the auth |
+| 38 | `POST`  | `/api/approvals/:token/decision`       | Approve, reject or request more information (§8.2) | none — the approval token IS the auth |
 | 39 | `GET`   | `/api/organisational-units`            | List faculties, departments and divisions (§14.1) | authenticated |
 | 40 | `POST`  | `/api/organisational-units`            | Create an organisational unit (§14.2) | `organisation:manage` |
 | 41 | `GET`   | `/api/organisational-units/:unitId`    | Get one organisational unit (§14.3) | authenticated |
@@ -182,9 +182,8 @@ either. **+ owner** adds the task-ownership guard: a task created by another
 user answers `404`, exactly like one that does not exist. See §1 for what each
 guard returns on failure.
 
-> `GET /api/tasks/:id/status` and `GET /api/tasks/:id/document` are both
-> registered **before** the bare `GET /api/tasks/:id` pattern in
-> `task.route.ts`, so neither suffix is ever swallowed as an `:id` value.
+> **+ session owner** is checked inside `SelectionService`: a session created by
+> another user answers `404 SELECTION_SESSION_NOT_FOUND`, exactly like an expired one.
 
 ---
 
@@ -528,7 +527,7 @@ An archived template:
 - is left out of §4.1 unless `include_archived=true`;
 - is never a selection candidate (§6);
 - cannot start new tasks — a session already matched to it gets
-  `409 WORKFLOW_TEMPLATE_NOT_PUBLISHED` from §6.4 and `POST /tasks` (§7.1);
+  `409 WORKFLOW_TEMPLATE_NOT_PUBLISHED` from `POST /tasks` (§7.1);
 - rejects §4.5, §4.6 and §4.7 with `409 WORKFLOW_TEMPLATE_ARCHIVED`.
 
 Tasks already created from it keep running against their pinned version.
@@ -618,7 +617,7 @@ One version in full — this is what the editor's read-only historic view
 | `WORKFLOW_TEMPLATE_NOT_ARCHIVED` | 409 | §4.9 on a template that is not archived |
 | `WORKFLOW_TEMPLATE_NOT_GENERATED` | 409 | §4.7 on a draft |
 | `WORKFLOW_TEMPLATE_ALREADY_PUBLISHED` | 409 | §4.7 on a published template |
-| `WORKFLOW_TEMPLATE_NOT_PUBLISHED` | 409 | §6.4 and §7.1 when the matched template is no longer published or has been archived |
+| `WORKFLOW_TEMPLATE_NOT_PUBLISHED` | 409 | §7.1 when the matched template is no longer published or has been archived |
 | `WORKFLOW_TEMPLATE_GENERATION_FAILED` | 422 | §4.3, §4.6 — no valid definition after every attempt, or unparseable model output |
 | `WORKFLOW_TEMPLATE_PROMPT_REJECTED` | 422 | §4.3, §4.6 — the model judged the prompt not to be a workflow |
 
@@ -643,7 +642,7 @@ model with the validation errors as a repair prompt, up to
 
 **What is stored.** The model returns a `title` along with the definition. The title
 is moved onto the template (§4) and is **not** stored in the version's `definition`;
-endpoints that hand a definition to a runtime consumer — §6.4 — put the template's
+endpoints that hand a definition to a runtime consumer — §7.4 — put the template's
 current title back. The definition has no id of its own: a template is identified by
 its UUID and a version number.
 
@@ -682,861 +681,371 @@ API — change the prompt and regenerate (§4.6).
 
 ---
 
-## 6. Selection endpoints (end-user read path)
+## 6. Selection endpoints (assistant conversation)
 
-Every route in this section requires `task:create`.
+`src/routes/selection.route.ts` → `SelectionController` → `SelectionService`.
+Every route requires `task:create`. A selection session is **ephemeral and owned**:
+it carries `created_by` and `expires_at` (`SELECTION_SESSION_TTL_HOURS`, default 24,
+enforced by a Mongo TTL index). A session that is unknown, expired **or owned by
+someone else** answers `404 SELECTION_SESSION_NOT_FOUND`. Starting a task from a
+session (§7.1) copies its messages into the task and deletes the session.
 
-A multi-round conversation that maps a plain-language request onto one
-published template. The agent returns one of four decisions:
+**Where AI is spent.** Only the selector is an LLM call (`LlmOperation.workflow_selection`).
 
-| `decision`      | Meaning |
-| --------------- | ------- |
-| `matched`       | One template chosen; `workflow_template_id` is set. Terminal. |
-| `ambiguous`     | A clarifying question is being asked; answer it via §6.2 |
-| `no_match`      | Nothing suitable. Terminal. |
-| `manual_choice` | The round budget ran out; the user must pick from `options`. Produced by the service loop, never by the model. |
+| Call | Embedding | LLM |
+| --- | --- | --- |
+| First message (`POST /selection/sessions`) | 1 | 0 if no candidate survives eligibility, otherwise 1 |
+| Message after `ambiguous` or `matched` | 0 (frozen candidates) | 1, or 0 once `SELECTION_MAX_ROUNDS` is spent |
+| Message after `no_match` | 1 (all requester messages joined) | 0 or 1 |
+| `choose`, `catalogue` | 0 | 0 |
 
-The round cap is `SELECTION_MAX_ROUNDS`, default **2**.
+**Eligibility runs before the LLM.** Candidates whose
+`scope.applies_to.organisational_unit_codes` do not include one of the requester's
+units (or a unit's parent), or whose `scope.applies_to.actor_type` does not fit the
+requester's designations, are dropped and reported in the `trace`. They are never sent
+to the selector. The selector receives the requester's numbered profile facts
+(`P1`, `P2`, …) and returns the ids it relied on, which come back as `match.matched_facts`.
+
+### Shared shapes
+
+```jsonc
+// SelectionSessionDto
+{
+  "id": "6734f0c2a1b2c3d4e5f60718",
+  "status": "open" | "matched" | "no_match",
+  "messages": [ /* SelectionMessageDto, oldest first */ ],
+  "expires_at": "2026-11-14T09:00:00.000Z"
+}
+
+// requester message
+{ "id": "m1", "role": "requester", "text": "I want to take 1 month overseas leave…", "sent_at": "…" }
+
+// assistant message
+{
+  "id": "m2",
+  "role": "assistant",
+  "decision": "matched" | "ambiguous" | "no_match" | "manual_choice" | "start_requested",
+  "question": null,                 // set only for "ambiguous" (the only LLM free text shown to users)
+  "options": [],                    // [{ id, label, workflow_template_id | null }] for "ambiguous" and "manual_choice"
+  "match": {                        // set for "matched" and "start_requested", null otherwise
+    "overview": { /* WorkflowOverviewDto */ },
+    "matched_facts": [ { "id": "P1", "kind": "member_of_unit", "unit": { … }, "parent": { … }, "designation": null } ]
+  },
+  "trace": [ { "step": "profile_read" | "candidates_retrieved" | "candidates_reused" | "excluded_by_audience" | "excluded_by_requester_type" | "selector_consulted" | "selector_not_needed" | "round_limit_reached", "count": 2, "workflow_template_titles": ["…"] } ],
+  "sent_at": "…"
+}
+
+// WorkflowOverviewDto — deterministic, no LLM
+{
+  "workflow_template_id": "uuid",
+  "title": "Overseas Leave – Faculty of IT",
+  "one_liner": "…",
+  "description": "…",
+  "steps": [ { "id": "hod_approval", "name": "Head of Department approval", "kind": "approval",
+               "assignee": { "source": "directory", "label": "Head of Department" }, "is_conditional": false } ],
+  "information_needed": ["Destination", "Departure date", "…"],
+  "requires_approver_details": true
+}
+```
+
+The API never sends assistant wording. The web app composes every sentence from
+`decision`, `trace` and `match`. `assignee.source` is `directory` (label = designation
+title), `requester_supplied` (label = title-cased role), `requester` or `system` (label `null`).
 
 ### 6.1 `POST /api/selection/sessions`
 
-Round 1. Retrieves candidates (this is the **only** retrieval in the whole
-conversation), asks the selector agent to decide, and persists the session.
+Body `{ "message": string }` (trimmed, 1–1000 characters). Reads the requester profile,
+embeds the message once, filters by eligibility and consults the selector.
+**201** `SelectionSessionDto` with one requester and one assistant message.
 
-**Request body**
+### 6.2 `GET /api/selection/sessions/:id`
 
-| Field               | Type           | Required | Default | Notes |
-| ------------------- | -------------- | -------- | ------- | ----- |
-| `query`             | string         | yes      | —       | Non-empty after trimming; the user's request in plain language |
-| `requester_context` | object \| null | no       | `null`  | Stored on the session; passed through, not used for filtering |
-| `institution_type`  | string \| null | no       | `null`  | Restricts candidates to that institution type |
+**200** `SelectionSessionDto`. Used to restore the chat after a refresh.
 
-```json
-{
-  "query": "I want to book a hall for a workshop next month",
-  "institution_type": "university",
-  "requester_context": { "actor_type": "staff", "department": "Information Technology" }
-}
-```
+### 6.3 `POST /api/selection/sessions/:id/messages`
 
-**201 Created** — `matched`:
+Body `{ "message": string }`. A clarification answer, a refinement, or a confirmation
+such as "Start the task" (which the selector answers with `start_requested`; the web app
+then calls §7.1). **200** `SelectionSessionDto`.
+`409 SELECTION_SESSION_LIMIT_REACHED` once the session holds 20 messages — start over.
 
-```json
-{
-  "session_id": "6710f9c0a1b2c3d4e5f60789",
-  "decision": "matched",
-  "workflow_template_id": "8c1d4e2f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
-  "confidence": "high",
-  "question": null,
-  "options": [],
-  "candidates": [
-    {
-      "workflow_template_id": "8c1d4e2f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
-      "title": "Departmental Event & Workshop Organization",
-      "one_liner": "Get approval to run a departmental event or workshop.",
-      "score": 0.8471
-    },
-    {
-      "workflow_template_id": "3b2f6c1e-8a4d-4f0b-9c7e-2d1a5e6f7a8b",
-      "title": "IT Faculty Overseas Leave Approval",
-      "one_liner": "Get approval before travelling overseas during term.",
-      "score": 0.4113
-    }
-  ]
-}
-```
+### 6.4 `POST /api/selection/sessions/:id/choose`
 
-**201 Created** — `ambiguous`:
+Body `{ "workflow_template_id": uuid }`. Picks one of the session's eligible candidates
+(manual choice). No LLM call. **200** `SelectionSessionDto` ending in a `matched` message.
+`400 SELECTION_OPTION_NOT_OFFERED` for a template that is not an eligible candidate.
 
-```json
-{
-  "session_id": "6710f9c0a1b2c3d4e5f60789",
-  "decision": "ambiguous",
-  "workflow_template_id": null,
-  "confidence": "medium",
-  "question": "Is this an academic workshop for your department, or a private booking?",
-  "options": ["Departmental workshop", "Private booking"],
-  "candidates": [ "..." ]
-}
-```
+### 6.5 `DELETE /api/selection/sessions/:id`
 
-**201 Created** — `no_match` (also what you get when nothing is published):
+**Start over.** **204**.
 
-```json
-{
-  "session_id": "6710f9c0a1b2c3d4e5f60789",
-  "decision": "no_match",
-  "workflow_template_id": null,
-  "confidence": "high",
-  "question": null,
-  "options": [],
-  "candidates": []
-}
-```
+### 6.6 `GET /api/selection/catalogue`
 
-The response shape is identical across all four decisions; only the fields'
-values change. `score` is the retrieval similarity rounded to 4 decimals, and
-`candidates` is capped by `RETRIEVAL_TOP_K` (default 5). The agent's internal
-`reasoning` is deliberately stripped from the response.
+**200** `{ "workflow_templates": WorkflowOverviewDto[] }` — every published, non-archived
+template the caller is eligible for. No embedding and no LLM call. Backs the web
+**See what Unblock can do** drawer, which starts tasks with `source: "catalogue"`.
 
-**Errors**
+### 6.7 Error codes
 
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `{ "error": "Body must include a non-empty 'query' field", "code": "VALIDATION_ERROR", "details": null }` |
-| `502`  | Selector or embedding call failed — `{ "error": "Selector call failed: ...", "code": "SELECTION_ERROR", "details": null }` |
-
-> If you get `no_match` with an empty `candidates` array, the usual cause is
-> that no template has been published. Publish one with §4.7 first. Only
-> published, non-archived templates are candidates.
+| Code | HTTP | When |
+| --- | --- | --- |
+| `VALIDATION_ERROR` | 400 | Missing, blank or over-long `message`; malformed `workflow_template_id` |
+| `SELECTION_OPTION_NOT_OFFERED` | 400 | §6.4 with a template the session did not offer |
+| `SELECTION_SESSION_NOT_FOUND` | 404 | Unknown, expired or not owned by the caller |
+| `SELECTION_SESSION_LIMIT_REACHED` | 409 | 20 messages reached |
+| `SELECTION_FAILED` | 502 | The selector call failed or returned an invalid shape |
+| `EMBEDDING_ERROR` | 502 | The embedding provider failed |
 
 ---
 
-### 6.2 `POST /api/selection/sessions/:id/answer`
+## 7. Task endpoints (task plan and forms)
 
-Round 2+. Records the answer, replays the full transcript to the agent, and
-decides again. **Retrieval is deliberately not re-run** — the candidate set from
-round 1 is reused; the ambiguity is about choosing within it.
+`src/routes/task.route.ts` → `TaskController` / `TaskFormController` → `TaskService`,
+`TaskFormService`, `TaskPlanService`, `TaskEngineService` (pure) and
+`TaskEffectExecutorService`. Every route requires `task:create`; every `/tasks/:id*`
+route also runs the ownership guard, so another user's task is a `404 TASK_NOT_FOUND`.
 
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | `session_id` from §6.1 |
+**Model.** Creating a task compiles a complete plan from the version-pinned workflow
+definition: ordered steps, one stored form per form step, approvers resolved from the
+directory, and requester details prefilled and locked. Nothing after creation calls an
+LLM. Writes use an optimistic `revision`; a lost race is `409 TASK_REVISION_CONFLICT`
+(refetch and retry).
 
-**Request body**
+| Concept | Values |
+| --- | --- |
+| Task `status` | `in_progress`, `completed`, `rejected`, `cancelled` |
+| Step `kind` | `form`, `approval`, `information_request`, `notification`, `automated_action` |
+| Step `origin` | `workflow`, `entry_form` (synthesised first form), `information_request`, `approval_repeat` |
+| Step `status` | `upcoming`, `awaiting_requester`, `awaiting_approver`, `completed`, `skipped`, `cancelled` |
+| Step `outcome` | `completed`, `approved`, `rejected`, `request_more_info`, `skipped` |
+| Assignee `source` | `directory`, `requester_choice` (select field), `requester_supplied` (person field), `requester`, `system` |
 
-| Field    | Type   | Required | Notes |
-| -------- | ------ | -------- | ----- |
-| `answer` | string | yes      | Non-empty after trimming; free text, not restricted to `options` |
+**Field ids** are namespace paths: `inputs.<input_id>`, `requester.<attribute>`,
+`assignees.<step_id>`, `responses.<step_id>`. Form ids are `<step_id>__form`.
 
-```json
-{ "answer": "It's a departmental workshop for our students" }
-```
+### Shared shapes
 
-**200 OK** — same shape as §6.1 (note: 200, not 201).
-
-Once the round budget is exhausted, an ambiguous verdict is converted to:
-
-```json
+```jsonc
+// TaskDto
 {
-  "session_id": "6710f9c0a1b2c3d4e5f60789",
-  "decision": "manual_choice",
-  "workflow_template_id": null,
-  "confidence": "low",
-  "question": "I could not narrow it down. Which of these do you want?",
-  "options": ["Departmental Event & Workshop Organization", "IT Faculty Overseas Leave Approval"],
-  "candidates": [ "..." ]
+  "id": "6734f…",
+  "reference": "TASK-2026-00123",
+  "title": "Overseas Leave – Faculty of IT",
+  "status": "in_progress",
+  "creation_source": "selection_session" | "catalogue",
+  "workflow_template_id": "uuid",
+  "workflow_template_version": 3,
+  "requester": { "full_name": "…", "email": "…", "units": [ { "code": "IT", "name": "…", "unit_type": "department", "parent_name": "…", "designation_titles": ["Student"] } ] },
+  "conversation": [ { "role": "requester" | "assistant", "text": "…", "sent_at": "…" } ],
+  "steps": [ {
+    "id": "entry_form", "position": 1, "kind": "form", "origin": "entry_form",
+    "name": "Your request", "description": null,
+    "status": "awaiting_requester", "outcome": null, "is_conditional": false,
+    "form_id": "entry_form__form",
+    "assignee": { "source": "requester", "full_name": "…", "email": "…", "designation_title": null, "organisational_unit_name": null, "note": null },
+    "approval": null,               // { decision, comment, decided_at, notified_at } on approval steps
+    "information_request": null,    // { requested_by_step_id, question } on inserted steps
+    "activated_at": "…", "completed_at": null
+  } ],
+  "forms": [ {
+    "id": "entry_form__form", "step_id": "entry_form", "title": "Your request", "status": "draft" | "submitted",
+    "sections": [ { "id": "…", "kind": "requester_details" | "request_details" | "approver_details" | "information_response", "title": "Your details",
+      "fields": [ { "id": "requester.full_name", "label": "Full name", "description": null,
+        "control": "text" | "textarea" | "number" | "date" | "datetime" | "email" | "phone" | "switch" | "select" | "person",
+        "width": "half" | "full", "required": true, "locked": true,
+        "value_source": "requester" | "requester_profile" | "directory",
+        "validation": null, "options": [], "value": "Kavindu Jayawardena" } ] } ],
+    "saved_at": null, "submitted_at": null,
+    "editable": true,       // not submitted and the task is not terminal
+    "submittable": true     // editable and the step is awaiting_requester
+  } ],
+  "unsupported_inputs": [ { "input_id": "invitation_letter", "label": "Invitation letter" } ],
+  "progress": { "completed": 0, "total": 4, "current_step_ids": ["entry_form"] },
+  "available_actions": { "can_cancel": true, "can_delete": true, "can_download_transcript": false },
+  "created_at": "…", "updated_at": "…", "completed_at": null
 }
 ```
 
-`options` then holds candidate **titles**, but §6.3 expects a `workflow_template_id` —
-map the chosen title back through the `candidates` array to get its id.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `{ "error": "Body must include a non-empty 'answer' field", "code": "VALIDATION_ERROR", "details": null }` |
-| `404`  | Unknown session id |
-| `502`  | Selector call failed |
-
----
-
-### 6.3 `POST /api/selection/sessions/:id/choose`
-
-The user picked explicitly from a `manual_choice` list. Terminal — it finalizes
-the session as `matched`.
-
-**Request body**
-
-| Field         | Type   | Required | Notes |
-| ------------- | ------ | -------- | ----- |
-| `workflow_template_id` | string | yes      | A UUID; must be one of this session's `candidates` |
-
-```json
-{ "workflow_template_id": "8c1d4e2f-5a6b-4c7d-8e9f-0a1b2c3d4e5f" }
-```
-
-**200 OK** — a short body; there is no `candidates` array here:
-
-```json
-{
-  "session_id": "6710f9c0a1b2c3d4e5f60789",
-  "decision": "matched",
-  "workflow_template_id": "8c1d4e2f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
-}
-```
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `{ "error": "workflow_template_id must be a valid UUID", "code": "VALIDATION_ERROR", "details": null }` — missing or not a UUID |
-| `400`  | `{ "error": "'<workflow_template_id>' was not among this session's candidates", "code": "VALIDATION_ERROR", "details": null }` |
-| `404`  | `{ "error": "Selection session '<id>' not found", "code": "NOT_FOUND", "details": null }` |
-| `500`  | The `:id` is not a 24-character hex ObjectId — see the note in §6.4 |
-
----
-
-### 6.4 `GET /api/selection/sessions/:id/workflow-template`
-
-The published definition of the matched workflow template — this drives the plan
-preview. It always returns the template's **current** version, with the template's
-title put back into the definition (§5).
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | `session_id` |
-
-**200 OK**
-
-```json
-{
-  "workflow_template_version": 2,
-  "definition": { "schema_version": "1.0", "title": "Departmental Event & Workshop Organization", "description": "...", "...": "see §5" }
-}
-```
-
-`POST /api/tasks` (§7.1) pins the version that is current at that moment, which may be
-newer than the one previewed if the template was regenerated in between.
-
-**Errors**
-
-| Status | Body | Cause |
-| ------ | ---- | ----- |
-| `409`  | `{ "error": "This session has not matched a workflow template yet", "code": "CONFLICT", "details": null }` | Session is still ambiguous or ended in `no_match` |
-| `404`  | `{ "error": "Selection session '<id>' not found", "code": "NOT_FOUND", "details": null }` | The session id is unknown |
-| `409`  | `{ "error": "Workflow template '<id>' is not available to requesters", "code": "WORKFLOW_TEMPLATE_NOT_PUBLISHED", "details": null }` | The matched template has since been archived (or is otherwise not published) |
-| `404`  | `{ "error": "Workflow template '<id>' not found", "code": "WORKFLOW_TEMPLATE_NOT_FOUND", "details": null }` | The session matched an id that no longer exists |
-| `500`  | `{ "error": "Failed to look up selection session", "code": "DATABASE_ERROR", "details": null }` | The `:id` is not a valid ObjectId |
-
-> **Known rough edge.** A `session_id` that is not a 24-character hex ObjectId
-> surfaces as a **500 `DATABASE_ERROR`** rather than a 400 — see
-> [§9.1](#91-malformed-objectid-parameters-return-500), which covers tasks too.
-
----
-
-## 7. Task endpoints (requirement collection)
-
-Every route in this section requires `task:create`. A task belongs to the user
-who created it (`POST /api/tasks` stores the caller's id as its creator), and
-only that user can see or act on it:
-
-- `GET /api/tasks` (§7.3) always returns only the caller's own tasks.
-- Every `/api/tasks/:id*` route first checks that the caller created the task.
-  A task created by someone else answers `404 NOT_FOUND` ("Task '<id>' not
-  found"), exactly like a task that does not exist, so the response never
-  reveals that another user's task id is real.
-
-A task walks a requester through supplying the values a matched workflow needs, then
-finalizes into a runnable plan. It is created from a **matched** selection session
-(§6), and moves through a small status machine:
-
-| `status` | Meaning |
-| --------- | ------- |
-| `collecting` | Values are still being gathered. Only status in which `values` can change. |
-| `ready` | Finalized — every required value is filled and steps have their initial states. |
-| `in_progress` | Approval chain running — set by §7.8 `POST /tasks/:id/start`. |
-| `completed` | Every `completion.required_steps` step reached its required outcome. |
-| `rejected` | A step's outcome resolved to `terminate_workflow`; every non-terminal step became `skipped`. |
-| `cancelled` | Terminal. Set via §7.7. |
-
-Starting a task (§7.8) dispatches its entry step(s) to `pending_approval`, issues each
-one a signed approval token, and emails the assignee via the approver link
-(`POST /approvals/:token/decision`, §8). Each decision advances the graph
-(`ExecutionService.advance`) until the task completes, terminates, or is waiting on
-further approvals. There is **no LLM question phrasing** — `GET /tasks/:id/next`
-returns a requirement's `label` and `collection_hint` as plain strings; the caller
-renders the prompt.
-
-A `TaskDto` (the shape returned by every endpoint below except §7.4) looks like:
-
-```json
-{
-  "id": "6710fa11b2c3d4e5f6078912",
-  "reference": "TASK-2026-00042",
-  "session_id": "6710f9c0a1b2c3d4e5f60789",
-  "workflow_template_id": "3b2f6c1e-8a4d-4f0b-9c7e-2d1a5e6f7a8b",
-  "workflow_template_version": 1,
-  "status": "collecting",
-  "requirements": [
-    {
-      "key": "destination_country",
-      "source": "input",
-      "ref": "destination_country",
-      "label": "Destination Country",
-      "description": "Country the student is travelling to.",
-      "type": "string",
-      "required": true,
-      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
-      "collection_hint": null,
-      "status": "pending"
-    },
-    {
-      "key": "requester_email",
-      "source": "input",
-      "ref": "requester_email",
-      "label": "Your Email Address",
-      "description": "Email address for approval and outcome notifications.",
-      "type": "email",
-      "required": true,
-      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
-      "collection_hint": null,
-      "status": "pending"
-    },
-    {
-      "key": "actor:advisor_review",
-      "source": "actor",
-      "ref": "advisor_review",
-      "label": "Academic Advisor",
-      "description": null,
-      "type": "person",
-      "required": true,
-      "validation": null,
-      "collection_hint": "Name and email address of your Academic Advisor.",
-      "status": "pending"
-    }
-  ],
-  "values": {},
-  "steps": [
-    {
-      "step_id": "advisor_review",
-      "name": "Academic Advisor Approval",
-      "type": "approval",
-      "depends_on": [],
-      "state": "blocked",
-      "assignee": null,
-      "outcome": null,
-      "reason": null,
-      "responded_at": null,
-      "approval_token": null,
-      "token_expires_at": null,
-      "token_used_at": null,
-      "notified_at": null,
-      "reopen_count": 0
-    }
-  ],
-  "audit": [
-    { "type": "task_created", "detail": null, "created_at": "2026-08-10T09:30:00.000Z" }
-  ],
-  "created_at": "2026-08-10T09:30:00.000Z",
-  "updated_at": "2026-08-10T09:30:00.000Z"
-}
-```
-
-Each `requirement.key` is either an input id (`source: "input"`), `"actor:" +
-step_id` (`source: "actor"`, `type: "person"`), or — after a "request more info"
-decision (§8) reopens a step — `"followup:" + step_id + ":" + reopen_count`
-(`source: "input"`, `type: "text"`, its `label` the approver's question). Input
-requirements come first, in declaration order; actor requirements follow, in
-topological step order, one per distinct `role`/`relative_to` pair (two steps
-needing the same approver share one requirement); follow-up requirements are
-appended as they are generated. `values` is keyed by `requirement.key`; a `person`
-value is `{ "name": string, "email": string }`.
-
-> **Approver email is requester-supplied and untrusted.** For an `actor:*`
-> requirement, the requester types in their own approver's name and email — there is
-> no directory lookup in this slice. See the code comment in
-> `requirement-builder.util.ts` at the point of capture.
-
-> **`requester_email` is a standard input, declared last among inputs on every
-> workflow.** It is what lets `notification.service.ts` email the requester
-> approval outcomes, rejections, and more-info requests. Like approver email, it is
-> self-asserted by the requester, not verified. Workflows saved before this input
-> existed do not have it — their tasks simply skip the requester-notification send
-> (`notification.service.ts` no-ops when the requirement is absent) and stay
-> pull-only via `GET /tasks/:id/status` (§7.9).
+No requester DTO contains an approval token or its hash. `progress.total` counts steps
+that are neither `skipped` nor `cancelled`. `file` inputs are not collected online; they
+are listed in `unsupported_inputs`.
 
 ### 7.1 `POST /api/tasks`
 
-Creates a task from a matched selection session. Pins the matched template's
-**current** version (`workflow_template_id` + `workflow_template_version`), compiles requirements and step states (`PlannerService.compile`), assigns a
-sequential human-readable `reference`, and inserts with `status: "collecting"`.
-
-**Request body**
-
-| Field        | Type   | Required | Notes |
-| ------------ | ------ | -------- | ----- |
-| `session_id` | string | yes      | Non-empty; must be a session that has `matched` (§6.1–§6.3) |
+Body, one of:
 
 ```json
-{ "session_id": "6710f9c0a1b2c3d4e5f60789" }
+{ "source": "selection_session", "selection_session_id": "6734f0c2a1b2c3d4e5f60718" }
+{ "source": "catalogue", "workflow_template_id": "0b9f…uuid" }
 ```
 
-**201 Created** — a `TaskDto` (see above), `status: "collecting"`, `values: {}`,
-`audit` containing one `task_created` entry.
+Re-checks eligibility, resolves every assignee from the directory, compiles the plan,
+starts the engine (usually activating the entry form) and deletes the selection session.
+**201** `TaskDto`.
+Errors: `SELECTION_SESSION_NOT_FOUND` (404), `SELECTION_SESSION_NOT_MATCHED` (409),
+`WORKFLOW_TEMPLATE_NOT_ELIGIBLE` (403), `WORKFLOW_TEMPLATE_NOT_PUBLISHED` (409, catalogue source).
 
-Save `id` into `{{taskId}}`.
+### 7.2 `GET /api/tasks`
 
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `{ "error": "Body must include a non-empty 'session_id' field", "code": "VALIDATION_ERROR", "details": null }` |
-| `404`  | Unknown session id |
-| `409`  | `{ "error": "This session has not matched a workflow template yet", "code": "CONFLICT", "details": null }` — same rule as §6.4 |
-| `409`  | `WORKFLOW_TEMPLATE_NOT_PUBLISHED` — the matched template was archived after the match (§4.8) |
-
----
-
-### 7.2 `GET /api/tasks/:id`
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | Task id (24-character hex Mongo ObjectId) |
-
-**200 OK** — a `TaskDto`.
-
-**404 Not Found** — `{ "error": "Task '<id>' not found", "code": "NOT_FOUND", "details": null }`
-
-> Same rough edge as elsewhere in the API: a malformed (non-24-hex) `:id` fails
-> inside the Mongo driver and surfaces as **500**, not 404 — see §8.1.
-
----
-
-### 7.3 `GET /api/tasks` (list)
-
-Only ever returns tasks the caller created. There is no parameter to list
-another user's tasks.
-
-**Query parameters**
-
-| Name         | Type   | Required | Notes |
-| ------------ | ------ | -------- | ----- |
-| `session_id` | string | no       | Exact match |
-| `status`     | string | no       | One of the `TaskStatus` values above; unrecognized values are silently ignored (no filter applied) |
-
-`GET {{baseUrl}}/tasks?session_id=6710f9c0a1b2c3d4e5f60789`
-
-**200 OK** — an array of `TaskDto`, newest `created_at` first. Empty array when
-nothing matches, not a 404.
-
----
-
-### 7.4 `GET /api/tasks/:id/next`
-
-Returns the next requirement the caller should collect: the first `pending` +
-`required` requirement, in list order; if none, the first `pending` optional
-requirement; if none at all, `complete: true`.
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | Task id |
-
-**200 OK** — a requirement still pending:
+Query: `status?` (a task status), `search?` (reference or title, ≤ 200 characters),
+`limit?` (1–100, default 20), `offset?` (≥ 0). The caller's own tasks, most recently
+updated first. **200**:
 
 ```json
 {
-  "requirement": {
-    "key": "destination_country",
-    "source": "input",
-    "ref": "destination_country",
-    "label": "Destination Country",
-    "description": "Country the student is travelling to.",
-    "type": "string",
-    "required": true,
-    "validation": { "...": "null-filled" },
-    "collection_hint": null,
-    "status": "pending"
-  },
-  "complete": false
+  "tasks": [ { "id": "…", "reference": "…", "title": "…", "status": "in_progress",
+    "current_steps": [ { "id": "hod_approval", "name": "Head of Department approval", "status": "awaiting_approver" } ],
+    "progress": { "completed": 1, "total": 4, "current_step_ids": ["hod_approval"] },
+    "created_at": "…", "updated_at": "…" } ],
+  "page": { "total": 1, "limit": 20, "offset": 0 }
 }
 ```
 
-**200 OK** — nothing left to collect:
+### 7.3 `GET /api/tasks/:id`
+
+**200** `TaskDto`. The web workspace polls it while any step is `awaiting_approver`.
+
+### 7.4 `GET /api/tasks/:id/workflow-definition`
+
+**200** `{ "definition": WorkflowDefinition }` — the version the task is pinned to, for
+the plan drawer's flowchart.
+
+### 7.5 `PUT /api/tasks/:id/forms/:formId/draft`
+
+Body `{ "values": { "<field_id>": value | null } }`. Allowed on any unsubmitted form of
+a task that is not terminal, **even when its step is still `upcoming`**. Validates the
+type and format of each non-empty value and ignores `required`. Locked fields can never
+be written. **200** `TaskDto`.
+
+Value shapes: strings for text, email, phone, date (`YYYY-MM-DD`), datetime
+(`YYYY-MM-DDTHH:mm`) and select (the chosen option `value`); numbers for number; booleans
+for switch; `{ "name", "email" }` for person.
+
+### 7.6 `POST /api/tasks/:id/forms/:formId/submit`
+
+Same body. Merges the values, validates in submit mode (`required` plus cross-field rules
+such as `not_before_field`) against the task-wide value map, marks the form submitted and
+advances the engine, which may dispatch approval emails. **200** `TaskDto`.
+
+`400 TASK_FORM_INVALID` carries the field issues:
 
 ```json
-{ "requirement": null, "complete": true }
+{
+  "error": "Some fields need attention",
+  "code": "TASK_FORM_INVALID",
+  "details": { "issues": [ { "field_id": "inputs.return_date", "code": "before_earliest_date", "limit": "inputs.departure_date" } ] }
+}
 ```
 
-**404 Not Found** — same shape as §7.2.
+Issue codes: `required`, `unknown_field`, `locked`, `invalid_type`, `invalid_email`,
+`invalid_date`, `invalid_phone`, `too_short`, `too_long`, `below_minimum`,
+`above_maximum`, `before_earliest_date`, `after_latest_date`, `pattern_mismatch`,
+`not_an_option`.
 
----
+### 7.7 `POST /api/tasks/:id/cancel`
 
-### 7.5 `POST /api/tasks/:id/values`
+Cancels open steps and revokes every outstanding approval link. **200** `TaskDto`.
+`409 TASK_NOT_ACTIVE` on a terminal task.
 
-Submits one value against one requirement. Rejects unless the task is still
-`collecting`. Validates and coerces the value against the requirement's `type` and
-`validation` rules — including cross-field checks (`not_before_field` /
-`not_after_field`) evaluated against every value collected so far — then flips that
-requirement's `status` to `filled` and appends a `value_captured` audit entry.
+### 7.8 `DELETE /api/tasks/:id`
 
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | Task id |
+**204**. `409 TASK_NOT_DELETABLE` while the task is in progress with a dispatched
+approval — cancel it first. The deletion is written to the audit log.
 
-**Request body**
+### 7.9 `GET /api/tasks/:id/transcript`
 
-| Field   | Type                        | Required | Notes |
-| ------- | --------------------------- | -------- | ----- |
-| `key`   | string                      | yes      | Must match a `requirements[].key` on the task |
-| `value` | string \| number \| boolean \| object \| null | no | Polymorphic — shape depends on the requirement's `type`. Defaults to `null` when omitted. |
+Renders the transcript PDF on demand from the task and its pinned definition; it is never
+stored. **200** `application/pdf` with `Content-Disposition: attachment`.
+`409 TASK_TRANSCRIPT_UNAVAILABLE` unless the task is `completed` and rendering is enabled
+(`DOCUMENT_ENABLED`). The same render is attached to the completion email when
+`DOCUMENT_ATTACH_TO_EMAIL` is on.
 
-```json
-{ "key": "destination_country", "value": "United Kingdom" }
-```
+The transcript holds the header, requester details, the requester's conversation messages,
+every submitted form section in step order, information request questions and answers,
+the approval trail (step, approver, designation, decision, comment, time), skipped steps
+marked "Not required", and computed values.
 
-A `person` requirement (actor collection):
+### 7.10 Error codes
 
-```json
-{ "key": "actor:advisor_review", "value": { "name": "Dr. Perera", "email": "perera@university.edu" } }
-```
-
-The `requester_email` input (`type: "email"`, present on every workflow template generated since
-that input was added — see §7):
-
-```json
-{ "key": "requester_email", "value": "jane.doe@example.com" }
-```
-
-`value` is **not** validated in the controller — it is polymorphic by design, and
-`value-validator.util.ts` owns that judgement. The controller only asserts the `key`
-field is present and non-empty. Coercion is strict, and it is per-`type`:
-
-| Requirement `type` | Accepted `value` | Rejected with a 400 |
+| Code | HTTP | When |
 | --- | --- | --- |
-| `string`, `text`, `phone`, `enum`, `file` | Any JSON string | Any non-string |
-| `email` | A string matching `user@host.tld` | `"example value"`, or any non-string |
-| `number` | A finite number; a non-empty numeric **string** is coerced to one | `NaN`, `Infinity`, non-numeric text |
-| `boolean` | `true` / `false` | The strings `"true"` / `"false"` |
-| `date`, `datetime` | `"YYYY-MM-DD"` that also parses as a real date | `"2026-13-01"`, any other format |
-| `person` | `{ "name": <non-empty string>, "email": <valid address> }` | A bare string, or either field missing/invalid |
-
-`enum` is **not** checked against a list of allowed values, and `file` expects a plain
-string — neither type does more than the string check in this slice.
-
-> Sending `"example value"` for every requirement therefore stops working as soon as a
-> workflow declares a typed input. `requester_email` is the one every workflow now has,
-> so a fill loop must branch on `type` from `GET /tasks/:id/next` (§7.4). The Postman
-> collection's *Submit next requirement value* request does this in a pre-request script.
-
-**200 OK** — the updated `TaskDto`, with that requirement's `status: "filled"` and
-`values[key]` set to the coerced value.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `{ "error": "Body must include a non-empty 'key' field", "code": "VALIDATION_ERROR", "details": null }` |
-| `400`  | `{ "error": "Task '<id>' has no requirement with key '<key>'", "code": "VALIDATION_ERROR", "details": null }` |
-| `400`  | Value fails type coercion or validation — the message names the requirement key, e.g. `{ "error": "Requirement 'requester_email' expects a valid email address", "code": "VALIDATION_ERROR", "details": null }` or `{ "error": "Requirement 'return_date' must not be before 'inputs.departure_date'", "code": "VALIDATION_ERROR", "details": null }` |
-| `404`  | Unknown task id |
-| `409`  | `{ "error": "Task '<id>' is not collecting values (status: <status>)", "code": "CONFLICT", "details": null }` |
-
----
-
-### 7.6 `POST /api/tasks/:id/finalize`
-
-Closes out collection. Rejects unless every `required` requirement is `filled`;
-otherwise names the missing keys. On success, attaches each collected `actor:*`
-person value onto the matching step(s)' `assignee` (steps sharing a de-duplicated
-actor requirement all receive the same person), initializes step states — steps
-with an empty `depends_on` become `ready`, all others `blocked` — sets
-`status: "ready"`, and appends a `task_finalized` audit entry.
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | Task id |
-
-**Request body:** none.
-
-**200 OK** — the finalized `TaskDto`: `status: "ready"`, `steps[]` carry resolved
-`assignee` and `state`.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `{ "error": "Task '<id>' is missing required values: <key1>, <key2>", "code": "VALIDATION_ERROR", "details": null }` |
-| `404`  | Unknown task id |
-| `409`  | `{ "error": "Task '<id>' is not collecting values (status: <status>)", "code": "CONFLICT", "details": null }` — already finalized or cancelled |
-
----
-
-### 7.7 `PATCH /api/tasks/:id/status`
-
-Cancels a task. The only transition this route allows.
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | Task id |
-
-**Request body**
-
-| Field    | Type   | Required | Notes |
-| -------- | ------ | -------- | ----- |
-| `status` | string | yes      | Must be exactly `"cancelled"` — no other value is accepted here |
-
-```json
-{ "status": "cancelled" }
-```
-
-**200 OK** — the updated `TaskDto`, `status: "cancelled"`, with a `task_cancelled`
-audit entry appended.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `{ "error": "status must be one of: cancelled", "code": "VALIDATION_ERROR", "details": null }` |
-| `404`  | Unknown task id |
-| `409`  | `{ "error": "Task '<id>' is already in a terminal status (<status>)", "code": "CONFLICT", "details": null }` — task is `completed`, `rejected`, or already `cancelled` |
-
----
-
-### 7.8 `POST /api/tasks/:id/start`
-
-Starts the approval chain. Rejects unless `status === "ready"` (i.e. §7.6 has run).
-Loads the version-pinned workflow, runs `ExecutionService.advance()` to compute which
-step(s) become `pending_approval`, issues each a fresh signed approval token
-(`token_expires_at` = now + `APPROVAL_TOKEN_TTL_DAYS`), persists steps and status
-together, then emails each dispatched step's assignee. `status` moves to
-`in_progress`.
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | Task id |
-
-**Request body:** none.
-
-**200 OK** — the updated `TaskDto`: `status: "in_progress"`, the entry step(s) have a
-non-null `approval_token` and `token_expires_at`, `notified_at` set if the email send
-succeeded.
-
-A failed email send is **not** an error — `notification.service.ts` never throws.
-`notified_at` stays `null` for that step, and the task still moves to `in_progress`
-with a live token. Re-fetch the task (§7.2) to check.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `404`  | Unknown task id |
-| `409`  | `{ "error": "Task '<id>' is not ready to start (status: <status>)", "code": "CONFLICT", "details": null }` |
-
-> **Console mailer.** With `MAIL_TRANSPORT=console` (the default), the approval
-> email is not actually sent — it is logged to the server's stdout, full approval
-> URL included: `${APP_PUBLIC_URL}/approvals/<token>`. Copy the token out of that
-> log line into `{{approvalToken}}` to drive §8 from Postman.
-
----
-
-### 7.9 `GET /api/tasks/:id/status`
-
-The requester-facing timeline — what to show someone tracking their own request.
-Distinct from §7.2 (`GET /api/tasks/:id`), which returns the full internal document;
-this endpoint returns a smaller, presentation-oriented shape.
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | Task id |
-
-**200 OK**
-
-```json
-{
-  "status": "in_progress",
-  "reference": "TASK-2026-00042",
-  "workflow_template_title": "IT Faculty Overseas Leave Approval",
-  "current_steps": ["hod_review"],
-  "rejected_at_step": null,
-  "rejected_by": null,
-  "reason": null,
-  "timeline": [
-    {
-      "step": "Academic Advisor Approval",
-      "outcome": "approved",
-      "reason": null,
-      "at": "2026-08-15T09:00:00.000Z"
-    }
-  ]
-}
-```
-
-`workflow_template_title` is the template's current title, even when the task is
-pinned to an older version (§4). `current_steps` lists the names of steps currently `pending_approval`. `timeline` is
-every step with a non-null `outcome`, oldest first. On a `rejected` task,
-`rejected_at_step` / `rejected_by` / `reason` are lifted from the step whose outcome
-resolved to `terminate_workflow` — this is what lets a requester see **who** rejected
-their request, **where**, and **why**. On any other status they are all `null`.
-
-**404 Not Found** — same shape as §7.2.
-
----
-
-### 7.10 `GET /api/tasks/:id/document`
-
-Downloads a PDF record of the whole completed request — every value the requester
-supplied, in the order the workflow template declares it, followed by the approval
-trail (who approved each step, their designation, and their email address). The same
-record is emailed as an attachment on the completion notice sent when the last
-required step is approved (§8.2); this endpoint exists so a lost or never-sent
-attachment is not a lost document.
-
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `id`      | path | yes      | Task id |
-
-**200 OK** — binary body, not JSON:
-
-```
-Content-Type: application/pdf
-Content-Disposition: attachment; filename="TASK-2026-00042-record.pdf"
-Content-Length: 48213
-```
-
-The task is **immutable** once completed and its workflow is **version-pinned**
-(`task.workflow_template_id` + `task.workflow_template_version`), so the document is regenerated on every
-request rather than stored — this route is a pure function of data that already
-exists. A task that completed before this feature existed, or whose generation
-failed at completion time, has `completion_document: null`; this route generates
-one on the fly and backfills it rather than erroring. If a fresh render's hash
-differs from a previously stored one (a code change to the builder or layout since
-the record was issued), the drift is logged as a warning and the fresh copy is
-served anyway — the stored `sha256` exists to make that drift visible, not to block
-the download.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `404`  | Unknown task id — same shape as §7.2 |
-| `409`  | `{ "error": "A record is only issued once every step is approved", "code": "CONFLICT", "details": null }` — task status is not `completed` |
-| `409`  | `{ "error": "Task '<id>' has no record available for download", "code": "CONFLICT", "details": null }` — `DOCUMENT_ENABLED=false`, or rendering failed both at completion time and again on this request |
-
-> **Feature flags.** `DOCUMENT_ENABLED` (default `true`) gates generation
-> entirely; `DOCUMENT_ATTACH_TO_EMAIL` (default `true`) controls only whether the
-> completion email carries the PDF as an attachment — this download route is
-> unaffected by it. See [../guides/configuration.md](../guides/configuration.md)
-> for the full `DOCUMENT_*` list.
+| `VALIDATION_ERROR` | 400 | Malformed body, query or id |
+| `TASK_FORM_INVALID` | 400 | Field issues (`details.issues`) |
+| `WORKFLOW_TEMPLATE_NOT_ELIGIBLE` | 403 | The requester is outside the template's audience or requester type |
+| `TASK_NOT_FOUND` | 404 | Unknown task, or not owned by the caller |
+| `TASK_FORM_NOT_FOUND` | 404 | Unknown form id on the task |
+| `SELECTION_SESSION_NOT_FOUND` | 404 | §7.1 with an unknown, expired or foreign session |
+| `TASK_NOT_ACTIVE` | 409 | A mutation on a terminal task |
+| `TASK_NOT_DELETABLE` | 409 | Delete while an approval is in progress |
+| `TASK_REVISION_CONFLICT` | 409 | Optimistic concurrency loss |
+| `TASK_FORM_ALREADY_SUBMITTED` | 409 | Draft or submit on a submitted form |
+| `TASK_FORM_NOT_AWAITING_INPUT` | 409 | Submit while the form's step is not `awaiting_requester` |
+| `SELECTION_SESSION_NOT_MATCHED` | 409 | §7.1 from a session without a matched template |
+| `TASK_TRANSCRIPT_UNAVAILABLE` | 409 | Transcript for a task that is not completed, or rendering is off |
 
 ---
 
 ## 8. Approval endpoints (approver decision path)
 
-Token-authenticated, not session-authenticated — a different mechanism from the rest
-of the API (which uses bearer sessions, §1). The token is the credential; anyone holding the
-link in an approval email can act as that approver. `src/controllers/approval.controller.ts`
-+ `src/routes/approval.route.ts`.
+`src/routes/approval.route.ts` → `ApprovalController` → `ApprovalService`. **No session.**
+The token in the emailed link is the credential. Only `sha256(token)` is stored on the step;
+the raw token exists only in the email. Tokens expire after `APPROVAL_TOKEN_TTL_DAYS` and are
+invalidated on decision and on cancel.
 
-The token is opaque: `base64url(payload) + "." + base64url(HMAC-SHA256(payload, secret))`,
-where `payload` encodes `{ task_id, step_id, nonce }` (`src/utils/approval/token.util.ts`).
-It proves authenticity only — whether it is still *usable* (unexpired, unused, and its
-step still `pending_approval`) is a separate check made on every request.
+The approval email links to the web page `${APP_PUBLIC_URL}/approvals/<token>`, which calls
+these routes. With `MAIL_TRANSPORT=console` the whole email, including that URL, is printed to
+the API's stdout.
 
 ### 8.1 `GET /api/approvals/:token`
 
-The approver's decision-page data — everything needed to render the approval form
-without a second round trip.
+**200** `ApproverViewDto`:
 
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `token`   | path | yes      | From an approval email, or the console mailer's stdout log |
-
-**200 OK**
-
-```json
+```jsonc
 {
-  "task_reference": "TASK-2026-00042",
-  "workflow_template_title": "IT Faculty Overseas Leave Approval",
-  "step": {
-    "step_id": "advisor_review",
-    "name": "Academic Advisor Approval",
-    "instructions_to_approver": "Confirm the student is in good standing.",
-    "response_fields": []
-  },
-  "approver": { "name": "Dr. Perera", "email": "perera@university.edu" },
-  "requester_answers": [
-    { "label": "Destination Country", "value": "United Kingdom" }
-  ],
-  "computed": [],
-  "prior_decisions": [],
-  "allowed_outcomes": ["approved", "rejected"],
-  "already_decided": false,
-  "decided_outcome": null,
-  "decided_at": null
+  "task": { "reference": "…", "title": "…", "submitted_at": "…", "requester": { /* RequesterSnapshotDto */ } },
+  "step": { "id": "advisor_approval", "name": "Academic advisor approval", "description": null,
+            "instructions_to_approver": "Confirm the research visit…", "is_repeat": false },
+  "approver": { /* TaskAssigneeDto */ },
+  "sections": [ { "title": "Request details", "fields": [ { "label": "Destination", "value": "Japan" } ] } ],
+  "computed": [ { "label": "Leave duration (days)", "value": "40" } ],
+  "information_exchanges": [ { "asked_by": "…", "question": "…", "answer": "…", "asked_at": "…", "answered_at": "…" } ],
+  "history": [ { "step_name": "…", "actor_name": "…", "decision": "approved", "outcome": "approved", "comment": null, "at": "…" } ],
+  "plan": [ { "name": "…", "kind": "approval", "status": "awaiting_approver", "assignee": { … }, "is_current": true } ],
+  "allowed_decisions": ["approved", "rejected", "request_more_info"],
+  "comment_required_decisions": ["rejected", "request_more_info"],
+  "decided": null                 // { decision, comment, decided_at } once decided
 }
 ```
 
-`workflow_template_title` is the template's current title; the step itself comes from
-the version the task is pinned to.
-
-`allowed_outcomes` reflects only the outcomes this **specific step** declares
-(`workflow.steps[].outcomes`, non-null entries) — never a hardcoded
-approve/reject/more-info list. A step whose schema omits `request_more_info` will
-never show that option here.
-
-**A re-clicked link on an already-decided step is not an error.** The response comes
-back `200` with `already_decided: true` and `decided_outcome` / `decided_at` filled
-in, so the page can render "already approved on 15 Aug" instead of failing.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `404`  | `{ "error": "Approval token '<token>' not found", "code": "NOT_FOUND", "details": null }` — malformed, tampered, or unrecognized token. Deliberately **404, not 401** — the response does not confirm or deny that a token of that shape ever existed. |
-
----
+A decided link keeps working for this route: it returns `decided` and an empty
+`allowed_decisions`. `request_more_info` is left out of `allowed_decisions` when the step's
+definition does not offer it or after `TASK_MAX_INFORMATION_REQUESTS_PER_STEP` requests.
 
 ### 8.2 `POST /api/approvals/:token/decision`
 
-Records the approver's decision and advances the workflow. This is the one endpoint
-in the whole API that can send email as a direct side effect of the call.
+Body `{ "decision": "approved" | "rejected" | "request_more_info", "comment": string | null }`.
+The comment is required for `rejected` and `request_more_info` and at most 2000 characters.
 
-| Parameter | In   | Required | Notes |
-| --------- | ---- | -------- | ----- |
-| `token`   | path | yes      | Same token as §8.1 |
+- `approved` advances the task, dispatching the next approvals or completing it (the
+  requester is emailed the transcript).
+- `rejected` ends the task as `rejected`, cancels open steps and revokes the other links.
+- `request_more_info` completes this approval with that outcome, inserts an
+  `information_request` step for the requester (one required text-area field labelled with
+  your comment) and a repeat of the same approval after it. The requester is emailed; once
+  they answer, a fresh link is sent to the same approver.
 
-**Request body**
+**200** `{ "decision": "approved", "task_status": "in_progress", "next_step_name": "Head of Department approval" }`.
 
-| Field     | Type           | Required | Notes |
-| --------- | -------------- | -------- | ----- |
-| `outcome` | string         | yes      | One of `approved`, `rejected`, `request_more_info` |
-| `reason`  | string \| null | no       | Required (non-empty after trimming) when the step's outcome config sets `include_reason: true` — driven by the workflow, not hardcoded per outcome name |
+### 8.3 Error codes
 
-```json
-{ "outcome": "rejected", "reason": "Missing signed advisor endorsement letter." }
-```
-
-**200 OK**
-
-```json
-{
-  "task_id": "6710fa11b2c3d4e5f6078912",
-  "step_id": "advisor_review",
-  "outcome": "rejected",
-  "status": "rejected",
-  "completed": false,
-  "terminated": true
-}
-```
-
-The step is persisted **before** any notification is sent, so a failed email never
-rolls back a recorded decision. What happens next depends on the step's declared
-`action` for that outcome:
-
-| `action` | Effect |
-| --- | --- |
-| `continue` | Step → `approved`; the engine advances — any newly-`ready` step is dispatched with a fresh token and an approval-request email |
-| `terminate_workflow` | Step → `rejected`; every other non-terminal step → `skipped`; task `status` → `rejected`; a rejection notice emails the requester |
-| `reopen_input` | Step → `ready` with a cleared token (the next dispatch issues a new one); `reopen_count` on that step increments (capped at 3); a `followup:<step_id>:<n>` requirement is appended, task `status` → `collecting`, and a more-info notice emails the requester |
-
-If this decision satisfies `workflow.completion.required_steps`, `status` becomes
-`completed` and a completion notice emails the requester instead.
-
-**Errors**
-
-| Status | Cause |
-| ------ | ----- |
-| `400`  | `{ "error": "outcome must be one of: approved, rejected, request_more_info", "code": "VALIDATION_ERROR", "details": null }` |
-| `400`  | `{ "error": "A reason is required for outcome '<outcome>' on step '<step_id>'", "code": "VALIDATION_ERROR", "details": null }` — reason missing or whitespace-only when the step requires one |
-| `404`  | Invalid or unrecognized token — same as §8.1 |
-| `409`  | `{ "error": "Approval token has already been used for step '<step_id>'", "code": "CONFLICT", "details": null }` — replay of a used token |
-
-> **Approver identity is requester-supplied and untrusted.** The email a decision is
-> sent to comes from whatever the requester typed into an `actor:*` task requirement
-> (§7) — there is no directory lookup. This slice trusts that address with real
-> approval authority; see the comment in `notification.service.ts` at the dispatch
-> site.
+| Code | HTTP | When |
+| --- | --- | --- |
+| `VALIDATION_ERROR` | 400 | Unknown `decision`, or a comment over 2000 characters |
+| `APPROVAL_COMMENT_REQUIRED` | 400 | No comment on `rejected` or `request_more_info` |
+| `APPROVAL_DECISION_NOT_ALLOWED` | 400 | A decision the step does not offer, including `request_more_info` past the cap |
+| `APPROVAL_LINK_INVALID` | 404 | Bad signature, unknown hash, the step no longer holds that token, or the task was cancelled |
+| `APPROVAL_ALREADY_DECIDED` | 409 | §8.2 on a step that already has a decision |
+| `APPROVAL_LINK_EXPIRED` | 410 | `token_expires_at` has passed |
 
 ---
 
@@ -1549,17 +1058,15 @@ hierarchy) instead of maintaining a separate status lookup table:
 
 | Status | Shape | Raised by |
 | ------ | ----- | --------- |
-| `400`  | `{ "error", "code": "VALIDATION_ERROR", "details" }` | `ValidationError` — per-route body checks |
+| `400`  | `{ "error", "code": "VALIDATION_ERROR" \| "TASK_FORM_INVALID" \| "SELECTION_OPTION_NOT_OFFERED" \| "APPROVAL_*", "details" }` | `ValidationError` — per-route body checks, form field issues (§7.6), decisions (§8.3) |
 | `401`  | `{ "error", "code": "AUTHENTICATION_REQUIRED" \| "INVALID_CREDENTIALS", "details": null }` | `UnauthorizedError` — no usable session on a guarded route (§1), or a bad login (§12.1) |
-| `403`  | `{ "error", "code": "PERMISSION_DENIED" \| "ACCOUNT_LOCKED" \| "ACCOUNT_DISABLED", "details": null }` | `ForbiddenError` — authenticated but missing every permission the route accepts; or a login refused for a locked or disabled account (§12.1) |
-| `404`  | `{ "error", "code": "NOT_FOUND" \| "WORKFLOW_TEMPLATE_NOT_FOUND" \| "WORKFLOW_TEMPLATE_VERSION_NOT_FOUND" \| "USER_NOT_FOUND" \| "USER_SESSION_NOT_FOUND", "details" }` | `NotFoundError` — missing workflow template or version (§4), selection session or task (including another user's task, §7); unknown user (§13.3); a session id that is not one of the caller's active sessions (§12.6) |
-| `409`  | `{ "error", "code": "CONFLICT" \| "WORKFLOW_TEMPLATE_*" \| "EMAIL_ALREADY_REGISTERED", "details" }` | `ConflictError` — §6.4 on an unmatched session, the workflow template lifecycle rules (§4.12), §13.1 on a duplicate email |
+| `403`  | `{ "error", "code": "PERMISSION_DENIED" \| "ACCOUNT_LOCKED" \| "ACCOUNT_DISABLED" \| "WORKFLOW_TEMPLATE_NOT_ELIGIBLE", "details": null }` | `ForbiddenError` — missing permission, a refused login (§12.1), or a template outside the requester's audience (§7.1) |
+| `404`  | `{ "error", "code": "NOT_FOUND" \| "WORKFLOW_TEMPLATE_*_NOT_FOUND" \| "SELECTION_SESSION_NOT_FOUND" \| "TASK_NOT_FOUND" \| "TASK_FORM_NOT_FOUND" \| "APPROVAL_LINK_INVALID" \| "USER_NOT_FOUND" \| "USER_SESSION_NOT_FOUND", "details" }` | `NotFoundError` |
+| `409`  | `{ "error", "code": "CONFLICT" \| "WORKFLOW_TEMPLATE_*" \| "SELECTION_SESSION_*" \| "TASK_*" \| "APPROVAL_ALREADY_DECIDED" \| "EMAIL_ALREADY_REGISTERED", "details" }` | `ConflictError` — lifecycle rules (§4.12, §6.7, §7.10, §8.3), duplicate email (§13.1) |
+| `410`  | `{ "error", "code": "APPROVAL_LINK_EXPIRED", "details": null }` | `GoneError` — an expired approval link (§8) |
 | `422`  | `{ "error", "code": "WORKFLOW_TEMPLATE_GENERATION_FAILED" \| "WORKFLOW_TEMPLATE_PROMPT_REJECTED", "details": <errors\|null> }` | `WorkflowTemplateGenerationError` only — the model could not produce a valid workflow template (§4.3, §4.6) |
 | `500`  | `{ "error": "Internal server error", "code": "INTERNAL_ERROR", "details": null }` | Anything untyped — details are logged, never returned |
-| `502`  | `{ "error", "code": "SELECTION_ERROR" \| "EMBEDDING_ERROR", "details": <cause\|null> }` | `SelectionError`, `EmbeddingError` — upstream Azure failure |
-
-`ConflictError` also covers the task status-machine rejections in §7 (§7.1, §7.5,
-§7.6, §7.7, §7.10) alongside the §6.4 unmatched-session case.
+| `502`  | `{ "error", "code": "SELECTION_FAILED" \| "EMBEDDING_ERROR", "details": <cause\|null> }` | The selector or the embedding provider failed |
 
 A `401`/`403` from a guarded route (see §1 and §2's Auth column) is thrown by
 the route guard itself, before the controller ever runs — so it carries no
@@ -1581,30 +1088,14 @@ The split is deliberate: **400** means the request you sent is wrong, **422** me
 the model could not build a workflow template from your prompt. Both are client-visible
 failures, but only the second implies the LLM was involved.
 
-### 9.1 Malformed ObjectId parameters return 500
+### 9.1 Malformed ObjectId parameters
 
-Routes whose `:id` is a **MongoDB ObjectId** — every
-`/selection/sessions/:id*` route, and every `/tasks/:id*` route — behave differently
-depending on *how* the id is wrong. `/approvals/:token*` is unaffected — the token is
-not an ObjectId, and an invalid one is a clean 404 (§8.1) rather than a 500:
-
-| `:id` you send | Status | Body |
-| -------------- | ------ | ---- |
-| 24 hex chars, no matching row | `404` | `{ "error": "Selection session '<id>' not found", "code": "NOT_FOUND" }` |
-| Anything else (`not-an-objectid`, `123`) | `500` | `{ "error": "Failed to look up selection session", "code": "DATABASE_ERROR" }` |
-
-`/tasks/:id*` routes are the exception: the ownership guard (§1) validates the id
-before any lookup, so a malformed task id returns `400` with
-`{ "error": "'<id>' is not a valid id", "code": "VALIDATION_ERROR" }`.
-
-The malformed case fails inside the driver before any not-found check runs, so it is
-reported as a database fault rather than the 400 the input actually deserves. Nothing
-sensitive leaks — the generic message is all the client sees — but when testing, read a
-500 from these routes as **"check the id format first"** rather than as a server bug.
-
-Workflow template routes are unaffected: `/workflow-templates/:workflowTemplateId` takes a
-UUID, validated before any lookup — a malformed id is a clean 400 and an unknown one a
-404 (§4.4).
+`/tasks/:id*` routes validate the id in the ownership guard before any lookup, so a
+malformed task id returns `400` with `{ "error": "'<id>' is not a valid id", "code": "VALIDATION_ERROR" }`.
+`/selection/sessions/:id*` routes treat a malformed id like an unknown one: `404
+SELECTION_SESSION_NOT_FOUND`. `/approvals/:token*` never parses an ObjectId — a bad token
+is a clean `404 APPROVAL_LINK_INVALID`. Workflow template routes take a UUID, validated
+before any lookup (§4.4).
 
 ---
 
@@ -1612,178 +1103,96 @@ UUID, validated before any lookup — a malformed id is a clean 400 and an unkno
 
 Run these folders in sequence — later calls depend on ids produced by earlier ones.
 The runnable collection at [../postman/](../postman/) automates this order with
-`pm.test` scripts that write the ids into collection variables automatically, so a full
-Collection Runner pass needs no manual variable entry.
+`pm.test` scripts that write the ids into collection variables, so a Collection Runner
+pass needs manual input only for the approval link (pasted from the console mailer).
 
 | Folder | Call | Capture |
 | --- | ---- | ------- |
 | Health | `GET /health` | confirm `status: "ok"` |
 | Auth | `POST /auth/login` with `{{loginEmail}}` / `{{loginPassword}}` (the seeded administrator, §12.1) | `token` → `{{authToken}}` |
-| Auth | `GET /auth/me` with `Authorization: Bearer {{authToken}}` | confirm the `user` and its `permissions` |
-| Auth | `POST /auth/login` again | `token` → `{{secondAuthToken}}` — a second concurrent session |
-| Auth | `GET /auth/sessions` | the newest session with `is_current: false` → `{{otherUserSessionId}}` |
-| Auth | `DELETE /auth/sessions/{{otherUserSessionId}}` | `204`; `{{secondAuthToken}}` now gets `401` |
-| Auth | `DELETE /auth/sessions/others` | `revoked_count` (sessions left over from earlier runs) |
-| Auth | `POST /auth/logout` with a throwaway session | `204`; that token now gets `401` — `{{authToken}}` is untouched |
-| Users | `POST /users` with a unique email | `user.id` → `{{userId}}` |
-| Users | `GET /users` | the new user appears in the list |
-| Users | `GET /users/{{userId}}` | the same `UserDto` |
-| Workflow Templates | `POST /workflow-templates/generate` with the prompt from `src/data/samples/demo-drafts/workshop_event.txt` (send `Authorization: Bearer {{authToken}}` — every call below does the same) | `workflow_template.id` → `{{workflowTemplateId}}`, `current_version` → `{{templateVersion}}`; `status: "unpublished"` (slow) |
-| Workflow Templates | `GET /workflow-templates` | the template appears in the list |
-| Workflow Templates | `GET /workflow-templates?include_archived=true` | archived templates included |
-| Workflow Templates | `GET /workflow-templates/{{workflowTemplateId}}` | `current` holds version 1 |
-| Workflow Templates | `PATCH /workflow-templates/{{workflowTemplateId}}` with a new `title` and `draft_prompt` | `current_version` unchanged, `has_ungenerated_changes: true` |
-| Workflow Templates | `POST /workflow-templates/{{workflowTemplateId}}/publish` | `status: "published"` — now selectable |
-| Workflow Templates | `POST /workflow-templates/{{workflowTemplateId}}/generate` with the edited prompt | `current_version` 2, still `published` (slow) |
-| Workflow Templates | `GET /workflow-templates/{{workflowTemplateId}}/versions` | two versions, newest first |
-| Workflow Templates | `GET /workflow-templates/{{workflowTemplateId}}/versions/1` | version 1's `prompt` and `definition` |
-| Workflow Templates | `POST /workflow-templates/{{workflowTemplateId}}/archive`, then `…/restore` | `is_archived` true, then false; status stays `published` |
-| Workflow Templates | `POST /workflow-templates` with a title and prompt | `workflow_template.id` → `{{draftWorkflowTemplateId}}`; `status: "draft"` |
-| Selection | `POST /selection/sessions` with a matching query | `session_id` → `{{sessionId}}` |
-| Selection | `POST /selection/sessions/{{sessionId}}/answer` | only if `decision` was `ambiguous` |
-| Selection | `POST /selection/sessions/{{sessionId}}/choose` | only if `decision` was `manual_choice` |
-| Selection | `GET /selection/sessions/{{sessionId}}/workflow-template` | `workflow_template_version` and the published `definition` |
-| Tasks | `POST /tasks` with `{{sessionId}}` | `id` → `{{taskId}}`, confirm `status: "collecting"` |
-| Tasks | `GET /tasks/{{taskId}}/next` | confirm a requirement comes back |
-| Tasks | `POST /tasks/{{taskId}}/values` for each requirement returned by `next` | repeat until `GET /tasks/{{taskId}}/next` returns `complete: true`. The value must match the requirement's `type` (§7.5) — `requester_email` needs a real address |
-| Tasks | `POST /tasks/{{taskId}}/finalize` | confirm `status: "ready"` and step states |
-| Tasks | `GET /tasks?session_id={{sessionId}}` | the task appears in the list |
-| Tasks | `POST /tasks/{{taskId}}/start` | `status: "in_progress"`; watch stdout for the approval email (console mailer) |
-| Approvals | copy the token out of the stdout log into `{{approvalToken}}` | — |
-| Approvals | `GET /approvals/{{approvalToken}}` | confirm `already_decided: false` and `allowed_outcomes` |
-| Approvals | `POST /approvals/{{approvalToken}}/decision` with `{"outcome":"approved"}` | confirm `status`; repeat the start→copy→get→decide loop for each subsequent step until `completed: true` |
-| Tasks | `GET /tasks/{{taskId}}/status` | confirm the timeline reflects every decision made |
-| Tasks | `GET /tasks/{{taskId}}/document` | 200, `Content-Type: application/pdf`, body starts with `%PDF-` — only once `status` is `completed` |
-| Tasks | `GET /tasks?session_id={{sessionId}}` | the task appears in the list |
-| Tasks | `PATCH /tasks/{{taskId}}/status` with `{"status":"cancelled"}` | only on a scratch task **before** `start` — this is terminal |
-| Error cases | one request per error class (400, 401, 404, 409, 422) | asserts `{ error, code, details }` |
+| Auth | the remaining session calls (§12) | see the collection |
+| Users | `POST /users`, `GET /users`, `GET /users/{{userId}}` | `user.id` → `{{userId}}` |
+| Workflow Templates | `POST /workflow-templates/generate` with a demo prompt from `src/data/samples/demo-drafts/`, then `…/publish` | `{{workflowTemplateId}}`; `status: "published"` (slow) |
+| Task requests | `POST /auth/login` as the requester (`{{requesterEmail}}`, default the seeded Kavindu, `u17@u.c`) | `token` → `{{requesterToken}}`; every Task requests call sends it |
+| Task requests | `GET /selection/catalogue` | the templates Kavindu may start |
+| Task requests | `POST /selection/sessions` with an overseas-leave request | `id` → `{{sessionId}}`; expect a `matched` assistant message |
+| Task requests | `GET /selection/sessions/{{sessionId}}` | the same conversation |
+| Task requests | `POST /tasks` with `{ source: "selection_session", selection_session_id: {{sessionId}} }` | `id` → `{{taskId}}`; the entry form's id → `{{formId}}` |
+| Task requests | `PUT /tasks/{{taskId}}/forms/{{formId}}/draft` with some values | `saved_at` set, `status: "draft"` |
+| Task requests | `POST /tasks/{{taskId}}/forms/{{formId}}/submit` with every required value | the next step is `awaiting_approver`; the console prints the approval URL |
+| Task requests | `GET /tasks` and `GET /tasks/{{taskId}}/workflow-definition` | the task in the list; the pinned definition |
+| Approvals | paste the console URL (or the token) into `{{approvalUrl}}` | a pre-request script extracts `{{approvalToken}}` |
+| Approvals | `GET /approvals/{{approvalToken}}` | `allowed_decisions`, `decided: null` |
+| Approvals | `POST /approvals/{{approvalToken}}/decision` with `request_more_info` and no comment | `400 APPROVAL_COMMENT_REQUIRED` |
+| Approvals | `POST /approvals/{{approvalToken}}/decision` with `approved` | `task_status`, `next_step_name`; repeat paste → get → decide for each approval |
+| Approvals | the same decision again | `409 APPROVAL_ALREADY_DECIDED` |
+| Transcript | `GET /tasks/{{taskId}}/transcript` (requester token) | `200 application/pdf` once the task is `completed`; `409` before |
+| Task requests | `POST /tasks/{{taskId}}/cancel` on a scratch task, then `DELETE /tasks/{{taskId}}` | `status: "cancelled"`; `204` |
+| Error cases | one request per error class | asserts `{ error, code, details }` |
 
-The seeded administrator holds every permission, so one `{{authToken}}` drives
-the whole sequence. To exercise the permission guards, create a user with only
-`task:create` (§13.1), log in as them (their password is
-`USER_DEFAULT_PASSWORD`), and use that token: Selection, Tasks and the
-`GET /workflow-templates*` rows still pass, while every
-`POST/PATCH /workflow-templates*` and every `/users*` row
-answers `403 PERMISSION_DENIED`. Tasks are visible only to the user who created
-them (§7), so switch tokens before creating a task, not halfway through one.
+The administrator token drives the admin folders; the requester token drives everything
+from Task requests on, because tasks are visible only to the user who created them (§7)
+and selection depends on the caller's affiliations. Sample users' password is
+`USER_DEFAULT_PASSWORD`.
 
-**Do not log out of `{{authToken}}` mid-run.** Logout (and revoking the current
-session through §12.6) really revokes the session, so every later request would
-answer `401`. The collection's Logout request logs in a throwaway session first
-and logs that one out instead.
-
-Generate and publish a second template (for example from
-`src/data/samples/demo-drafts/it_overseas_leave.txt`) so the selector has something to
-disambiguate between — with one candidate it will rarely return `ambiguous`.
+**Do not log out of `{{authToken}}` mid-run.** Logout really revokes the session, so
+every later admin request would answer `401`. The collection's Logout request logs in a
+throwaway session first and logs that one out instead.
 
 **Postman scripting** — the collection uses `pm.collectionVariables.set(...)` in each
-request's *Tests* tab rather than environment variables, so the chain works the same way
-whether or not an environment is selected. For example, `POST /auth/login`:
-
-```javascript
-pm.collectionVariables.set("authToken", pm.response.json().token);
-```
-
-The collection-level auth is `Bearer {{authToken}}`, so every request after
-Login authenticates without a manual header.
-
-and `POST /workflow-templates/generate`:
+request's *Tests* tab, so the chain works with or without an environment selected. For
+example, `POST /tasks`:
 
 ```javascript
 var json = pm.response.json();
-pm.collectionVariables.set("workflowTemplateId", json.workflow_template.id);
-pm.collectionVariables.set("templateVersion", json.workflow_template.current_version);
+pm.collectionVariables.set("taskId", json.id);
+var form = json.forms.find(function (f) { return f.submittable; }) || json.forms[0];
+if (form) pm.collectionVariables.set("formId", form.id);
 ```
 
-and `POST /selection/sessions`:
+and the approval token, extracted from whatever you pasted:
 
 ```javascript
-pm.collectionVariables.set("sessionId", pm.response.json().session_id);
+var pasted = pm.collectionVariables.get("approvalUrl") || "";
+pm.collectionVariables.set("approvalToken", decodeURIComponent(pasted.split("/approvals/").pop().trim()));
 ```
-
-The requirement-fill loop needs the requirement's **type**, not just its key, because
-`POST /tasks/:id/values` coerces per type (§7.5). `GET /tasks/:id/next` captures both:
-
-```javascript
-if (json.requirement) {
-    pm.collectionVariables.set("requirementKey", json.requirement.key);
-    pm.collectionVariables.set("requirementType", json.requirement.type);
-}
-```
-
-and *Submit next requirement value* turns that type into a valid sample in a
-**pre-request** script, writing raw JSON into `{{requirementValue}}` — which the body
-interpolates unquoted as `"value": {{requirementValue}}`, so non-string types stay
-numbers, booleans, and objects:
-
-```javascript
-switch (pm.collectionVariables.get("requirementType")) {
-    case "email":  value = "jane.doe@example.com"; break;
-    case "person": value = { name: "Dr. Perera", email: "perera@university.edu" }; break;
-    case "number": value = 42; break;
-    // ...date, boolean, string default
-}
-pm.collectionVariables.set("requirementValue", JSON.stringify(value));
-```
-
-That makes a Collection Runner pass over `next` → `values` fill every requirement
-unattended, including `requester_email`. Override `{{requirementValue}}` by hand (as raw
-JSON) when you want a specific answer rather than a placeholder.
 
 ---
 
 ## 11. Things worth knowing before you test
 
-- **LLM routes are slow.** `POST /workflow-templates/generate` and
-  `POST /workflow-templates/:workflowTemplateId/generate` make up to
-  `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` model calls. Set the Postman timeout well
-  above the default.
-- **Nothing is selectable until it is published.** Retrieval only considers templates
-  with `status: "published"` and no `archived_at`.
+- **LLM routes are slow, and only two exist.** Template generation (§4.3, §4.6) and
+  selection (§6.1, §6.3). Task creation, forms, approvals and transcripts never call an
+  LLM. Each call logs one `llm completion usage` line with its `operation`
+  (`workflow_template_generation` or `workflow_selection`).
+- **Nothing is selectable until it is published**, and only to eligible requesters.
+  Retrieval considers templates with `status: "published"` and no `archived_at`, then drops
+  those whose audience or requester type excludes the caller (§6).
+- **Selection depends on who you are.** Log in as a sample user with affiliations (for
+  example `u17@u.c`, a student in the Department of Information Technology). The
+  administrator has no affiliations, so audience-scoped templates are not offered to them.
 - **Generating always makes a new version.** Versions are never edited in place. On a
-  published template the new version goes live immediately. A rename changes only the
-  template and re-embeds; it never makes a version.
-- **There is no delete.** Archive templates you no longer want (§4.8). To wipe test
-  data, drop it directly in MongoDB (`unblock_ai` database, collections
-  `workflow_templates`, `workflow_template_versions`, `selection_sessions`, `tasks`).
+  published template the new version goes live immediately. Tasks keep the version they
+  were started with.
 - **Definitions cannot be hand-edited through the API.** Change the prompt and
   regenerate. Complete example definitions live in `src/data/samples/expected/`.
-- **Retrieval backend is switchable.** `VECTOR_BACKEND=atlas` uses Atlas vector
-  search; anything else uses the in-memory store. This changes `score` values
-  but not the response shape.
-- **A task can only be created from a matched session.** Run the Selection folder
-  through to a `matched` decision (§6) before `POST /tasks`.
-- **Every workflow now collects `requester_email`.** It is declared last among the
-  inputs, so it is the last `source: "input"` requirement `GET /tasks/:id/next` hands
-  back before the `actor:*` ones. It is `type: "email"` and required — a placeholder
-  string is a 400 (§7.5).
-- **Task values can only change while `status: "collecting"`.** `POST
-  /tasks/:id/values` and `POST /tasks/:id/finalize` both 409 once the task is
-  `ready` or `cancelled`.
-- **The approval chain only moves on `POST /tasks/:id/start` and
-  `POST /approvals/:token/decision`.** Finalizing (§7.6) only computes initial step
-  states — nothing is dispatched, tokened, or emailed until §7.8 starts the task.
-- **Approval tokens live in the console log, not the API response.** With the
-  default `MAIL_TRANSPORT=console`, no email provider is involved — the mailer logs
-  the subject, recipient, and full approval URL to the server's stdout. Read the
-  token from there for manual testing.
-- **A used or expired token is a 409, not a 404 or 500.** A malformed/unknown
-  token is 404 (§8); a syntactically valid token whose step already has
-  `token_used_at` set, or whose `token_expires_at` has passed, is a 409 from
-  `POST /approvals/:token/decision`. `GET /approvals/:token` instead renders
-  `already_decided: true` for the used case — it never errors on a stale-but-valid
-  link.
-- **A `request_more_info` decision reopens collection.** No new endpoint —
-  `status` returns to `collecting` and a `followup:<step_id>:<n>` requirement is
-  appended, answered through the existing `POST /tasks/:id/values` (§7.5). Reopens
-  on the same step are capped at 3 (`reopen_count`); a 4th is a 409.
-- **The completion-document PDF is regenerated, never stored.** `GET
-  /tasks/:id/document` (§7.10) re-renders it from the task and its version-pinned
-  workflow template on every call — only a small metadata record (`filename`, `byte_size`,
-  `sha256`, `emailed_to`/`emailed_at`) is persisted on the task. It 409s until
-  `status` is `completed`. The same PDF is attached to the completion email
-  (`DOCUMENT_ATTACH_TO_EMAIL`, default `true`), so this endpoint is the fallback
-  when that email or its attachment never arrived.
+- **A task starts the moment it is created.** Its first active step is usually the entry
+  form. There is no separate finalize or start call.
+- **Drafts any time, submit when active.** A later step's form can be drafted early; its
+  submit answers `409 TASK_FORM_NOT_AWAITING_INPUT` until the step is reached.
+- **Approval links live in the console log, not the API response.** With
+  `MAIL_TRANSPORT=console` the mailer prints the subject, recipient and full approval URL
+  to stdout.
+- **Expired is 410, reused is 409, unknown is 404.** `GET /approvals/:token` keeps working
+  on a decided link and returns `decided`. Set `APPROVAL_TOKEN_TTL_DAYS=0` (and restart) to
+  see a 410.
+- **More information inserts steps.** `request_more_info` adds an `information_request`
+  step and a repeat approval to `steps`; the requester answers through the inserted step's
+  form (§7.6). Capped at `TASK_MAX_INFORMATION_REQUESTS_PER_STEP` (default 3) per approval.
+- **The transcript PDF is rendered on demand, never stored** (§7.9).
+- **To wipe test data**, drop it directly in MongoDB (collections `workflow_templates`,
+  `workflow_template_versions`, `selection_sessions`, `tasks`). Sessions also expire on
+  their own. `legacy_tasks` holds pre-revamp tasks and is never read.
 
 ---
 

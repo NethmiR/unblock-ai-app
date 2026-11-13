@@ -5,6 +5,8 @@ import { llm } from "./llm.config.js";
 import { embedding } from "./embedding.config.js";
 import { workflowTemplateGeneration } from "./workflow-template-generation.config.js";
 import { retrieval } from "./retrieval.config.js";
+import { selection } from "./selection.config.js";
+import { task } from "./task.config.js";
 import { mail } from "./mail.config.js";
 import { auth } from "./auth.config.js";
 import { user } from "./user.config.js";
@@ -19,6 +21,8 @@ export const config: AppConfig = Object.freeze({
   embedding,
   workflowTemplateGeneration,
   retrieval,
+  selection,
+  task,
   mail,
   auth,
   user,

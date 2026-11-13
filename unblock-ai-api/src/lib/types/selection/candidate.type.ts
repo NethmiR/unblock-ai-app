@@ -15,3 +15,10 @@ export interface BoostedCandidate extends RetrievalCandidate {
   base_score: number;
   alias_hits: string[];
 }
+
+export interface SelectorCandidate {
+  workflow_template_id: string;
+  title: string;
+  retrieval_summary: RetrievalSummary;
+  audience_unit_names: string[];
+}

@@ -4,6 +4,7 @@ import { COLLECTIONS } from "../data/constants/collection.constant.js";
 import { WorkflowTemplateStatus, WorkflowTemplateVisibility } from "../data/constants/workflow-template.constant.js";
 import { DatabaseError } from "../errors/database.error.js";
 import type {
+  WorkflowTemplateCatalogueProjection,
   WorkflowTemplateDocument,
   WorkflowTemplateListOptions,
   WorkflowTemplateRetrievalProjection,
@@ -74,6 +75,21 @@ export class WorkflowTemplateModel {
         .toArray()) as unknown as WorkflowTemplateRetrievalProjection[];
     } catch (err) {
       throw new DatabaseError("Failed to list workflow templates for retrieval", { cause: err });
+    }
+  }
+
+  async listPublishedForCatalogue(): Promise<WorkflowTemplateCatalogueProjection[]> {
+    try {
+      const templates = await this.collection();
+      const rows = await templates
+        .find({ ...retrievableFilter(null), current_version: { $ne: null } }, { projection: { title: 1, current_version: 1 } })
+        .sort({ title: 1 })
+        .toArray();
+      return rows.flatMap((row) =>
+        row.current_version === null ? [] : [{ _id: row._id, title: row.title, current_version: row.current_version }],
+      );
+    } catch (err) {
+      throw new DatabaseError("Failed to list published workflow templates", { cause: err });
     }
   }
 

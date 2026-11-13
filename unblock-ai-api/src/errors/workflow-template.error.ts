@@ -1,3 +1,4 @@
+import { ForbiddenError } from "./forbidden.error.js";
 import { ConflictError } from "./conflict.error.js";
 import { NotFoundError } from "./not-found.error.js";
 import { WorkflowTemplateGenerationError } from "./workflow-template-generation.error.js";
@@ -49,5 +50,11 @@ export function workflowTemplatePromptRejected(reasons: readonly string[]): Work
   return new WorkflowTemplateGenerationError("The prompt does not describe a workflow", {
     code: WorkflowTemplateErrorCode.WORKFLOW_TEMPLATE_PROMPT_REJECTED,
     details: [...reasons],
+  });
+}
+
+export function workflowTemplateNotEligible(id: string): ForbiddenError {
+  return new ForbiddenError(`Workflow template '${id}' is not available to you`, {
+    code: WorkflowTemplateErrorCode.WORKFLOW_TEMPLATE_NOT_ELIGIBLE,
   });
 }

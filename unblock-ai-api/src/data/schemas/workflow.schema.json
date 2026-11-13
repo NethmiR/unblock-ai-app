@@ -75,11 +75,15 @@
         "applies_to": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["actor_type", "constraints"],
+          "required": ["actor_type", "organisational_unit_codes", "constraints"],
           "properties": {
             "actor_type": {
               "type": "string",
               "enum": ["student", "staff", "faculty", "external", "any"]
+            },
+            "organisational_unit_codes": {
+              "type": "array",
+              "items": { "type": "string" }
             },
             "constraints": {
               "type": "array",
@@ -367,7 +371,7 @@
         "id", "name", "type", "description", "assignee", "depends_on",
         "initial_state", "blocked_reason", "condition",
         "instructions_to_approver", "response_fields", "context_from_steps",
-        "outcomes", "notifications", "sla"
+        "collects_inputs", "outcomes", "notifications", "sla"
       ],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
@@ -401,6 +405,10 @@
         "context_from_steps": {
           "type": "array",
           "items": { "$ref": "#/$defs/context_binding" }
+        },
+        "collects_inputs": {
+          "type": "array",
+          "items": { "type": "string" }
         },
         "outcomes": {
           "type": "object",

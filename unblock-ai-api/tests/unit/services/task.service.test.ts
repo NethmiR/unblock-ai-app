@@ -1,480 +1,132 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ObjectId } from "mongodb";
-import { TaskService } from "../../../src/services/task.service.js";
-import { PlannerService } from "../../../src/services/planner.service.js";
-import { ExecutionService } from "../../../src/services/execution.service.js";
-import { NotificationService } from "../../../src/services/notification.service.js";
-import { CompletionDocumentService } from "../../../src/services/completion-document.service.js";
-import { TextDocumentRenderer } from "../../../src/services/document/text.document.js";
-import { ConflictError } from "../../../src/errors/conflict.error.js";
-import { ValidationError } from "../../../src/errors/validation.error.js";
-import { NotFoundError } from "../../../src/errors/not-found.error.js";
-import { FakeAuditLogModel, FakeTaskModel } from "../../helpers/fake-model.helper.js";
-import { AuditService } from "../../../src/services/audit.service.js";
-import { loadExpectedFixture } from "../../helpers/fixture.helper.js";
-import { LEAVE_WORKFLOW_TEMPLATE_ID, stubWorkflowTemplateService } from "../../helpers/workflow-template.helper.js";
-import type { SelectionService } from "../../../src/services/selection.service.js";
-import type { IMailer } from "../../../src/services/mailer/mailer.interface.js";
-import type { AppConfig } from "../../../src/lib/types/config/config.type.js";
-import type { WorkflowDefinition } from "../../../src/lib/types/workflow/workflow.type.js";
+import { AssigneeSource } from "../../../src/data/constants/assignee.constant.js";
+import { SelectionErrorCode } from "../../../src/data/constants/selection-error.constant.js";
+import { FormSectionKind } from "../../../src/data/constants/task-form.constant.js";
+import { TaskErrorCode } from "../../../src/data/constants/task-error.constant.js";
+import { WorkflowTemplateErrorCode } from "../../../src/data/constants/workflow-template-error.constant.js";
+import { ENTRY_FORM_STEP_ID, TaskCreationSource, TaskStatus, TaskStepStatus } from "../../../src/data/constants/task.constant.js";
+import { SelectionMessageRole } from "../../../src/data/constants/selection.constant.js";
+import { withErrorCode } from "../../helpers/error-assertion.helper.js";
+import { ENG_LEAVE_ID, IT_LEAVE_ID, WORKSHOP_ID } from "../../helpers/selection-testbed.helper.js";
+import { createTaskTestbed, ENTRY_FORM_ID, leaveEntryValues } from "../../helpers/task-testbed.helper.js";
 
-function fakeSelectionService(matched: boolean): SelectionService {
-  return {
-    getMatchedWorkflowTemplateId() {
-      if (!matched) throw new ConflictError("This session has not matched a workflow template yet");
-      return Promise.resolve(LEAVE_WORKFLOW_TEMPLATE_ID);
-    },
-  } as unknown as SelectionService;
-}
+const KAVINDU = "Kavindu Jayawardena";
 
-const fakeConfig = {
-  mail: { appPublicUrl: "http://localhost:3001", tokenSecret: "test-secret", tokenTtlDays: 14 },
-  document: {
-    enabled: true,
-    attachToEmail: true,
-    format: "text",
-    institutionName: "Unblock AI",
-    maxAttachmentBytes: 5_000_000,
-  },
-} as unknown as AppConfig;
+test("creating from a matched session compiles the plan, starts the entry form and deletes the session", async () => {
+  const bed = await createTaskTestbed();
+  const userId = bed.world.userIdOf(KAVINDU);
+  const sessionId = await bed.matchedSession(userId);
 
-const fakeMailer: IMailer = { send: () => Promise.resolve({ sent: true, error: null }) };
+  const task = await bed.taskService.create(userId, { source: TaskCreationSource.SELECTION_SESSION, selectionSessionId: sessionId });
 
-function fakeAuditService(auditLogModel: FakeAuditLogModel): AuditService {
-  return new AuditService({
-    auditLogModel: auditLogModel as unknown as ConstructorParameters<
-      typeof AuditService
-    >[0]["auditLogModel"],
-  });
-}
-
-function build({
-  taskModel,
-  workflow,
-  matched = true,
-  auditLogModel = new FakeAuditLogModel(),
-}: {
-  taskModel: FakeTaskModel;
-  workflow: WorkflowDefinition;
-  matched?: boolean;
-  auditLogModel?: FakeAuditLogModel;
-}): TaskService {
-  return new TaskService({
-    taskModel: taskModel as unknown as ConstructorParameters<typeof TaskService>[0]["taskModel"],
-    selectionService: fakeSelectionService(matched),
-    workflowTemplateService: stubWorkflowTemplateService(workflow),
-    plannerService: new PlannerService(),
-    executionService: new ExecutionService(),
-    notificationService: new NotificationService({ mailer: fakeMailer, config: fakeConfig }),
-    auditService: fakeAuditService(auditLogModel),
-    completionDocumentService: new CompletionDocumentService({
-      renderer: new TextDocumentRenderer(),
-      config: fakeConfig,
-    }),
-    config: fakeConfig,
-  });
-}
-
-const LEAVE_WORKFLOW = loadExpectedFixture("it_faculty_overseas_leave.json");
-
-/** No login yet, so an unauthenticated delete still has to be representable. */
-const ANONYMOUS_ACTOR = { id: null, email: null };
-
-test("create() from an unmatched session throws ConflictError", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW, matched: false });
-
-  await assert.rejects(() => service.create("session-1", "user-1"), ConflictError);
+  assert.equal(task.status, TaskStatus.IN_PROGRESS);
+  assert.equal(task.creation_source, TaskCreationSource.SELECTION_SESSION);
+  assert.match(task.reference, /^TASK-\d{4}-00001$/);
+  assert.equal(task.revision, 0);
+  assert.equal(task.steps.find((step) => step.id === ENTRY_FORM_STEP_ID)?.status, TaskStepStatus.AWAITING_REQUESTER);
+  assert.equal(task.steps.find((step) => step.id === "hod_review")?.assignee?.full_name, "Dinesh Wijesinghe");
+  assert.equal(task.steps.find((step) => step.id === "dean_review")?.assignee?.full_name, "Sunethra Ratnayake");
+  assert.equal(task.steps.find((step) => step.id === "advisor_review")?.assignee?.source, AssigneeSource.REQUESTER_SUPPLIED);
+  assert.deepEqual(task.requester.units.map((unit) => unit.code), ["FIT", "IT"]);
+  assert.deepEqual(task.conversation.filter((message) => message.role === SelectionMessageRole.REQUESTER).map((message) => message.text), [
+    "I want overseas leave",
+  ]);
+  const details = task.forms[0]!.sections.find((section) => section.kind === FormSectionKind.REQUESTER_DETAILS)!.fields;
+  assert.ok(details.every((field) => field.locked));
+  await assert.rejects(bed.selection.service.get(sessionId, userId), withErrorCode(SelectionErrorCode.SELECTION_SESSION_NOT_FOUND));
 });
 
-test("create() pins the task to the matched workflow template and its published version", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+test("creating from the catalogue requires an eligible template", async () => {
+  const bed = await createTaskTestbed();
+  const userId = bed.world.userIdOf(KAVINDU);
 
-  const task = await service.create("session-1", "user-1");
-
-  assert.equal(task.workflow_template_id, LEAVE_WORKFLOW_TEMPLATE_ID);
-  assert.equal(task.workflow_template_version, 1);
-});
-
-test("setValue() on a finalized task throws ConflictError", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await taskModel.setStatus(task._id, "ready");
+  const task = await bed.taskService.create(userId, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: IT_LEAVE_ID });
+  assert.equal(task.creation_source, TaskCreationSource.CATALOGUE);
+  assert.deepEqual(task.conversation, []);
 
   await assert.rejects(
-    () => service.setValue(task._id, "full_name", "Jane Doe"),
-    ConflictError,
+    bed.taskService.create(userId, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: ENG_LEAVE_ID }),
+    withErrorCode(WorkflowTemplateErrorCode.WORKFLOW_TEMPLATE_NOT_ELIGIBLE),
   );
 });
 
-test("setValue() with an unknown key throws ValidationError", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
+test("an unmatched session cannot start a task", async () => {
+  const bed = await createTaskTestbed();
+  const userId = bed.world.userIdOf(KAVINDU);
+  bed.selection.selector.enqueue({
+    decision: "no_match" as never,
+    workflow_template_id: null,
+    confidence: "high",
+    question: null,
+    options: [],
+    matched_fact_ids: [],
+    reasoning: "",
+  });
+  const view = await bed.selection.service.start(userId, "weather");
 
   await assert.rejects(
-    () => service.setValue(task._id, "not_a_real_key", "value"),
-    ValidationError,
+    bed.taskService.create(userId, { source: TaskCreationSource.SELECTION_SESSION, selectionSessionId: String(view.session._id) }),
+    withErrorCode(SelectionErrorCode.SELECTION_SESSION_NOT_MATCHED),
   );
 });
 
-test("finalize() with a missing required requirement throws ValidationError naming the key", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+test("cancel ends the task and clears any live approval link", async () => {
+  const bed = await createTaskTestbed();
+  const userId = bed.world.userIdOf(KAVINDU);
+  const created = await bed.taskService.create(userId, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: IT_LEAVE_ID });
+  const submitted = await bed.taskFormService.submit(String(created._id), ENTRY_FORM_ID, leaveEntryValues());
+  assert.ok(submitted.steps.find((step) => step.id === "advisor_review")?.approval?.token_hash);
 
-  const task = await service.create("session-1", "user-1");
+  const cancelled = await bed.taskService.cancel(String(created._id));
 
-  await assert.rejects(() => service.finalize(task._id), (err: unknown) => {
-    assert.ok(err instanceof ValidationError);
-    assert.match(err.message, /full_name/);
-    return true;
-  });
+  assert.equal(cancelled.status, TaskStatus.CANCELLED);
+  assert.equal(cancelled.steps.find((step) => step.id === "advisor_review")?.approval?.token_hash, null);
+  await assert.rejects(bed.taskService.cancel(String(created._id)), withErrorCode(TaskErrorCode.TASK_NOT_ACTIVE));
 });
 
-async function fillAllRequirements(service: TaskService, taskId: ObjectId): Promise<void> {
-  const values: Record<string, unknown> = {
-    full_name: "Jane Doe",
-    student_index_number: "IT/2020/123",
-    destination_country: "Japan",
-    destination_city: "Tokyo",
-    departure_date: "2027-01-01",
-    return_date: "2027-01-10",
-    travel_reason: "Conference attendance",
-    requester_email: "jane.doe@example.com",
-    "actor:advisor_review": { name: "Dr. Advisor", email: "advisor@example.com" },
-    "actor:hod_review": { name: "Prof. Hod", email: "hod@example.com" },
-    "actor:dean_review": { name: "Dean Dean", email: "dean@example.com" },
-  };
-  for (const [key, value] of Object.entries(values)) {
-    await service.setValue(taskId, key, value);
+test("delete refuses a task with a dispatched approval and records the deletion otherwise", async () => {
+  const bed = await createTaskTestbed();
+  const userId = bed.world.userIdOf(KAVINDU);
+  const fresh = await bed.taskService.create(userId, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: IT_LEAVE_ID });
+  const dispatched = await bed.taskService.create(userId, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: IT_LEAVE_ID });
+  await bed.taskFormService.submit(String(dispatched._id), ENTRY_FORM_ID, leaveEntryValues());
+  const actor = { id: userId, email: "u17@u.c" };
+
+  await assert.rejects(bed.taskService.delete(String(dispatched._id), actor), withErrorCode(TaskErrorCode.TASK_NOT_DELETABLE));
+  await bed.taskService.delete(String(fresh._id), actor);
+  await bed.taskService.cancel(String(dispatched._id));
+  await bed.taskService.delete(String(dispatched._id), actor);
+
+  assert.equal(bed.taskModel.tasks.size, 0);
+  assert.equal(bed.auditRecords.length, 2);
+});
+
+test("list returns only the caller's tasks, filtered and paged", async () => {
+  const bed = await createTaskTestbed();
+  const userId = bed.world.userIdOf(KAVINDU);
+  const other = bed.world.userIdOf("Ishara Bandara");
+  for (let index = 0; index < 3; index++) {
+    await bed.taskService.create(userId, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: IT_LEAVE_ID });
   }
-}
+  const cancelled = await bed.taskService.create(userId, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: IT_LEAVE_ID });
+  await bed.taskService.cancel(String(cancelled._id));
+  await bed.taskService.create(other, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: WORKSHOP_ID });
 
-test("finalize() on the leave fixture: advisor_review is READY, the other two are BLOCKED", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
+  const page = await bed.taskService.list(userId, { status: TaskStatus.IN_PROGRESS, search: null, limit: 2, offset: 0 });
+  const search = await bed.taskService.list(userId, { status: null, search: "00004", limit: 20, offset: 0 });
 
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-
-  const finalized = await service.finalize(task._id);
-
-  assert.equal(finalized.status, "ready");
-  assert.equal(finalized.steps.length, 3);
-
-  const byId = new Map(finalized.steps.map((s) => [s.step_id, s]));
-  assert.equal(byId.get("advisor_review")?.state, "ready");
-  assert.equal(byId.get("hod_review")?.state, "blocked");
-  assert.equal(byId.get("dean_review")?.state, "blocked");
+  assert.equal(page.total, 3);
+  assert.equal(page.tasks.length, 2);
+  assert.ok(page.tasks.every((task) => task.created_by === userId));
+  assert.deepEqual(search.tasks.map((task) => task.reference.slice(-5)), ["00004"]);
 });
 
-test("finalize() attaches the collected advisor to advisor_review.assignee", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-
-  const finalized = await service.finalize(task._id);
-  const advisorStep = finalized.steps.find((s) => s.step_id === "advisor_review");
-
-  assert.deepEqual(advisorStep?.assignee, { name: "Dr. Advisor", email: "advisor@example.com" });
-});
-
-test("start() on a non-ready task throws ConflictError", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-
-  await assert.rejects(() => service.start(task._id), ConflictError);
-});
-
-test("start() dispatches advisor_review, issues a token, and moves the task to in_progress", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-
-  const started = await service.start(task._id);
-
-  assert.equal(started.status, "in_progress");
-  const advisorStep = started.steps.find((s) => s.step_id === "advisor_review");
-  assert.equal(advisorStep?.state, "pending_approval");
-  assert.ok(advisorStep?.approval_token);
-  assert.ok(advisorStep?.token_expires_at);
-});
-
-test("getStatus() surfaces the current pending step before any decision", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-
-  const status = await service.getStatus(task._id);
-
-  assert.equal(status.status, "in_progress");
-  assert.deepEqual(status.current_steps, ["advisor_review"]);
-  assert.equal(status.reason, null);
-});
-
-test("reopenForMoreInfo() appends exactly one pending requirement and returns status to collecting", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-
-  const beforeCount = (await service.get(task._id)).requirements.length;
-  const reopened = await service.reopenForMoreInfo(
-    task._id,
-    "advisor_review",
-    "Please attach your travel itinerary.",
-  );
-
-  assert.equal(reopened.status, "collecting");
-  assert.equal(reopened.requirements.length, beforeCount + 1);
-
-  const followup = reopened.requirements.find((r) => r.key === "followup:advisor_review:0");
-  assert.ok(followup);
-  assert.equal(followup?.status, "pending");
-  assert.equal(followup?.required, true);
-  assert.equal(followup?.label, "Please attach your travel itinerary.");
-});
-
-test("re-finalize after a reopen dispatches only the reopened step, leaving approved steps approved", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-
-  const engine = new ExecutionService();
-  const workflow = LEAVE_WORKFLOW;
-  const current = await service.get(task._id);
-  const decided = engine.applyDecision(current, workflow, "advisor_review", "approved", null);
-  await taskModel.updateStepAndStatus(task._id, decided.steps, decided.status);
-
-  const afterAdvisorApproved = await service.get(task._id);
-  const reopenedHod = engine.applyDecision(
-    afterAdvisorApproved,
-    workflow,
-    "hod_review",
-    "request_more_info",
-    "Need the signed advisor form.",
-  );
-  await taskModel.updateStepAndStatus(task._id, reopenedHod.steps, afterAdvisorApproved.status);
-
-  await service.reopenForMoreInfo(task._id, "hod_review", "Need the signed advisor form.");
-  await service.setValue(task._id, "followup:hod_review:1", "Attached.");
-
-  const refinalized = await service.finalize(task._id);
-
-  assert.equal(refinalized.status, "in_progress");
-  const byId = new Map(refinalized.steps.map((s) => [s.step_id, s]));
-  assert.equal(byId.get("advisor_review")?.state, "approved");
-  assert.equal(byId.get("advisor_review")?.outcome, "approved");
-  assert.equal(byId.get("hod_review")?.state, "pending_approval");
-  assert.ok(byId.get("hod_review")?.approval_token);
-  assert.equal(byId.get("dean_review")?.state, "blocked");
-});
-
-test("delete() on a task out for approval throws ConflictError and removes nothing", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-
-  await assert.rejects(() => service.delete(task._id, ANONYMOUS_ACTOR), ConflictError);
-  assert.ok(await taskModel.findById(task._id));
-});
-
-test("delete() on a ready-to-send task throws ConflictError", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-
-  await assert.rejects(() => service.delete(task._id, ANONYMOUS_ACTOR), ConflictError);
-  assert.ok(await taskModel.findById(task._id));
-});
-
-test("delete() removes a still-collecting task that was never sent to an approver", async () => {
-  const taskModel = new FakeTaskModel();
-  const auditLogModel = new FakeAuditLogModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW, auditLogModel });
-
-  // Straight from create(): steps are compiled but none has a token, a
-  // notification, or an outcome, so nothing is out in anybody's inbox.
-  const task = await service.create("session-1", "user-1");
-
-  await service.delete(task._id, ANONYMOUS_ACTOR);
-
-  assert.equal(await taskModel.findById(task._id), null);
-
-  const entries = await auditLogModel.findByResource("task", String(task._id));
-  assert.equal(entries.length, 1);
-  assert.equal(entries[0]!.snapshot.status, "collecting");
-});
-
-test("delete() on a task reopened for more info throws ConflictError despite collecting", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-  const reopened = await service.reopenForMoreInfo(
-    task._id,
-    "advisor_review",
-    "Please attach your travel itinerary.",
-  );
-
-  // Back to `collecting`, but the advisor still holds a live approval link -
-  // the dispatch check, not the status, is what has to catch this.
-  assert.equal(reopened.status, "collecting");
-  await assert.rejects(() => service.delete(task._id, ANONYMOUS_ACTOR), ConflictError);
-  assert.ok(await taskModel.findById(task._id));
-});
-
-test("delete() removes a completed task and records who did it", async () => {
-  const taskModel = new FakeTaskModel();
-  const auditLogModel = new FakeAuditLogModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW, auditLogModel });
-
-  const task = await service.create("session-1", "user-1");
-  await taskModel.setStatus(task._id, "completed");
-
-  await service.delete(task._id, { id: "u-1", email: "dean@uni.edu" }, "req-9");
-
-  assert.equal(await taskModel.findById(task._id), null);
-
-  const entries = await auditLogModel.findByResource("task", String(task._id));
-  assert.equal(entries.length, 1);
-  const entry = entries[0]!;
-  assert.equal(entry.action, "deleted");
-  assert.equal(entry.actor.email, "dean@uni.edu");
-  assert.equal(entry.request_id, "req-9");
-  // The row is gone - the snapshot is the only thing left that can identify it.
-  assert.equal(entry.snapshot.reference, task.reference);
-  assert.equal(entry.snapshot.status, "completed");
-});
-
-test("delete() is allowed once a live task has been cancelled", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  // Taken all the way out for approval first, so `cancel` is what makes this
-  // deletable - a task left `collecting` would have qualified on its own.
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-
-  await service.cancel(task._id);
-  await service.delete(task._id, ANONYMOUS_ACTOR);
-
-  assert.equal(await taskModel.findById(task._id), null);
-});
-
-test("delete() of an unknown task throws NotFoundError", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  await assert.rejects(
-    () => service.delete(new ObjectId(), ANONYMOUS_ACTOR),
-    NotFoundError,
-  );
-});
-
-test("getDocument() on a task still in progress throws ConflictError", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-
-  await assert.rejects(() => service.getDocument(task._id), ConflictError);
-});
-
-test("getDocument() of an unknown task throws NotFoundError", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  await assert.rejects(() => service.getDocument(new ObjectId()), NotFoundError);
-});
-
-test("getDocument() on a completed task with no stored record regenerates and persists one", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-  await taskModel.setStatus(task._id, "completed");
-
-  assert.equal((await taskModel.findById(task._id))?.completion_document, null);
-
-  const document = await service.getDocument(task._id);
-
-  assert.ok(document.buffer.length > 0);
-  assert.equal(document.contentType, "text/plain");
-
-  const persisted = await taskModel.findById(task._id);
-  assert.equal(persisted?.completion_document?.sha256, document.sha256);
-  assert.equal(persisted?.completion_document?.emailed_to, null);
-});
-
-test("getDocument() on a completed task with a stored record re-renders using the persisted generated_at", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const task = await service.create("session-1", "user-1");
-  await fillAllRequirements(service, task._id);
-  await service.finalize(task._id);
-  await service.start(task._id);
-  await taskModel.setStatus(task._id, "completed");
-
-  const first = await service.getDocument(task._id);
-  const second = await service.getDocument(task._id);
-
-  assert.equal(second.sha256, first.sha256);
-});
-
-test("list() scoped to created_by only returns that user's tasks", async () => {
-  const taskModel = new FakeTaskModel();
-  const service = build({ taskModel, workflow: LEAVE_WORKFLOW });
-
-  const own = await service.create("session-1", "user-1");
-  await service.create("session-2", "user-2");
-
-  const tasks = await service.list({ created_by: "user-1" });
-
-  assert.deepEqual(
-    tasks.map((t) => t._id.toString()),
-    [own._id.toString()],
-  );
+test("isOwnedBy compares the creator", async () => {
+  const bed = await createTaskTestbed();
+  const userId = bed.world.userIdOf(KAVINDU);
+  const task = await bed.taskService.create(userId, { source: TaskCreationSource.CATALOGUE, workflowTemplateId: IT_LEAVE_ID });
+
+  assert.equal(await bed.taskService.isOwnedBy(String(task._id), userId), true);
+  assert.equal(await bed.taskService.isOwnedBy(String(task._id), "someone-else"), false);
 });

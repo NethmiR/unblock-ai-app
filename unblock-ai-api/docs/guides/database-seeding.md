@@ -4,7 +4,7 @@ Seeders put the data an environment needs to be usable into a migrated database:
 
 - the bootstrap administrator, the first user who can create everyone else;
 - the University of Moratuwa organisational structure (faculties, departments and divisions) and its designations;
-- optionally, sample users `u1@u.c` … `u16@u.c` with test affiliations, for development and demos only.
+- optionally, sample users `u1@u.c` … `u19@u.c` with test affiliations, for development and demos only.
 
 The seed pack mirrors the migration pack: a database-agnostic core, a Postgres adapter, timestamped seeder files and npm commands. Run migrations first; seeders never change the schema.
 
@@ -26,7 +26,8 @@ src/db/seed/
       ├─ 20261111021734_administrator-user.seeder.ts
       ├─ 20261111063459_university-of-moratuwa-organisational-units.seeder.ts
       ├─ 20261111063506_university-of-moratuwa-designations.seeder.ts
-      └─ 20261111065643_university-of-moratuwa-sample-users.seeder.ts
+      ├─ 20261111065643_university-of-moratuwa-sample-users.seeder.ts
+      └─ 20261113080422_task-request-sample-users.seeder.ts
 └─ data/
    └─ university-of-moratuwa/             typed, database-agnostic seed data
       ├─ organisational-units.seed-data.ts
@@ -81,7 +82,8 @@ If a user with that email already exists, the seeder reports `skipped` and chang
 |---|---|---|
 | `…_university-of-moratuwa-organisational-units` | 6 faculties, 35 departments, 5 faculty-level and 17 university-level divisions | unit `code` |
 | `…_university-of-moratuwa-designations` | 29 designations (leadership, academic, academic support, administrative, non-academic, student) | designation `code` |
-| `…_university-of-moratuwa-sample-users` | 16 sample users `u1@u.c` … `u16@u.c` with permissions, memberships and designations | email |
+| `…_university-of-moratuwa-sample-users` | 19 sample users `u1@u.c` … `u19@u.c` with permissions, memberships and designations | email |
+| `…_task-request-sample-users` | Re-runs the sample users seeder, so a database seeded before the task request revamp gains `u17@u.c` … `u19@u.c`. Emails are assigned by position (`u<n>@u.c`), and an email that already exists is skipped, so on a database where those addresses belong to someone else the demo users are not created | email |
 
 - The units seeder walks the tree parent-first. A unit that already exists is skipped, and its id is still used as the parent of its children.
 - The seeders never overwrite edits made through the UI; correcting a name is a UI change, not a code change.
@@ -92,6 +94,15 @@ If a user with that email already exists, the seeder reports `skipped` and chang
 ### Sample users
 
 The sample users seeder runs only when `SEED_SAMPLE_USERS=true` (default `false`). They all receive `USER_DEFAULT_PASSWORD`, so **never enable it in production**. Their emails follow `u<n>@u.c` in sequence; profiles cover the Vice-Chancellor, Registrar, Deans, Heads of Department, lecturers, administrative staff, students and one user without affiliations. Every sample user in a department is also a member of that department's faculty.
+
+The task request demo (`docs/task-request-revamp-phase-plan.md`, Appendix A) uses:
+
+| Email | Name | Affiliation | Role in the demo |
+|---|---|---|---|
+| `u17@u.c` | Kavindu Jayawardena | Student, Department of Information Technology (Faculty of Information Technology) | Requester for the IT overseas-leave template |
+| `u18@u.c` | Sunethra Ratnayake | Dean, Faculty of Information Technology | Resolved from the directory for the Dean step |
+| `u19@u.c` | Dinesh Wijesinghe | Head of Department, Department of Information Technology | Resolved from the directory for the HoD step |
+| `u12@u.c` | Hasitha Dissanayake | Student, Computer Science & Engineering (Faculty of Engineering) | Requester for the Engineering template |
 
 ## Starting from scratch
 
@@ -105,7 +116,7 @@ npm run seed:pg:run
 
 `migrate:pg:reset` rolls back every Postgres migration, which drops **all** Postgres data, including users and sessions created through the UI. Never run it against a database whose data you need.
 
-Rolling back only the organisation migration (`npm run migrate:pg:down`) drops every unit, designation and affiliation but keeps users. The sample users seeder then skips `u1@u.c` … `u16@u.c` because they still exist, and they end up with no affiliations. Remove the sample users as well, or use the full reset above.
+Rolling back only the organisation migration (`npm run migrate:pg:down`) drops every unit, designation and affiliation but keeps users. The sample users seeder then skips `u1@u.c` … `u19@u.c` because they still exist, and they end up with no affiliations. Remove the sample users as well, or use the full reset above.
 
 ## Writing a seeder
 

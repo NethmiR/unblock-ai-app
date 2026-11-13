@@ -1,5 +1,7 @@
 # Frontend Alignment Plan — `unblock-ai-web` → Task & Approval API
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 > Planning document. No frontend code has been changed.
 > Verified against `unblock-ai-api/src/**` (routes, controllers, serializers, DTOs) —
 > not only against `docs/api/api-documentation.md`.

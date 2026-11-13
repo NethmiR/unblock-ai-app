@@ -1,5 +1,7 @@
 # Completion Document — PDF Record Emailed on Approval
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 Phase-by-phase implementation plan for a new capability: **when a portal request is fully
 approved, email the requester a PDF record of the whole thing** — every value they supplied,
 laid out in the order the workflow template declares it, followed by the approval trail

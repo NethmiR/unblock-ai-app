@@ -1,4 +1,4 @@
-export { AzureOpenAILlmAdapter, GeminiLlmAdapter, createLlmAdapter } from "./llm-adapter/index.llm-adapter.js";
+export { AzureOpenAILlmAdapter, GeminiLlmAdapter, UsageLoggingLlmAdapter, createLlmAdapter, createLlmAdapters } from "./llm-adapter/index.llm-adapter.js";
 export { AzureOpenAIEmbeddingAdapter, GeminiEmbeddingAdapter, createEmbeddingAdapter } from "./embedding-adapter/index.embedding-adapter.js";
 export { ValidationService } from "./validation.service.js";
 export { EmbeddingService } from "./embedding.service.js";

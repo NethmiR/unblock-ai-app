@@ -5,4 +5,5 @@ export const COLLECTIONS = {
   TASKS: "tasks",
   COUNTERS: "counters",
   AUDIT_LOGS: "audit_logs",
+  LEGACY_TASKS: "legacy_tasks",
 } as const;

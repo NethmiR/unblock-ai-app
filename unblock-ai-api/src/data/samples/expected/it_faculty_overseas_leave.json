@@ -44,8 +44,8 @@
     "institution_type": "university",
     "applies_to": {
       "actor_type": "student",
+      "organisational_unit_codes": ["FIT"],
       "constraints": [
-        { "attribute": "faculty", "operator": "equals", "value": "Information Technology" },
         { "attribute": "level", "operator": "equals", "value": "undergraduate" }
       ]
     }
@@ -54,16 +54,6 @@
   "requester": { "actor_type": "student", "identifier_field": "student_index_number" },
 
   "inputs": [
-    {
-      "id": "full_name",
-      "label": "Full Name",
-      "description": "Student's full legal name as registered.",
-      "type": "string",
-      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
-      "required": true,
-      "validation": { "min_length": 2, "max_length": 120, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
-      "collection_hint": "Ask conversationally; confirm spelling if unusual."
-    },
     {
       "id": "student_index_number",
       "label": "Student Index Number",
@@ -123,16 +113,6 @@
       "required": true,
       "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
       "collection_hint": null
-    },
-    {
-      "id": "requester_email",
-      "label": "Your Email Address",
-      "description": "Email address for approval and outcome notifications.",
-      "type": "email",
-      "collected_from": { "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null },
-      "required": true,
-      "validation": { "min_length": null, "max_length": null, "min": null, "max": null, "not_before": null, "not_after": null, "not_before_field": null, "not_after_field": null, "pattern": null },
-      "collection_hint": null
     }
   ],
 
@@ -166,6 +146,7 @@
       "instructions_to_approver": "Review dates and reason; ensure no conflict with critical exams or academic requirements.",
       "response_fields": [],
       "context_from_steps": [],
+      "collects_inputs": [],
       "outcomes": {
         "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
         "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
@@ -197,6 +178,7 @@
       "instructions_to_approver": "Review dates and reason for departmental conflicts.",
       "response_fields": [],
       "context_from_steps": [],
+      "collects_inputs": [],
       "outcomes": {
         "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
         "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },
@@ -234,6 +216,7 @@
       "instructions_to_approver": "Review long-duration overseas leave request for faculty-level approval.",
       "response_fields": [],
       "context_from_steps": [],
+      "collects_inputs": [],
       "outcomes": {
         "approved": { "action": "continue", "notify": [], "include_reason": null, "return_to_step": null, "prompt_source": null },
         "rejected": { "action": "terminate_workflow", "notify": [{ "resolution": "requester", "role": null, "relative_to": null, "directory_query": null, "fallback_role": null, "display_name": null }], "include_reason": true, "return_to_step": null, "prompt_source": null },

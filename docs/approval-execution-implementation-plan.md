@@ -1,5 +1,7 @@
 # Approval & Execution — API Implementation Plan
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 Step-by-step build order for the approval execution slice described in
 [approval-execution-design.md](approval-execution-design.md). Read that first — this
 document assumes its decisions and does not re-argue them.

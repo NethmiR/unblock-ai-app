@@ -18,6 +18,7 @@ export interface WorkflowConstraint {
 
 export interface WorkflowScopeAppliesTo {
   actor_type: ActorType;
+  organisational_unit_codes: string[];
   constraints: WorkflowConstraint[];
 }
 

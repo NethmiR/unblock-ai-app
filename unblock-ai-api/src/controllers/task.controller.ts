@@ -1,99 +1,79 @@
 import type { Request, Response } from "express";
-import { TaskService } from "../services/task.service.js";
-import { optionalString, requireNonEmptyString, requireOneOf } from "../utils/http/request-validator.util.js";
-import { serializeTask, serializeTaskSummary } from "../utils/http/serializer.util.js";
-import { actorFromRequest } from "../utils/http/actor.util.js";
 import { requireAuthContext } from "../utils/http/auth-context.util.js";
-import { TASK_STATUS } from "../data/constants/status.constant.js";
-import type { TaskStatus } from "../lib/types/task/task.type.js";
+import { actorFromRequest } from "../utils/http/actor.util.js";
+import { parseCreateTaskInput, parseTaskListFilter } from "../utils/http/task-request.util.js";
+import { serializeTask, serializeTaskList, type TaskSerializationOptions } from "../utils/http/task-serializer.util.js";
+import { TaskStatus } from "../data/constants/task.constant.js";
+import { taskTranscriptUnavailable } from "../errors/task.error.js";
+import type { TaskService } from "../services/task.service.js";
+import type { TaskTranscriptService } from "../services/task-transcript.service.js";
+import type { TaskDocument } from "../lib/types/task/task-document.type.js";
+import type { TaskDto } from "../lib/types/task/task-dto.type.js";
 
 export interface TaskControllerOptions {
-  taskService: TaskService;
+  taskService: Pick<TaskService, "create" | "get" | "list" | "getWorkflowDefinition" | "cancel" | "delete">;
+  serialization: TaskSerializationOptions;
+  transcriptService: Pick<TaskTranscriptService, "renderForTask">;
+}
+
+const CONTENT_TYPE_HEADER = "Content-Type";
+const CONTENT_DISPOSITION_HEADER = "Content-Disposition";
+
+export function taskIdOf(req: Request): string {
+  return String(req.params.id);
 }
 
 export class TaskController {
-  private readonly taskService: TaskService;
+  private readonly taskService: TaskControllerOptions["taskService"];
+  private readonly serialization: TaskSerializationOptions;
+  private readonly transcriptService: Pick<TaskTranscriptService, "renderForTask">;
 
-  constructor({ taskService }: TaskControllerOptions) {
+  constructor({ taskService, serialization, transcriptService }: TaskControllerOptions) {
     this.taskService = taskService;
+    this.serialization = serialization;
+    this.transcriptService = transcriptService;
+  }
+
+  toDto(task: TaskDocument): TaskDto {
+    return serializeTask(task, this.serialization);
   }
 
   createTask = async (req: Request, res: Response): Promise<void> => {
-    const sessionId = requireNonEmptyString(req.body, "session_id");
-
-    const task = await this.taskService.create(sessionId, requireAuthContext(req).user.id);
-    res.status(201).json(serializeTask(task));
-  };
-
-  getTask = async (req: Request, res: Response): Promise<void> => {
-    const task = await this.taskService.get(req.params.id as string);
-    res.json(serializeTask(task));
-  };
-
-  getNext = async (req: Request, res: Response): Promise<void> => {
-    const next = await this.taskService.nextRequirement(req.params.id as string);
-    res.json(next);
-  };
-
-  setValue = async (req: Request, res: Response): Promise<void> => {
-    const key = requireNonEmptyString(req.body, "key");
-    const value = (req.body as Record<string, unknown>)?.value ?? null;
-    const task = await this.taskService.setValue(req.params.id as string, key, value);
-    res.json(serializeTask(task));
-  };
-
-  finalizeTask = async (req: Request, res: Response): Promise<void> => {
-    const task = await this.taskService.finalize(req.params.id as string);
-    res.json(serializeTask(task));
-  };
-
-  startTask = async (req: Request, res: Response): Promise<void> => {
-    const task = await this.taskService.start(req.params.id as string);
-    res.json(serializeTask(task));
-  };
-
-  getTaskStatus = async (req: Request, res: Response): Promise<void> => {
-    const status = await this.taskService.getStatus(req.params.id as string);
-    res.json(status);
-  };
-
-  /**
-   * The one endpoint in this controller that writes to `res` directly instead
-   * of going through a JSON serializer - the response body is the PDF itself.
-   */
-  getTaskDocument = async (req: Request, res: Response): Promise<void> => {
-    const document = await this.taskService.getDocument(req.params.id as string);
-    res.setHeader("Content-Type", document.contentType);
-    res.setHeader("Content-Disposition", `attachment; filename="${document.filename}"`);
-    res.setHeader("Content-Length", String(document.byteSize));
-    res.send(document.buffer);
-  };
-
-  updateStatus = async (req: Request, res: Response): Promise<void> => {
-    requireOneOf(req.body, "status", ["cancelled"] as const);
-    const task = await this.taskService.cancel(req.params.id as string);
-    res.json(serializeTask(task));
-  };
-
-  /**
-   * `DELETE /tasks/:id` - permanent. Finished tasks qualify, and so does one
-   * still collecting details that has never been sent to an approver; the
-   * service 409s on anything else rather than orphaning approval links already
-   * sitting in inboxes.
-   */
-  deleteTask = async (req: Request, res: Response): Promise<void> => {
-    await this.taskService.delete(req.params.id as string, actorFromRequest(req), req.requestId);
-    res.status(204).send();
+    const input = parseCreateTaskInput(req.body);
+    const task = await this.taskService.create(requireAuthContext(req).user.id, input);
+    res.status(201).json(this.toDto(task));
   };
 
   listTasks = async (req: Request, res: Response): Promise<void> => {
-    const { user } = requireAuthContext(req);
-    const sessionId = optionalString(req.query, "session_id");
-    const status = optionalString(req.query, "status") as TaskStatus | null;
-    const filters: { created_by?: string; session_id?: string; status?: TaskStatus } = { created_by: user.id };
-    if (sessionId) filters.session_id = sessionId;
-    if (status && (Object.values(TASK_STATUS) as string[]).includes(status)) filters.status = status;
-    const tasks = await this.taskService.list(filters);
-    res.json(tasks.map(serializeTaskSummary));
+    const filter = parseTaskListFilter(req.query);
+    const page = await this.taskService.list(requireAuthContext(req).user.id, filter);
+    res.json(serializeTaskList(page, filter.limit, filter.offset));
+  };
+
+  getTask = async (req: Request, res: Response): Promise<void> => {
+    res.json(this.toDto(await this.taskService.get(taskIdOf(req))));
+  };
+
+  getWorkflowDefinition = async (req: Request, res: Response): Promise<void> => {
+    res.json({ definition: await this.taskService.getWorkflowDefinition(taskIdOf(req)) });
+  };
+
+  cancelTask = async (req: Request, res: Response): Promise<void> => {
+    res.json(this.toDto(await this.taskService.cancel(taskIdOf(req))));
+  };
+
+  getTranscript = async (req: Request, res: Response): Promise<void> => {
+    const task = await this.taskService.get(taskIdOf(req));
+    if (task.status !== TaskStatus.COMPLETED) throw taskTranscriptUnavailable();
+    const transcript = await this.transcriptService.renderForTask(task);
+    if (transcript === null) throw taskTranscriptUnavailable();
+    res.setHeader(CONTENT_TYPE_HEADER, transcript.contentType);
+    res.setHeader(CONTENT_DISPOSITION_HEADER, `attachment; filename="${transcript.filename}"`);
+    res.send(transcript.buffer);
+  };
+
+  deleteTask = async (req: Request, res: Response): Promise<void> => {
+    await this.taskService.delete(taskIdOf(req), actorFromRequest(req), req.requestId ?? null);
+    res.status(204).end();
   };
 }

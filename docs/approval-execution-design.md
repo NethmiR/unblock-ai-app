@@ -1,5 +1,7 @@
 # Approval & Execution — Design and Implementation Plan
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 Design for the **approval execution slice**: the layer that sits between "a task is
 finalized and its steps are seeded" and "the approval chain has actually run to a
 decision the requester can see".

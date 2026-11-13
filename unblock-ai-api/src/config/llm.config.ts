@@ -1,9 +1,19 @@
 import { rawEnv } from "./env.config.js";
 import { parseEnum, requireString } from "../utils/shared/env-parse.util.js";
 import { LLM_PROVIDERS, AiProvider } from "../data/constants/ai-provider.constant.js";
-import type { LlmConfig } from "../lib/types/config/config.type.js";
+import { LlmOperation } from "../data/constants/llm.constant.js";
+import type { AiProviderConnectionConfig, LlmConfig, LlmOperationModels } from "../lib/types/config/config.type.js";
+
+function readOperationModels(): LlmOperationModels {
+  const selectionModel = rawEnv.LLM_SELECTION_MODEL;
+  return selectionModel ? { [LlmOperation.WORKFLOW_SELECTION]: selectionModel } : {};
+}
 
 function readLlmConfig(): LlmConfig {
+  return { ...readConnectionConfig(), operationModels: readOperationModels() };
+}
+
+function readConnectionConfig(): AiProviderConnectionConfig {
   const provider = parseEnum("LLM_PROVIDER", rawEnv.LLM_PROVIDER, LLM_PROVIDERS, AiProvider.AZURE_OPENAI);
 
   if (provider === AiProvider.GEMINI) {

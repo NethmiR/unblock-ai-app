@@ -1,5 +1,7 @@
 # Task Planner — Backend Design
 
+> Superseded by [`task-request-revamp-phase-plan.md`](task-request-revamp-phase-plan.md).
+
 Design for the **user-side workflow planner**: the layer that sits between "selection matched a template" and "the approval chain runs".
 
 Status: **agreed design, not yet implemented.** See [overview.md](overview.md) for what already exists.

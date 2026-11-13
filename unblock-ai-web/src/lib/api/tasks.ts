@@ -1,47 +1,46 @@
 import { apiBlob, apiRequest } from "./client";
-import type { NextRequirementDto, RequirementValue, TaskDto, TaskStatus } from "@/types/task";
-import type { TaskStatusDto } from "@/types/approval";
+import { withQuery } from "./query-string";
+import type { CreateTaskRequest, TaskDto, TaskListQuery, TaskWorkflowDefinitionDto } from "@/types/task";
+import type { TaskFieldValueDto, TaskFormValuesRequest } from "@/types/task-form";
+
+export const TASKS_PATH = "/tasks";
+
+export function taskListPath(query: TaskListQuery): string {
+  return withQuery(TASKS_PATH, query);
+}
+
+export function taskPath(taskId: string): string {
+  return `${TASKS_PATH}/${encodeURIComponent(taskId)}`;
+}
+
+export function taskWorkflowDefinitionPath(taskId: string): string {
+  return `${taskPath(taskId)}/workflow-definition`;
+}
+
+function taskFormPath(taskId: string, formId: string): string {
+  return `${taskPath(taskId)}/forms/${encodeURIComponent(formId)}`;
+}
 
 export const tasksApi = {
-  create: (sessionId: string) =>
-    apiRequest<TaskDto>("/tasks", { method: "POST", body: { session_id: sessionId } }),
+  create: (body: CreateTaskRequest) => apiRequest<TaskDto>(TASKS_PATH, { method: "POST", body }),
 
-  list: (filters: { session_id?: string; status?: TaskStatus } = {}) => {
-    const params = new URLSearchParams();
-    if (filters.session_id) params.set("session_id", filters.session_id);
-    if (filters.status) params.set("status", filters.status);
-    const qs = params.toString();
-    return apiRequest<TaskDto[]>(`/tasks${qs ? `?${qs}` : ""}`);
+  get: (taskId: string) => apiRequest<TaskDto>(taskPath(taskId)),
+
+  getWorkflowDefinition: (taskId: string) => apiRequest<TaskWorkflowDefinitionDto>(taskWorkflowDefinitionPath(taskId)),
+
+  saveDraft: (taskId: string, formId: string, values: Record<string, TaskFieldValueDto>) => {
+    const body: TaskFormValuesRequest = { values };
+    return apiRequest<TaskDto>(`${taskFormPath(taskId, formId)}/draft`, { method: "PUT", body });
   },
 
-  get: (id: string) => apiRequest<TaskDto>(`/tasks/${id}`),
+  submitForm: (taskId: string, formId: string, values: Record<string, TaskFieldValueDto>) => {
+    const body: TaskFormValuesRequest = { values };
+    return apiRequest<TaskDto>(`${taskFormPath(taskId, formId)}/submit`, { method: "POST", body });
+  },
 
-  next: (id: string) => apiRequest<NextRequirementDto>(`/tasks/${id}/next`),
+  cancel: (taskId: string) => apiRequest<TaskDto>(`${taskPath(taskId)}/cancel`, { method: "POST" }),
 
-  setValue: (id: string, key: string, value: RequirementValue) =>
-    apiRequest<TaskDto>(`/tasks/${id}/values`, { method: "POST", body: { key, value } }),
+  remove: (taskId: string) => apiRequest<void>(taskPath(taskId), { method: "DELETE" }),
 
-  /** Sends no body - `apiRequest` only sets one when truthy, which is correct here. */
-  finalize: (id: string) => apiRequest<TaskDto>(`/tasks/${id}/finalize`, { method: "POST" }),
-
-  /** Sends no body. Dispatches approval emails - not safe to call speculatively. */
-  start: (id: string) => apiRequest<TaskDto>(`/tasks/${id}/start`, { method: "POST" }),
-
-  status: (id: string) => apiRequest<TaskStatusDto>(`/tasks/${id}/status`),
-
-  /**
-   * Permanent, and only for finished tasks - the API 409s on a live one rather
-   * than orphaning approval links already sitting in approvers' inboxes.
-   */
-  remove: (id: string) => apiRequest<void>(`/tasks/${id}`, { method: "DELETE" }),
-
-  /** The only accepted `PATCH /tasks/:id/status` transition - the controller 400s on any other value. */
-  cancel: (id: string) =>
-    apiRequest<TaskDto>(`/tasks/${id}/status`, {
-      method: "PATCH",
-      body: { status: "cancelled" },
-    }),
-
-  /** Only meaningful for a completed task - the API 409s otherwise. */
-  document: (id: string) => apiBlob(`/tasks/${id}/document`),
+  transcript: (taskId: string) => apiBlob(`${taskPath(taskId)}/transcript`),
 };
