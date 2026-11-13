@@ -212,13 +212,16 @@ GEMINI_API_KEY=<your-google-ai-studio-key>
 GEMINI_CHAT_MODEL=gemini-3.8-flash
 WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS=3
 
-# Embedding provider: azure-openai | gemini (switching requires re-embedding stored templates)
+# Embedding provider: azure-openai | gemini | voyage-ai (switching requires re-embedding stored templates)
 EMBEDDING_PROVIDER=azure-openai
 AZURE_OPENAI_EMBEDDING_ENDPOINT=https://<your-foundry>.services.ai.azure.com
 AZURE_OPENAI_EMBEDDING_API_KEY=<your-key>
 AZURE_OPENAI_EMBEDDING_API_VERSION=2024-10-21
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 GEMINI_EMBEDDING_MODEL=gemini-embedding-2
+VOYAGE_AI_EMBEDDING_ENDPOINT=https://ai.mongodb.com/v1
+VOYAGE_AI_EMBEDDING_API_KEY=<your-voyage-ai-key>
+VOYAGE_AI_EMBEDDING_MODEL=voyage-4
 EMBEDDING_DIMENSIONS=1536
 
 # Retrieval tuning (defaults shown)
@@ -311,7 +314,7 @@ npm run evaluate:selection      # evaluate the selector agent
 
 | Symptom | Likely cause |
 | --- | --- |
-| Backend fails at startup with `Missing required environment variable` | A var required by the selected `LLM_PROVIDER` / `EMBEDDING_PROVIDER` (or Mongo) is empty — check `AZURE_OPENAI_*`, `GEMINI_*`, `MONGODB_URI` |
+| Backend fails at startup with `Missing required environment variable` | A var required by the selected `LLM_PROVIDER` / `EMBEDDING_PROVIDER` (or Mongo) is empty — check `AZURE_OPENAI_*`, `GEMINI_*`, `VOYAGE_AI_*`, `MONGODB_URI` |
 | Backend can't connect to Mongo (`ECONNREFUSED 27017`) | MongoDB isn't running — start the Windows service (`Start-Service MongoDB`, or `net start MongoDB` from an admin prompt) or the Docker container (`docker start unblock-ai-mongo`) |
 | Compass connects fine but the app sees no data | Compass may be pointed at a different database — check you're in `unblock_ai`, matching `MONGODB_DB` in `.env` |
 | `mongosh` not recognised after installing | Reopen the terminal so the updated `PATH` loads, or call it directly at `%LOCALAPPDATA%\Programs\mongosh\mongosh.exe` |

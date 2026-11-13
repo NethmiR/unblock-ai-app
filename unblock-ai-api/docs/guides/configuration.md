@@ -32,13 +32,16 @@ configs into a single frozen `config` object that every other module imports.
 | `GEMINI_API_KEY` | \*\* | — | `src/config/llm.config.ts`, `src/config/embedding.config.ts` | `config.llm.gemini.apiKey` / `config.embedding.gemini.apiKey` — Google AI Studio key; **required when `LLM_PROVIDER` or `EMBEDDING_PROVIDER` is `gemini`** |
 | `GEMINI_CHAT_MODEL` | \*\* | — | `src/config/llm.config.ts` | `config.llm.gemini.model` — **required when `LLM_PROVIDER=gemini`** |
 | `WORKFLOW_TEMPLATE_GENERATION_MAX_ATTEMPTS` | no | `3` | `src/config/workflow-template-generation.config.ts` | `config.workflowTemplateGeneration.maxAttempts` — model calls (first attempt + repairs) allowed when generating a workflow template from a prompt |
-| `EMBEDDING_PROVIDER` | no | `azure-openai` | `src/config/embedding.config.ts` | `config.embedding.provider` — `azure-openai` \| `gemini`, selects the `IEmbeddingAdapter`. Changing it (or the embedding model) requires re-embedding every stored template |
+| `EMBEDDING_PROVIDER` | no | `azure-openai` | `src/config/embedding.config.ts` | `config.embedding.provider` — `azure-openai` \| `gemini` \| `voyage-ai`, selects the `IEmbeddingAdapter`. Changing it (or the embedding model) requires re-embedding every stored template |
 | `AZURE_OPENAI_EMBEDDING_ENDPOINT` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.endpoint` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
 | `AZURE_OPENAI_EMBEDDING_API_KEY` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.apiKey` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
 | `AZURE_OPENAI_EMBEDDING_API_VERSION` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.apiVersion` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
 | `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.azureOpenAI.deployment` — **required when `EMBEDDING_PROVIDER=azure-openai`** |
 | `GEMINI_EMBEDDING_MODEL` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.gemini.model` — **required when `EMBEDDING_PROVIDER=gemini`** |
-| `EMBEDDING_DIMENSIONS` | no | `1536` | `src/config/embedding.config.ts` | `config.embedding.dimensions` — requested from the provider and validated against the returned vector length; must match the vector index |
+| `VOYAGE_AI_EMBEDDING_ENDPOINT` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.voyageAI.endpoint` — base URL (`https://ai.mongodb.com/v1` for MongoDB Atlas keys, `https://api.voyageai.com/v1` for Voyage AI dashboard keys); **required when `EMBEDDING_PROVIDER=voyage-ai`** |
+| `VOYAGE_AI_EMBEDDING_API_KEY` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.voyageAI.apiKey` — **required when `EMBEDDING_PROVIDER=voyage-ai`** |
+| `VOYAGE_AI_EMBEDDING_MODEL` | \*\* | — | `src/config/embedding.config.ts` | `config.embedding.voyageAI.model` — e.g. `voyage-4`; **required when `EMBEDDING_PROVIDER=voyage-ai`** |
+| `EMBEDDING_DIMENSIONS` | no | `1536` | `src/config/embedding.config.ts` | `config.embedding.dimensions` — requested from the provider and validated against the returned vector length; must match the vector index; `voyage-ai` accepts only `256` \| `512` \| `1024` \| `2048` |
 | `RETRIEVAL_TOP_K` | no | `5` | `src/config/retrieval.config.ts` | `config.retrieval.topK` — max candidates returned by retrieval |
 | `RETRIEVAL_ALIAS_BOOST` | no | `0.15` | `src/config/retrieval.config.ts` | `config.retrieval.aliasBoost` — additive score boost for exact alias matches |
 | `SELECTION_MAX_ROUNDS` | no | `2` | `src/config/retrieval.config.ts` | `config.retrieval.maxSelectionRounds` — clarifying-question round cap |
@@ -56,15 +59,15 @@ configs into a single frozen `config` object that every other module imports.
 | `DOCUMENT_INSTITUTION_NAME` | no | `Unblock AI` | `src/config/document.config.ts` | `config.document.institutionName` — printed in the record's footer |
 | `DOCUMENT_MAX_ATTACHMENT_BYTES` | no | `5000000` | `src/config/document.config.ts` | `config.document.maxAttachmentBytes` — above this size the record is download-only, dropped from the email attachment |
 
-46 variables total (\* = required, throws at startup if missing/empty; \*\* =
+49 variables total (\* = required, throws at startup if missing/empty; \*\* =
 conditionally required: `POSTGRES_URL` only when `POSTGRES_REPOSITORY_BACKEND=postgres`;
 `APPROVAL_TOKEN_SECRET` and `BREVO_API_KEY` only
 when `MAIL_TRANSPORT=brevo` — both throw `ConfigurationError` at startup in that
 case, in `src/config/mail.config.ts`. The two `SEED_ADMINISTRATOR_*` variables are
 required only by the seed command, which throws if either is empty). A misconfigured Brevo API key that is merely
 non-empty but wrong still only surfaces as a send failure, caught and logged by
-`notification.service.ts` rather than crashing the process. The `AZURE_OPENAI_*` and
-`GEMINI_*` provider variables are likewise conditionally required: only the keys of
+`notification.service.ts` rather than crashing the process. The `AZURE_OPENAI_*`,
+`GEMINI_*` and `VOYAGE_AI_*` provider variables are likewise conditionally required: only the keys of
 the provider selected by `LLM_PROVIDER` / `EMBEDDING_PROVIDER` are validated, in
 `src/config/llm.config.ts` and `src/config/embedding.config.ts`.
 

@@ -32,13 +32,23 @@ export interface GeminiConnectionConfig {
   model: string;
 }
 
+export interface VoyageAIConnectionConfig {
+  endpoint: string;
+  apiKey: string;
+  model: string;
+}
+
 export type AiProviderConnectionConfig =
   | { provider: AiProvider.AZURE_OPENAI; azureOpenAI: AzureOpenAIConnectionConfig }
   | { provider: AiProvider.GEMINI; gemini: GeminiConnectionConfig };
 
+export type EmbeddingProviderConnectionConfig =
+  | AiProviderConnectionConfig
+  | { provider: AiProvider.VOYAGE_AI; voyageAI: VoyageAIConnectionConfig };
+
 export type LlmConfig = AiProviderConnectionConfig;
 
-export type EmbeddingConfig = { dimensions: number } & AiProviderConnectionConfig;
+export type EmbeddingConfig = { dimensions: number } & EmbeddingProviderConnectionConfig;
 
 export interface WorkflowTemplateGenerationConfig {
   maxAttempts: number;

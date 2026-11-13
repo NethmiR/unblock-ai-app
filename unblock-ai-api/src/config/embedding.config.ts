@@ -1,33 +1,44 @@
 import { rawEnv } from "./env.config.js";
 import { parseEnum, parseNumber, requireString } from "../utils/shared/env-parse.util.js";
-import { AI_PROVIDERS, AiProvider } from "../data/constants/ai-provider.constant.js";
+import { EMBEDDING_PROVIDERS, AiProvider } from "../data/constants/ai-provider.constant.js";
 import type { EmbeddingConfig } from "../lib/types/config/config.type.js";
 
 function readEmbeddingConfig(): EmbeddingConfig {
-  const provider = parseEnum("EMBEDDING_PROVIDER", rawEnv.EMBEDDING_PROVIDER, AI_PROVIDERS, AiProvider.AZURE_OPENAI);
+  const provider = parseEnum("EMBEDDING_PROVIDER", rawEnv.EMBEDDING_PROVIDER, EMBEDDING_PROVIDERS, AiProvider.AZURE_OPENAI);
   const dimensions = parseNumber("EMBEDDING_DIMENSIONS", rawEnv.EMBEDDING_DIMENSIONS, 1536);
 
-  if (provider === AiProvider.GEMINI) {
-    return {
-      provider,
-      dimensions,
-      gemini: {
-        apiKey: requireString("GEMINI_API_KEY", rawEnv.GEMINI_API_KEY),
-        model: requireString("GEMINI_EMBEDDING_MODEL", rawEnv.GEMINI_EMBEDDING_MODEL),
-      },
-    };
+  switch (provider) {
+    case AiProvider.GEMINI:
+      return {
+        provider,
+        dimensions,
+        gemini: {
+          apiKey: requireString("GEMINI_API_KEY", rawEnv.GEMINI_API_KEY),
+          model: requireString("GEMINI_EMBEDDING_MODEL", rawEnv.GEMINI_EMBEDDING_MODEL),
+        },
+      };
+    case AiProvider.VOYAGE_AI:
+      return {
+        provider,
+        dimensions,
+        voyageAI: {
+          endpoint: requireString("VOYAGE_AI_EMBEDDING_ENDPOINT", rawEnv.VOYAGE_AI_EMBEDDING_ENDPOINT),
+          apiKey: requireString("VOYAGE_AI_EMBEDDING_API_KEY", rawEnv.VOYAGE_AI_EMBEDDING_API_KEY),
+          model: requireString("VOYAGE_AI_EMBEDDING_MODEL", rawEnv.VOYAGE_AI_EMBEDDING_MODEL),
+        },
+      };
+    case AiProvider.AZURE_OPENAI:
+      return {
+        provider,
+        dimensions,
+        azureOpenAI: {
+          endpoint: requireString("AZURE_OPENAI_EMBEDDING_ENDPOINT", rawEnv.AZURE_OPENAI_EMBEDDING_ENDPOINT),
+          apiKey: requireString("AZURE_OPENAI_EMBEDDING_API_KEY", rawEnv.AZURE_OPENAI_EMBEDDING_API_KEY),
+          apiVersion: requireString("AZURE_OPENAI_EMBEDDING_API_VERSION", rawEnv.AZURE_OPENAI_EMBEDDING_API_VERSION),
+          deployment: requireString("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", rawEnv.AZURE_OPENAI_EMBEDDING_DEPLOYMENT),
+        },
+      };
   }
-
-  return {
-    provider,
-    dimensions,
-    azureOpenAI: {
-      endpoint: requireString("AZURE_OPENAI_EMBEDDING_ENDPOINT", rawEnv.AZURE_OPENAI_EMBEDDING_ENDPOINT),
-      apiKey: requireString("AZURE_OPENAI_EMBEDDING_API_KEY", rawEnv.AZURE_OPENAI_EMBEDDING_API_KEY),
-      apiVersion: requireString("AZURE_OPENAI_EMBEDDING_API_VERSION", rawEnv.AZURE_OPENAI_EMBEDDING_API_VERSION),
-      deployment: requireString("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", rawEnv.AZURE_OPENAI_EMBEDDING_DEPLOYMENT),
-    },
-  };
 }
 
 export const embedding: EmbeddingConfig = Object.freeze(readEmbeddingConfig());
